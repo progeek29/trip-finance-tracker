@@ -1,82 +1,120 @@
 import React, { useState } from 'react';
-import { Trip, TransitReminder, Expense, CityStop } from '../../types';
-import { Plane, Train, Bus, Car, Hotel, Copy, Check, Sparkles, Plus, Zap, Edit2, Trash2, X } from 'lucide-react';
+import { Trip, Expense, CityStop, TripMember } from '../../types';
+import { Sparkles, Zap, Edit2, Trash2, X, ChevronRight, Pencil, Copy, Check } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { MemberAvatar } from '../common/MemberAvatar';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import { PhoneInput, isValidPhone, formatPhoneDisplay } from '../common/PhoneInput';
+import { isNativeApp } from '../../utils/nativeBridge';
+import { ContactPickerModal } from '../common/ContactPickerModal';
+import { fetchDeviceContacts, type DeviceContact } from '../../utils/deviceContacts';
+import { useMediaUrl } from '../common/MediaImg';
+import { getRandomEmoji } from '../../utils/avatar';
+import { TalkButton } from '../voice/TalkButton';
 
 interface CleanTripViewProps {
   trip: Trip;
-  reminders: TransitReminder[];
   expenses: Expense[];
   onOpenQuickAdd: () => void;
   onOpenTripEditor: () => void;
+  onGoExpenses: () => void;
   onUpdateTrip: (trip: Trip) => void;
-  onAddReminder: (r: TransitReminder) => void;
-  onUpdateReminder: (r: TransitReminder) => void;
-  onDeleteReminder: (id: string) => void;
+  onShareTrip?: () => void;
+  myUid?: string | null;
+  isAdmin?: boolean;
 }
 
 export const CleanTripView: React.FC<CleanTripViewProps> = ({
   trip,
-  reminders,
   expenses,
   onOpenQuickAdd,
   onOpenTripEditor,
+  onGoExpenses,
   onUpdateTrip,
-  onAddReminder,
-  onUpdateReminder,
-  onDeleteReminder,
+  onShareTrip,
+  myUid,
+  isAdmin,
 }) => {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [simulatedToast, setSimulatedToast] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
   const [stopModal, setStopModal] = useState<{ open: boolean; editing: CityStop | null }>({ open: false, editing: null });
-  const [transitModal, setTransitModal] = useState<{ open: boolean; editing: TransitReminder | null }>({ open: false, editing: null });
+  const [squadOpen, setSquadOpen] = useState(false);
+  const [confirmStop, setConfirmStop] = useState<{ id: string; label: string } | null>(null);
+  const coverUrl = useMediaUrl(trip.coverImage);
 
-  const totalSpent = expenses.reduce((a, b) => a + b.amount, 0);
-  const remaining = trip.totalBudget - totalSpent;
-  const percentSpent = trip.totalBudget > 0 ? Math.min(100, Math.round((totalSpent / trip.totalBudget) * 100)) : 0;
-  const nextTransit = reminders[0];
-
-  const handleCopy = async (id: string, text?: string) => {
-    if (!text) return;
+  const handleCopyCode = async () => {
+    if (!trip.inviteCode) return;
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(trip.inviteCode);
     } catch {
       const ta = document.createElement('textarea');
-      ta.value = text;
+      ta.value = trip.inviteCode;
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
       document.body.removeChild(ta);
     }
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
   };
+
+  const totalSpent = expenses.reduce((a, b) => a + b.amount, 0);
+  const remaining = trip.totalBudget - totalSpent;
+  const percentSpent = trip.totalBudget > 0 ? Math.min(100, Math.round((totalSpent / trip.totalBudget) * 100)) : 0;
+  // Per-member: what this user's share was spent vs their budget
+  const myMember = trip.members.find((m) => m.isCurrentUser);
+  const myBudget = myMember?.budget || 0;
+  const mySpent = myBudget > 0
+    ? expenses.reduce((sum, e) => {
+        const mySplit = e.splits.find((s) => s.memberId === myMember?.id);
+        return sum + (mySplit?.amount || 0);
+      }, 0)
+    : 0;
 
   const handleSimulateIncomingSMS = () => {
     const merchants = ['Cafe Mambo Baga', 'Burger Factory Anjuna', 'Thalassa Siolim', 'Goa Cab Service', "Tito's Club"];
     const amounts = [650, 1200, 2400, 850, 3100];
     const idx = Math.floor(Math.random() * merchants.length);
-    setSimulatedToast(`💸 HDFC Bank Alert: ₹${amounts[idx]} debited at ${merchants[idx]}. Auto-logged to ${trip.title}!`);
+    setSimulatedToast(`HDFC Bank Alert: Rs.${amounts[idx]} debited at ${merchants[idx]}. Auto-logged to ${trip.title}.`);
     confetti({ particleCount: 40, spread: 50, origin: { y: 0.8 } });
     setTimeout(() => setSimulatedToast(null), 4500);
   };
 
-  const deleteStop = (id: string) => {
-    if (!window.confirm('Delete this stop?')) return;
-    onUpdateTrip({ ...trip, cities: trip.cities.filter((c) => c.id !== id) });
+  const deleteStop = (id: string, label: string) => {
+    setConfirmStop({ id, label });
   };
 
-  const transitIcon = (t: TransitReminder['type']) => {
-    if (t === 'flight') return Plane;
-    if (t === 'train') return Train;
-    if (t === 'bus') return Bus;
-    if (t === 'cab') return Car;
-    return Hotel;
+  const confirmStopGo = () => {
+    if (!confirmStop) return;
+    onUpdateTrip({ ...trip, cities: trip.cities.filter((c) => c.id !== confirmStop.id) });
   };
+
+  // Trip countdown — unmissable banner data (also saved as a reminder on trip create)
+  const nowMs = Date.now();
+  const startMs = new Date(trip.startDate + 'T00:00:00').getTime();
+  const endMs = new Date(trip.endDate + 'T00:00:00').getTime();
+  const daysToStart = Math.ceil((startMs - nowMs) / 86400000);
+  const tripPhase: 'upcoming' | 'live' | 'done' = isNaN(startMs) ? 'live' : nowMs < startMs ? 'upcoming' : nowMs <= endMs + 86400000 ? 'live' : 'done';
+  const tripDayCount = !isNaN(startMs) && !isNaN(endMs) && endMs >= startMs
+    ? Math.ceil((endMs - startMs) / 86400000) + 1
+    : 0;
+  const isOwner = isAdmin || !trip.ownerUid || trip.ownerUid === myUid;
+  const myName = trip.members.find((m) => m.isCurrentUser)?.name?.replace(/\(You\)/g, '').trim() || 'Someone';
 
   return (
     <div className="space-y-5 max-w-3xl mx-auto">
+      {/* Trip countdown banner — always visible */}
+      {tripPhase === 'upcoming' && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md flex items-center justify-between gap-3">
+          <div>
+            <p className="text-lg font-extrabold font-display leading-tight">Starts {daysToStart <= 0 ? 'very soon' : `in ${daysToStart} day${daysToStart > 1 ? 's' : ''}`}</p>
+            <p className="text-[11px] text-indigo-100 font-medium">
+              {new Date(trip.startDate + 'T00:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+            </p>
+          </div>
+          <span className="text-2xl font-extrabold bg-white/20 rounded-2xl px-3 py-1.5">{daysToStart <= 0 ? '!' : daysToStart}</span>
+        </div>
+      )}
       {simulatedToast && (
         <div className="p-3.5 rounded-2xl bg-emerald-600 text-white shadow-lg flex items-center justify-between gap-3 animate-bounce">
           <div className="flex items-center gap-2 text-xs font-bold">
@@ -89,20 +127,38 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
 
       {/* Hero */}
       <div className="relative rounded-3xl overflow-hidden clean-card border border-slate-200 shadow-md">
-        <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${trip.coverImage})` }} />
+        <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: coverUrl ? `url(${coverUrl})` : undefined }} />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/65 to-slate-900/25" />
         <div className="relative z-10 p-6 sm:p-7 space-y-4">
           <div className="flex items-center justify-between">
             <span className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs font-extrabold shadow-sm">
               {new Date(trip.startDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} → {new Date(trip.endDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}
             </span>
-            <button onClick={onOpenTripEditor} className="text-xs text-white/90 hover:text-white px-3 py-1 rounded-xl bg-white/15 hover:bg-white/25 backdrop-blur-md border border-white/20 font-semibold transition-all cursor-pointer">
-              Edit Trip
-            </button>
+            {isOwner && (
+              <button onClick={onOpenTripEditor} className="text-xs text-white/90 hover:text-white px-3 py-1 rounded-xl bg-white/15 hover:bg-white/25 backdrop-blur-md border border-white/20 font-semibold transition-all cursor-pointer">
+                Edit Trip
+              </button>
+            )}
           </div>
           <div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight font-display">{trip.title}</h1>
             <p className="text-slate-200 text-xs sm:text-sm mt-1 max-w-xl">{trip.description}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {trip.inviteCode ? (
+              <button
+                onClick={handleCopyCode}
+                className="flex items-center gap-1.5 text-xs font-mono font-bold text-white/90 bg-white/15 border border-white/20 px-2.5 py-1 rounded-xl hover:bg-white/25 transition-colors cursor-pointer"
+                title="Copy invite code"
+              >
+                <span>{trip.inviteCode}</span>
+                {copiedCode ? <Check size={13} className="text-emerald-300" /> : <Copy size={13} className="text-white/70" />}
+              </button>
+            ) : (
+              <button onClick={onShareTrip} className="text-xs text-white px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 font-semibold cursor-pointer">
+                Get Invite Code
+              </button>
+            )}
           </div>
           <div className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-white/20">
             <div className="flex items-center gap-2.5">
@@ -111,139 +167,107 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
                   <MemberAvatar key={m.id} name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="sm" />
                 ))}
               </div>
-              <button onClick={onOpenTripEditor} className="text-xs text-white font-semibold hover:underline cursor-pointer">
-                {trip.members.length} Squad Member{trip.members.length !== 1 ? 's' : ''} · Manage
+              <button onClick={isOwner ? onOpenTripEditor : undefined} className={`text-xs font-semibold ${isOwner ? 'text-white hover:underline cursor-pointer' : 'text-white/70'}`}>
+                {trip.members.length} Squad Member{trip.members.length !== 1 ? 's' : ''}{isOwner ? ' · Manage' : ''}
               </button>
             </div>
             <div className="bg-black/30 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-white/10 text-left sm:text-right">
-              <span className="text-[11px] text-slate-300 block">Remaining Budget</span>
-              <span className="text-sm font-extrabold text-emerald-400">
-                ₹{remaining.toLocaleString('en-IN')} <span className="text-slate-300 font-normal text-xs">left ({100 - percentSpent}%)</span>
-              </span>
+              {myBudget > 0 ? (
+                <>
+                  <span className="text-[11px] text-slate-300 block">Your Budget</span>
+                  <span className="text-sm font-extrabold text-emerald-400">
+                    ₹{Math.max(0, myBudget - mySpent).toLocaleString('en-IN')} <span className="text-slate-300 font-normal text-xs">left of ₹{myBudget.toLocaleString('en-IN')}</span>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="text-[11px] text-slate-300 block">Remaining Budget</span>
+                  <span className="text-sm font-extrabold text-emerald-400">
+                    ₹{remaining.toLocaleString('en-IN')} <span className="text-slate-300 font-normal text-xs">left ({100 - percentSpent}%)</span>
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Snapshot */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-2xs space-y-1">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Spent</span>
-          <div className="text-xl font-extrabold text-slate-900 font-display">₹{totalSpent.toLocaleString('en-IN')}</div>
-          <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
-            <div className="bg-indigo-600 h-1.5 rounded-full" style={{ width: `${percentSpent}%` }} />
-          </div>
-          <span className="text-[10px] text-slate-500 font-medium block pt-1">{percentSpent}% of ₹{trip.totalBudget.toLocaleString('en-IN')} budget</span>
-        </div>
-        <div className="clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-2xs space-y-1">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Squad Size</span>
-          <div className="text-xl font-extrabold text-slate-900 font-display">{trip.members.length} friends</div>
-          <span className="text-[11px] text-slate-500 font-medium block pt-1">Splitwise across all group bills</span>
-        </div>
-        <div className="clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-2xs space-y-1">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Next Upcoming Event</span>
-          <div className="text-sm font-extrabold text-slate-900 truncate">{nextTransit?.title || 'No upcoming transit'}</div>
-          <span className="text-[11px] text-indigo-600 font-bold block">{nextTransit ? `${nextTransit.operator || ''} • Tap transit below for PNR` : 'Relax mode'}</span>
-        </div>
-      </div>
+      {/* Walkie-talkie: tap to talk to the squad */}
+      <TalkButton tripId={trip.id} byName={myName} />
 
-      {/* SMS simulator */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-        <div className="space-y-0.5">
-          <div className="flex items-center gap-1.5">
-            <Sparkles className="w-4 h-4 text-indigo-600" />
-            <span className="text-xs font-extrabold text-indigo-950">Android APK Background SMS Listener</span>
+      {/* Snapshot — Total Spent jumps to Expenses, Squad opens members */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <button onClick={onGoExpenses} className="text-left clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-2xs space-y-1 hover:border-indigo-400 cursor-pointer group">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+            {myBudget > 0 ? 'Your Share' : 'Total Spent'}
+            <span className="flex items-center gap-0.5 text-[10px] font-bold text-indigo-600">History <ChevronRight size={12} strokeWidth={2.75} stroke="currentColor" /></span>
+          </span>
+          <div className="text-xl font-extrabold text-slate-900 font-display">₹{(myBudget > 0 ? mySpent : totalSpent).toLocaleString('en-IN')}</div>
+          <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
+            <div className="bg-indigo-600 h-1.5 rounded-full" style={{ width: `${myBudget > 0 ? Math.min(100, Math.round((mySpent / myBudget) * 100)) : percentSpent}%` }} />
           </div>
-          <p className="text-[11px] text-slate-600">In the native Android app, debited bank SMS messages are picked up automatically in the background without copy-pasting.</p>
-        </div>
-        <button onClick={handleSimulateIncomingSMS} className="flex-shrink-0 flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs shadow-indigo-200 transition-all cursor-pointer">
-          <Zap className="w-3.5 h-3.5" />
-          <span>Simulate SMS Alert</span>
+          <span className="text-[10px] text-slate-500 font-medium block pt-1">{myBudget > 0 ? `₹${Math.max(0, myBudget - mySpent).toLocaleString('en-IN')} left of ₹${myBudget.toLocaleString('en-IN')}` : `₹${remaining.toLocaleString('en-IN')} remaining of ₹${trip.totalBudget.toLocaleString('en-IN')}`} · tap for history</span>
+        </button>
+        <button onClick={() => setSquadOpen(true)} className="text-left clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-2xs space-y-1 hover:border-indigo-400 cursor-pointer">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+            Squad
+            <span className="flex items-center gap-0.5 text-[10px] font-bold text-indigo-600">View all <ChevronRight size={12} strokeWidth={2.75} stroke="currentColor" /></span>
+          </span>
+          <div className="flex items-center gap-2">
+            <div className="flex -space-x-1.5">
+              {trip.members.slice(0, 4).map((m, i) => (
+                <MemberAvatar key={m.id} name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="xs" />
+              ))}
+            </div>
+            <div className="text-xl font-extrabold text-slate-900 font-display">{trip.members.length} friends</div>
+          </div>
+          <span className="text-[11px] text-slate-500 font-medium block pt-1">Tap to view, add, edit or remove members</span>
         </button>
       </div>
 
-      {/* Transit list with edit/delete */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-extrabold text-slate-900 font-display">Transit & Tickets ({reminders.length})</h3>
-          <button onClick={() => setTransitModal({ open: true, editing: null })} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer">
-            <Plus className="w-3.5 h-3.5" /> Add Transit
+      {/* SMS demo (web only — the installed app reads real bank SMS automatically) */}
+      {!isNativeApp() && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-indigo-600" />
+              <span className="text-xs font-extrabold text-indigo-950">Try SMS auto-log (demo)</span>
+            </div>
+            <p className="text-[11px] text-slate-600">Browsers cannot read real SMS, so this button simulates one incoming bank message. The installed app reads actual debit SMS by itself.</p>
+          </div>
+          <button onClick={handleSimulateIncomingSMS} className="flex-shrink-0 flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs shadow-indigo-200 transition-all cursor-pointer">
+            <Zap className="w-3.5 h-3.5" />
+            <span>Simulate SMS Alert</span>
           </button>
         </div>
-        {reminders.length === 0 && <p className="text-xs text-slate-500 bg-white border border-dashed border-slate-300 rounded-2xl p-4 text-center">No transit added yet.</p>}
-        {reminders.map((t) => {
-          const Icon = transitIcon(t.type);
-          return (
-            <div key={t.id} className="clean-card rounded-2xl p-5 border border-slate-200 bg-white shadow-xs space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100 flex-shrink-0">
-                    <Icon className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="text-sm font-bold text-slate-900 block">{t.title}</span>
-                    <span className="text-xs text-slate-500 font-medium">{t.operator} {t.transitNumber ? `• ${t.transitNumber}` : ''}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => setTransitModal({ open: true, editing: t })} className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => window.confirm('Delete this transit?') && onDeleteReminder(t.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
-              </div>
-              <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                <div>
-                  <span className="text-slate-400 block text-[10px] font-bold uppercase tracking-wider">Departure</span>
-                  <span className="font-bold text-slate-900 text-sm">{t.departureLocation} → {t.arrivalLocation}</span>
-                  <span className="text-indigo-600 block text-xs font-semibold mt-0.5">
-                    {t.departureTime ? new Date(t.departureTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
-                  </span>
-                </div>
-                {t.pnrOrBookingRef && (
-                  <button onClick={() => handleCopy(t.id, t.pnrOrBookingRef)} className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-mono font-bold text-slate-700 hover:border-indigo-500 hover:text-indigo-600 shadow-2xs transition-all cursor-pointer" title="Tap to copy PNR">
-                    <span>PNR: {t.pnrOrBookingRef}</span>
-                    {copiedId === t.id ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      )}
 
-      {/* Itinerary with edit/delete */}
+      {/* Itinerary — simple spots list (days come from trip dates) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-extrabold text-slate-900 font-display">Trip Itinerary & Stops</h3>
+          <h3 className="text-sm font-extrabold text-slate-900 font-display">Itinerary{tripDayCount > 0 ? ` (${tripDayCount}-day trip)` : ''}</h3>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 font-medium">{trip.cities.length} Stops Planned</span>
-            <button onClick={() => setStopModal({ open: true, editing: null })} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer">
-              <Plus className="w-3.5 h-3.5" /> Add Stop
+            <span className="text-xs text-slate-500 font-medium">{trip.cities.length} spots</span>
+            <button onClick={() => setStopModal({ open: true, editing: null })} className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer">
+              Add Spot
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-          {trip.cities.map((city, idx) => {
-            const cityExpenses = expenses.filter((e) => e.cityId === city.id);
-            const spent = cityExpenses.reduce((a, b) => a + b.amount, 0);
-            return (
-              <div key={city.id} className="clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-xs hover:border-indigo-300 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-wider bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">Stop #{idx + 1}</span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs font-bold text-slate-600 mr-1">₹{spent.toLocaleString('en-IN')} spent</span>
-                    <button onClick={() => setStopModal({ open: true, editing: city })} className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer" title="Edit stop"><Edit2 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => deleteStop(city.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer" title="Delete stop"><Trash2 className="w-3.5 h-3.5" /></button>
-                  </div>
-                </div>
-                <h4 className="font-extrabold text-slate-900 text-base font-display">{city.name}</h4>
-                <p className="text-xs text-slate-600 line-clamp-2">{city.notes || city.stateOrCountry}</p>
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
-                  <span>Target: ₹{city.budget.toLocaleString('en-IN')}</span>
-                  <span className="text-indigo-600 font-bold">{city.startDate?.slice(5)} → {city.endDate?.slice(5)}</span>
-                </div>
-              </div>
-            );
-          })}
+        {trip.cities.length === 0 && (
+          <p className="text-xs text-slate-500 bg-white border border-dashed border-slate-300 rounded-2xl p-4 text-center">No spots yet — add places you want to visit.</p>
+        )}
+        <div className="space-y-2">
+          {trip.cities.map((city, idx) => (
+            <div key={city.id} className="clean-card rounded-2xl px-4 py-3 border border-slate-200 bg-white flex items-center gap-3">
+              <span className="w-7 h-7 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-extrabold flex items-center justify-center flex-shrink-0">{idx + 1}</span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-bold text-slate-900 truncate">{city.name}</span>
+                {city.notes ? <span className="block text-[11px] text-slate-500 truncate">{city.notes}</span> : null}
+              </span>
+              <button onClick={() => setStopModal({ open: true, editing: city })} className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
+              <button onClick={() => deleteStop(city.id, city.name)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -258,100 +282,229 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
           }}
         />
       )}
-      {transitModal.open && (
-        <TransitFormModal
-          tripId={trip.id}
-          editing={transitModal.editing}
-          onClose={() => setTransitModal({ open: false, editing: null })}
-          onSave={(r) => {
-            if (transitModal.editing) onUpdateReminder(r);
-            else onAddReminder(r);
-            setTransitModal({ open: false, editing: null });
+      {squadOpen && (
+        <SquadModal
+          trip={trip}
+          onClose={() => setSquadOpen(false)}
+          onSave={(members) => {
+            onUpdateTrip({ ...trip, members });
+            setSquadOpen(false);
           }}
+          myUid={myUid}
+          isAdmin={isAdmin}
         />
       )}
+      {confirmStop && (
+        <ConfirmDialog
+          message={`"${confirmStop.label}" will be deleted.`}
+          onConfirm={confirmStopGo}
+          onClose={() => setConfirmStop(null)}
+        />
+      )}
+
+      {/* Persistent invite code at trip end */}
+      <div className="clean-card rounded-2xl p-4 border border-slate-200 bg-white flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">Invite Code</p>
+          <p className="text-sm font-mono font-extrabold text-indigo-700 tracking-widest truncate">{trip.inviteCode || '—'}</p>
+          <p className="text-[11px] text-slate-500">Share this code to invite friends to this trip</p>
+        </div>
+        {trip.inviteCode ? (
+          <button
+            onClick={handleCopyCode}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold cursor-pointer flex-shrink-0"
+          >
+            {copiedCode ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+            <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+          </button>
+        ) : (
+          <button onClick={onShareTrip} className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer flex-shrink-0">
+            Get Code
+          </button>
+        )}
+      </div>
     </div>
   );
 };
 
 function StopFormModal({ editing, onClose, onSave }: { editing: CityStop | null; onClose: () => void; onSave: (s: CityStop) => void }) {
   const [name, setName] = useState(editing?.name || '');
-  const [state, setState] = useState(editing?.stateOrCountry || '');
-  const [startDate, setStartDate] = useState(editing?.startDate || '');
-  const [endDate, setEndDate] = useState(editing?.endDate || '');
-  const [budget, setBudget] = useState<number | ''>(editing?.budget ?? '');
   const [notes, setNotes] = useState(editing?.notes || '');
+  const [nameError, setNameError] = useState(false);
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) { alert('Stop name required'); return; }
-    onSave({ id: editing?.id || `city_${Date.now()}`, name: name.trim(), stateOrCountry: state, startDate, endDate, budget: Number(budget) || 0, notes });
+    if (!name.trim()) { setNameError(true); return; }
+    onSave({ id: editing?.id || `city_${Date.now()}`, name: name.trim(), stateOrCountry: editing?.stateOrCountry || '', startDate: editing?.startDate || '', endDate: editing?.endDate || '', budget: editing?.budget || 0, notes: notes.trim() });
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
       <form onSubmit={submit} className="bg-white max-w-md w-full rounded-3xl p-6 space-y-3 shadow-2xl">
         <div className="flex items-center justify-between">
-          <h4 className="font-extrabold">{editing ? 'Edit Stop' : 'Add Stop'}</h4>
+          <h4 className="font-extrabold">{editing ? 'Edit Spot' : 'Add Spot'}</h4>
           <button type="button" onClick={onClose} className="p-1 text-slate-400 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Stop name *" className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-bold" />
-        <input value={state} onChange={(e) => setState(e.target.value)} placeholder="State / Country" className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs" />
-        <div className="grid grid-cols-2 gap-2">
-          <div><label className="text-[11px] font-bold text-slate-500">Start</label><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="date-input" /></div>
-          <div><label className="text-[11px] font-bold text-slate-500">End</label><input type="date" value={endDate} min={startDate} onChange={(e) => setEndDate(e.target.value)} className="date-input" /></div>
+        <div>
+          <input
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (nameError && e.target.value.trim()) setNameError(false);
+            }}
+            placeholder="Spot name *"
+            className={`w-full rounded-xl border px-3 py-2 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-100 ${
+              nameError ? 'bg-rose-50 border-rose-400 placeholder-rose-300 focus:border-rose-400' : 'bg-slate-50 border-slate-200 focus:border-indigo-500'
+            }`}
+          />
         </div>
-        <input type="number" value={budget} onChange={(e) => setBudget(e.target.value === '' ? '' : Number(e.target.value))} placeholder="Budget ₹" className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-bold" />
-        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" rows={2} className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs" />
-        <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="px-4 py-2 text-xs font-bold text-slate-500 cursor-pointer">Cancel</button><button className="px-5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer">{editing ? 'Save' : 'Add Stop'}</button></div>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Description (optional)" rows={2} className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs" />
+        <button className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer">Save</button>
       </form>
     </div>
   );
 }
 
-function TransitFormModal({ tripId, editing, onClose, onSave }: { tripId: string; editing: TransitReminder | null; onClose: () => void; onSave: (r: TransitReminder) => void }) {
-  const [title, setTitle] = useState(editing?.title || '');
-  const [type, setType] = useState<TransitReminder['type']>(editing?.type || 'flight');
-  const [operator, setOperator] = useState(editing?.operator || '');
-  const [transitNumber, setTransitNumber] = useState(editing?.transitNumber || '');
-  const [from, setFrom] = useState(editing?.departureLocation || '');
-  const [to, setTo] = useState(editing?.arrivalLocation || '');
-  const [dep, setDep] = useState(editing?.departureTime || '');
-  const [arr, setArr] = useState(editing?.arrivalTime || '');
-  const [pnr, setPnr] = useState(editing?.pnrOrBookingRef || '');
-  const [seat, setSeat] = useState(editing?.seatOrBerth || '');
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim() || !from.trim() || !dep) { alert('Title, departure + time required'); return; }
-    onSave({ id: editing?.id || `rem_${Date.now()}`, tripId, title: title.trim(), type, operator, transitNumber, departureLocation: from.trim(), arrivalLocation: to.trim(), departureTime: dep, arrivalTime: arr || dep, pnrOrBookingRef: pnr, seatOrBerth: seat, reminderHoursBefore: editing?.reminderHoursBefore || 3 });
+function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onClose: () => void; onSave: (members: TripMember[]) => void; myUid?: string | null; isAdmin?: boolean }) {
+  const [members, setMembers] = useState<TripMember[]>(trip.members);
+  const [newName, setNewName] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newBudget, setNewBudget] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [contactList, setContactList] = useState<DeviceContact[] | null>(null);
+  const [contactError, setContactError] = useState<string | null>(null);
+  const isOwner = isAdmin || !trip.ownerUid || trip.ownerUid === myUid;
+
+  const addOrSave = () => {
+    if (!newName.trim()) return;
+    if (newPhone && !isValidPhone(newPhone)) {
+      alert('Please enter a valid 10-digit mobile number');
+      return;
+    }
+    const budgetVal = newBudget ? Number(newBudget) : undefined;
+    if (editingId) {
+      setMembers((prev) => prev.map((m) => (m.id === editingId ? { ...m, name: newName.trim(), phone: newPhone.trim(), budget: budgetVal } : m)));
+      setEditingId(null);
+    } else {
+      setMembers((prev) => [...prev, { id: `m_${Date.now()}`, name: newName.trim(), avatar: getRandomEmoji(), phone: newPhone.trim(), upiId: '', joinedAt: new Date().toISOString(), budget: budgetVal }]);
+    }
+    setNewName(''); setNewPhone(''); setNewBudget('');
   };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
-      <form onSubmit={submit} className="bg-white max-w-md w-full rounded-3xl p-6 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto">
+      <div className="bg-white max-w-md w-full rounded-3xl p-6 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h4 className="font-extrabold">{editing ? 'Edit Transit' : 'Add Transit'}</h4>
-          <button type="button" onClick={onClose} className="p-1 text-slate-400 cursor-pointer"><X className="w-4 h-4" /></button>
+          <h4 className="font-extrabold text-slate-900">Squad Members ({members.length})</h4>
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title * e.g. IndiGo 6E-204" className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-bold" />
-        <div className="grid grid-cols-3 gap-2">
-          <select value={type} onChange={(e) => setType(e.target.value as any)} className="rounded-xl bg-slate-50 border px-2 py-2 text-xs font-bold">
-            <option value="flight">Flight</option><option value="train">Train</option><option value="bus">Bus</option><option value="cab">Cab</option><option value="hotel_checkin">Hotel</option>
-          </select>
-          <input value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="Operator" className="rounded-xl bg-slate-50 border px-3 py-2 text-xs" />
-          <input value={transitNumber} onChange={(e) => setTransitNumber(e.target.value)} placeholder="No." className="rounded-xl bg-slate-50 border px-3 py-2 text-xs" />
+        <div className="space-y-2">
+          {members.map((m, i) => (
+            <div key={m.id} className="bg-slate-50 rounded-xl px-3 py-2 border border-slate-100 space-y-1.5">
+              <div className="flex items-center gap-2.5">
+                <MemberAvatar name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold truncate">
+                    {m.isCurrentUser ? `${m.name.replace(/\(You\)/g, '').trim() || 'You'} (You)` : m.name}
+                    {trip.ownerUid && m.uid === trip.ownerUid && <span className="ml-1.5 text-[9px] font-extrabold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">OWNER</span>}
+                  </p>
+                  <p className="text-[11px] text-slate-400 truncate">{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p>
+                </div>
+                <button onClick={() => setMembers((prev) => prev.map((mm) => (mm.id === m.id ? { ...mm, avatar: getRandomEmoji() } : mm)))} className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer">Shuffle</button>
+                {isOwner && !m.isCurrentUser && (
+                  <>
+                    <button onClick={() => { setEditingId(m.id); setNewName(m.name); setNewPhone(m.phone || ''); setNewBudget(m.budget?.toString() || ''); setShowAdd(true); }}><Pencil size={13} className="text-slate-400 hover:text-indigo-500" /></button>
+                    <button onClick={() => setMembers((prev) => prev.filter((mm) => mm.id !== m.id))}><X size={14} className="text-slate-300 hover:text-red-400" /></button>
+                  </>
+                )}
+              </div>
+              {m.isCurrentUser ? (
+                <div className="flex items-center gap-1.5 pl-[38px]">
+                  <span className="text-[10px] text-slate-400 font-medium">Budget:</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={m.budget || ''}
+                    onChange={(e) => {
+                      const val = e.target.value === '' ? undefined : Number(e.target.value);
+                      setMembers((prev) => prev.map((mm) => (mm.id === m.id ? { ...mm, budget: val } : mm)));
+                    }}
+                    placeholder="0"
+                    className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100"
+                  />
+                  <span className="text-[10px] text-slate-400">/trip</span>
+                </div>
+              ) : m.budget ? (
+                <div className="flex items-center gap-1.5 pl-[38px]">
+                  <span className="text-[10px] text-slate-400 font-medium">Budget:</span>
+                  <span className="text-[11px] font-bold text-slate-600">₹{m.budget.toLocaleString('en-IN')}</span>
+                  <span className="text-[10px] text-slate-400">/trip</span>
+                </div>
+              ) : null}
+            </div>
+          ))}
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <input value={from} onChange={(e) => setFrom(e.target.value)} placeholder="From *" className="rounded-xl bg-slate-50 border px-3 py-2 text-xs" />
-          <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To" className="rounded-xl bg-slate-50 border px-3 py-2 text-xs" />
+        {isOwner && (
+          <button onClick={() => { setShowAdd(!showAdd); setEditingId(null); setNewName(''); setNewPhone(''); }} className="w-full py-2.5 rounded-xl border border-dashed border-indigo-300 text-indigo-600 text-xs font-bold cursor-pointer">
+            {showAdd ? 'Hide' : 'Add Member'}
+          </button>
+        )}
+        {showAdd && (
+          <div className="bg-slate-50 rounded-xl p-3 border space-y-2">
+            <p className="text-[11px] font-bold text-slate-500 uppercase">{editingId ? 'Edit member' : 'Add manually or pick contacts'}</p>
+            <button
+              onClick={async () => {
+                setContactError(null);
+                try {
+                  const { contacts } = await fetchDeviceContacts();
+                  setContactList(contacts);
+                } catch {
+                  setContactError('Could not open phone contacts (permission denied or unavailable). Add manually below.');
+                }
+              }}
+              className="w-full bg-indigo-600 text-white text-xs font-bold py-2 rounded-xl hover:bg-indigo-700 cursor-pointer"
+            >
+              Add Contacts
+            </button>
+            {contactError && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 font-medium">{contactError}</p>
+            )}
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name *" className="w-full border rounded-xl px-3 py-2 text-xs" />
+            <PhoneInput value={newPhone} onChange={setNewPhone} placeholder="Phone" />
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-500 font-medium">Budget</span>
+              <input type="number" min={0} value={newBudget} onChange={(e) => setNewBudget(e.target.value)} placeholder="0" className="flex-1 border rounded-xl px-3 py-2 text-xs" />
+              <span className="text-[11px] text-slate-400">/trip</span>
+            </div>
+            <button onClick={addOrSave} disabled={!newName.trim()} className="w-full bg-indigo-600 text-white text-xs font-bold py-2 rounded-xl disabled:opacity-40 cursor-pointer">{editingId ? 'Save' : 'Add to Squad'}</button>
+          </div>
+        )}
+        <div className="pt-1 border-t border-slate-100">
+          <button onClick={() => onSave(members)} className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer">Save</button>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div><label className="text-[11px] font-bold text-slate-500">Departure *</label><input type="datetime-local" value={dep} onChange={(e) => setDep(e.target.value)} className="date-input" /></div>
-          <div><label className="text-[11px] font-bold text-slate-500">Arrival</label><input type="datetime-local" value={arr} min={dep} onChange={(e) => setArr(e.target.value)} className="date-input" /></div>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <input value={pnr} onChange={(e) => setPnr(e.target.value)} placeholder="PNR / Ref" className="rounded-xl bg-slate-50 border px-3 py-2 text-xs font-mono font-bold" />
-          <input value={seat} onChange={(e) => setSeat(e.target.value)} placeholder="Seat / Berth" className="rounded-xl bg-slate-50 border px-3 py-2 text-xs" />
-        </div>
-        <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="px-4 py-2 text-xs font-bold text-slate-500 cursor-pointer">Cancel</button><button className="px-5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer">{editing ? 'Save' : 'Add Transit'}</button></div>
-      </form>
+      </div>
+
+      {contactList && (
+        <ContactPickerModal
+          contacts={contactList}
+          onClose={() => setContactList(null)}
+          onAdd={(picked) => {
+            const nowIso = new Date().toISOString();
+            const fresh: TripMember[] = picked.map((c, i) => ({
+              id: `m_contact_${Date.now()}_${i}`,
+              name: c.name,
+              avatar: getRandomEmoji(),
+              phone: c.phone,
+              upiId: '',
+              joinedAt: nowIso,
+            }));
+            setMembers((prev) => {
+              const phones = new Set(prev.map((mm) => mm.phone));
+              return [...prev, ...fresh.filter((mm) => !mm.phone || !phones.has(mm.phone))];
+            });
+            setContactList(null);
+          }}
+        />
+      )}
     </div>
   );
 }

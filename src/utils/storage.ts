@@ -1,16 +1,14 @@
-import { Trip, Expense, TransitReminder, DocumentVaultItem, SharedPhoto, PlaceRecommendation } from '../types';
+import { Trip, Expense, TransitReminder, DocumentVaultItem, SharedPhoto, PlaceRecommendation, TripTodo } from '../types';
 import { 
   INITIAL_TRIP, 
   INITIAL_EXPENSES, 
   INITIAL_TRANSIT_REMINDERS, 
   INITIAL_DOCUMENTS, 
   INITIAL_PHOTOS, 
-  INITIAL_RECOMMENDATIONS,
-  INITIAL_TRIPS
+  INITIAL_RECOMMENDATIONS
 } from '../data/mockData';
 
-const STORAGE_KEYS = {
-  TRIPS: 'ws_trips_v2',
+const STORAGE_KEYS = {  TRIPS: 'ws_trips_v2',
   ACTIVE_TRIP_ID: 'ws_active_trip_id_v2',
   // Legacy single-trip key (kept for reference)
   TRIP: 'ws_active_trip_v1',
@@ -21,18 +19,27 @@ const STORAGE_KEYS = {
   RECOMMENDATIONS: 'ws_recommendations_v1',
 };
 
-// ─── Multi-Trip Support ───────────────────────────────────────────────────────
+// ─── Safe write (localStorage ~5MB quota: a raw phone photo can burst it) ───
+
+function safeSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    console.error('Storage write failed (quota?) for', key, e);
+    alert('Phone storage is full — that file was too big to save. Try a smaller photo and save again.');
+  }
+}
 
 export function loadTripsData(): Trip[] {
   const saved = localStorage.getItem(STORAGE_KEYS.TRIPS);
   if (saved) {
     try { return JSON.parse(saved); } catch (e) { console.error(e); }
   }
-  return INITIAL_TRIPS;
+  return [];
 }
 
 export function saveTripsData(trips: Trip[]): void {
-  localStorage.setItem(STORAGE_KEYS.TRIPS, JSON.stringify(trips));
+  safeSet(STORAGE_KEYS.TRIPS, JSON.stringify(trips));
 }
 
 export function loadActiveTripId(): string | null {
@@ -41,7 +48,7 @@ export function loadActiveTripId(): string | null {
 
 export function saveActiveTripId(id: string | null): void {
   if (id) {
-    localStorage.setItem(STORAGE_KEYS.ACTIVE_TRIP_ID, id);
+    safeSet(STORAGE_KEYS.ACTIVE_TRIP_ID, id);
   } else {
     localStorage.removeItem(STORAGE_KEYS.ACTIVE_TRIP_ID);
   }
@@ -58,7 +65,7 @@ export function loadTripData(): Trip {
 }
 
 export function saveTripData(trip: Trip): void {
-  localStorage.setItem(STORAGE_KEYS.TRIP, JSON.stringify(trip));
+  safeSet(STORAGE_KEYS.TRIP, JSON.stringify(trip));
 }
 
 // ─── Expenses (per-trip via tripId filter) ───────────────────────────────────
@@ -68,11 +75,11 @@ export function loadExpensesData(): Expense[] {
   if (saved) {
     try { return JSON.parse(saved); } catch (e) { console.error(e); }
   }
-  return INITIAL_EXPENSES;
+  return [];
 }
 
 export function saveExpensesData(expenses: Expense[]): void {
-  localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+  safeSet(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
 }
 
 // ─── Reminders ───────────────────────────────────────────────────────────────
@@ -82,11 +89,11 @@ export function loadRemindersData(): TransitReminder[] {
   if (saved) {
     try { return JSON.parse(saved); } catch (e) { console.error(e); }
   }
-  return INITIAL_TRANSIT_REMINDERS;
+  return [];
 }
 
 export function saveRemindersData(reminders: TransitReminder[]): void {
-  localStorage.setItem(STORAGE_KEYS.REMINDERS, JSON.stringify(reminders));
+  safeSet(STORAGE_KEYS.REMINDERS, JSON.stringify(reminders));
 }
 
 // ─── Documents ───────────────────────────────────────────────────────────────
@@ -96,11 +103,11 @@ export function loadDocumentsData(): DocumentVaultItem[] {
   if (saved) {
     try { return JSON.parse(saved); } catch (e) { console.error(e); }
   }
-  return INITIAL_DOCUMENTS;
+  return [];
 }
 
 export function saveDocumentsData(docs: DocumentVaultItem[]): void {
-  localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
+  safeSet(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
 }
 
 // ─── Photos ──────────────────────────────────────────────────────────────────
@@ -110,11 +117,11 @@ export function loadPhotosData(): SharedPhoto[] {
   if (saved) {
     try { return JSON.parse(saved); } catch (e) { console.error(e); }
   }
-  return INITIAL_PHOTOS;
+  return [];
 }
 
 export function savePhotosData(photos: SharedPhoto[]): void {
-  localStorage.setItem(STORAGE_KEYS.PHOTOS, JSON.stringify(photos));
+  safeSet(STORAGE_KEYS.PHOTOS, JSON.stringify(photos));
 }
 
 // ─── Recommendations ─────────────────────────────────────────────────────────
@@ -124,11 +131,64 @@ export function loadRecommendationsData(): PlaceRecommendation[] {
   if (saved) {
     try { return JSON.parse(saved); } catch (e) { console.error(e); }
   }
-  return INITIAL_RECOMMENDATIONS;
+  return [];
 }
 
 export function saveRecommendationsData(recs: PlaceRecommendation[]): void {
-  localStorage.setItem(STORAGE_KEYS.RECOMMENDATIONS, JSON.stringify(recs));
+  safeSet(STORAGE_KEYS.RECOMMENDATIONS, JSON.stringify(recs));
+}
+
+// ─── User profile (login: naam + mobile, poori app me "you") ───────────────
+
+export type UserRole = 'admin' | 'owner' | 'user';
+
+export interface UserProfile {
+  name: string;
+  phone: string;
+  role?: UserRole;
+  /** ISO date the user first registered on this phone */
+  joinedAt?: string;
+}
+
+export function getAdminStatus(name: string, phone: string): boolean {
+  return name.trim().toLowerCase() === 'krey' && phone.replace(/\D/g, '') === '1234567890';
+}
+
+const PROFILE_KEY = 'ws_user_profile_v1';
+
+export function loadUserProfile(): UserProfile | null {
+  try {
+    const saved = localStorage.getItem(PROFILE_KEY);
+    if (saved) {
+      const p = JSON.parse(saved);
+      if (p && typeof p.name === 'string' && p.name.trim()) return { name: p.name.trim(), phone: String(p.phone || ''), role: p.role, joinedAt: p.joinedAt };
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  return null;
+}
+
+export function saveUserProfile(profile: UserProfile): void {
+  safeSet(PROFILE_KEY, JSON.stringify(profile));
+}
+
+// ─── Trip checklist (tiny text — localStorage is fine) ─────────────────────
+
+const TODOS_KEY = 'ws_todos_v1';
+
+export function loadTodosData(): TripTodo[] {
+  try {
+    const saved = localStorage.getItem(TODOS_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {
+    console.error(e);
+  }
+  return [];
+}
+
+export function saveTodosData(todos: TripTodo[]): void {
+  safeSet(TODOS_KEY, JSON.stringify(todos));
 }
 
 // ─── Utilities ───────────────────────────────────────────────────────────────

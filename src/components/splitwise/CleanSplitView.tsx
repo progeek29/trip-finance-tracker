@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Trip, Expense, SettlementDebt, TripMember } from '../../types';
+import { Trip, Expense, TripMember } from '../../types';
 import { calculateMemberBalances, simplifyDebts } from '../../utils/debtSimplifier';
-import { ArrowRight, CheckCircle2, Plus, X, Edit2, Trash2, Receipt } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Edit2, Trash2, Receipt, ChevronLeft } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { MemberAvatar } from '../common/MemberAvatar';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 
 interface CleanSplitViewProps {
   trip: Trip;
@@ -11,6 +12,7 @@ interface CleanSplitViewProps {
   onOpenQuickAdd: () => void;
   onEditExpense: (e: Expense) => void;
   onDeleteExpense: (id: string) => void;
+  onBackToExpenses: () => void;
 }
 
 export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
@@ -19,9 +21,10 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
   onOpenQuickAdd,
   onEditExpense,
   onDeleteExpense,
+  onBackToExpenses,
 }) => {
   const [settledIds, setSettledIds] = useState<string[]>([]);
-  const [selectedQR, setSelectedQR] = useState<SettlementDebt | null>(null);
+  const [confirmBill, setConfirmBill] = useState<Expense | null>(null);
 
   const balances = calculateMemberBalances(trip.members, expenses);
   const settlements = simplifyDebts(balances);
@@ -41,6 +44,9 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
+      <button onClick={onBackToExpenses} className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-indigo-600 cursor-pointer">
+        <ChevronLeft size={14} /> Back to Expenses
+      </button>
       <div className="clean-card rounded-3xl p-6 sm:p-7 border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">Your Personal Group Balance</span>
@@ -48,12 +54,11 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
             {myBalance >= 0 ? `+₹${myBalance.toLocaleString('en-IN')}` : `-₹${Math.abs(myBalance).toLocaleString('en-IN')}`}
           </div>
           <p className="text-xs text-slate-500 font-medium mt-1">
-            {myBalance >= 0 ? '🎉 You are in positive balance. Friends owe you money!' : '⚡ You owe money to settle up your share of group expenses.'}
+            {myBalance >= 0 ? 'You are in positive balance. Friends owe you money.' : 'You owe money to settle up your share of group expenses.'}
           </p>
         </div>
-        <button onClick={onOpenQuickAdd} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm shadow-indigo-200 transition-colors cursor-pointer">
-          <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>+ Add Shared Bill</span>
+        <button onClick={onOpenQuickAdd} className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm shadow-indigo-200 transition-colors cursor-pointer">
+          <span>Add Shared Bill</span>
         </button>
       </div>
 
@@ -92,11 +97,8 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-base font-extrabold text-slate-900 font-display">₹{debt.amount.toLocaleString('en-IN')}</span>
-                    {to.upiId && !isSettled && (
-                      <button onClick={() => setSelectedQR(debt)} className="px-2.5 py-1.5 rounded-xl bg-sky-50 text-sky-700 text-xs font-bold border border-sky-200 hover:bg-sky-100 transition-colors cursor-pointer">UPI QR</button>
-                    )}
                     <button disabled={isSettled} onClick={() => handleSettle(key)} className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${isSettled ? 'bg-emerald-100 text-emerald-800' : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs shadow-emerald-200'}`}>
-                      {isSettled ? 'Settled ✓' : 'Settle'}
+                      {isSettled ? 'Settled' : 'Settle'}
                     </button>
                   </div>
                 </div>
@@ -110,8 +112,8 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-extrabold text-slate-900 font-display">Shared Bills ({groupBills.length})</h3>
-          <button onClick={onOpenQuickAdd} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold cursor-pointer">
-            <Plus className="w-3.5 h-3.5" /> Add Bill
+          <button onClick={onOpenQuickAdd} className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold cursor-pointer">
+            Add Bill
           </button>
         </div>
         {groupBills.length === 0 && (
@@ -134,7 +136,7 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <button onClick={() => onEditExpense(e)} className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer" title="Edit bill"><Edit2 className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => window.confirm(`Delete "${e.title}"?`) && onDeleteExpense(e.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer" title="Delete bill"><Trash2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => setConfirmBill(e)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer" title="Delete bill"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               </div>
             );
@@ -156,22 +158,12 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
           ))}
         </div>
       </div>
-
-      {selectedQR && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="max-w-xs w-full rounded-3xl p-6 border border-slate-200 bg-white text-center shadow-2xl">
-            <div className="flex items-center justify-between pb-2 mb-3">
-              <h4 className="text-sm font-bold text-slate-900">Scan & Pay via UPI</h4>
-              <button onClick={() => setSelectedQR(null)} className="p-1 rounded-full text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-4 h-4" /></button>
-            </div>
-            <p className="text-xs text-slate-600 mb-3">Pay <strong>₹{selectedQR.amount.toLocaleString('en-IN')}</strong> to {getMember(selectedQR.toMemberId).name}</p>
-            <div className="bg-slate-50 p-3 rounded-2xl inline-block mb-3 border border-slate-200">
-              <img src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(`upi://pay?pa=${getMember(selectedQR.toMemberId).upiId}&pn=${encodeURIComponent(getMember(selectedQR.toMemberId).name)}&am=${selectedQR.amount}&cu=INR`)}`} alt="UPI QR Code" className="w-36 h-36 mx-auto rounded-lg" />
-            </div>
-            <p className="text-xs font-mono font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 p-2 rounded-xl mb-4">{getMember(selectedQR.toMemberId).upiId}</p>
-            <button onClick={() => setSelectedQR(null)} className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 transition-colors cursor-pointer">Done / Close</button>
-          </div>
-        </div>
+      {confirmBill && (
+        <ConfirmDialog
+          message={`"${confirmBill.title}" will be deleted.`}
+          onConfirm={() => onDeleteExpense(confirmBill.id)}
+          onClose={() => setConfirmBill(null)}
+        />
       )}
     </div>
   );

@@ -1,24 +1,26 @@
 import React, { useState } from 'react';
 import { Trip, Expense } from '../../types';
-import { Plus, Search, Edit2, Trash2, Download } from 'lucide-react';
+import { Search, Edit2, Trash2, Download, Users } from 'lucide-react';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 
 interface CleanExpensesViewProps {
   trip: Trip;
   expenses: Expense[];
-  onOpenQuickAdd: () => void;
   onEditExpense: (exp: Expense) => void;
   onDeleteExpense: (id: string) => void;
+  onGoSplit: () => void;
 }
 
 export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
   trip,
   expenses,
-  onOpenQuickAdd,
   onEditExpense,
   onDeleteExpense,
+  onGoSplit,
 }) => {
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
+  const [confirmExp, setConfirmExp] = useState<Expense | null>(null);
 
   const totalSpent = expenses.reduce((a, b) => a + b.amount, 0);
   const cashSpent = expenses.filter(e => e.paymentMode === 'cash').reduce((a, b) => a + b.amount, 0);
@@ -33,25 +35,6 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
     }
     return true;
   });
-
-  const handleExportCSV = () => {
-    const headers = ['Date', 'Title', 'Category', 'Amount (INR)', 'Payment Mode', 'Paid By', 'Notes'];
-    const rows = expenses.map(e => [
-      e.date,
-      `"${e.title.replace(/"/g, '""')}"`,
-      e.category,
-      e.amount,
-      e.paymentMode,
-      trip.members.find(m => m.id === e.paidByMemberId)?.name || e.paidByMemberId,
-      `"${(e.notes || '').replace(/"/g, '""')}"`
-    ]);
-    const blob = new Blob([[headers.join(','), ...rows.map(r => r.join(','))].join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Goa_Trip_Expenses.csv`;
-    link.click();
-  };
 
   const getCategoryBg = (cat: string) => {
     switch (cat) {
@@ -92,34 +75,34 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
 
         <div className="flex items-center gap-2">
           <button
-            onClick={handleExportCSV}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
-            title="Download CSV report"
+            onClick={() => window.print()}
+            className="flex items-center justify-center w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-colors cursor-pointer"
+            title="Download full history as PDF"
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>CSV</span>
+            <Download className="w-4 h-4" />
           </button>
           <button
-            onClick={onOpenQuickAdd}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm shadow-indigo-200 transition-all cursor-pointer"
+            onClick={onGoSplit}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm shadow-emerald-200 transition-all cursor-pointer"
+            title="Open Splitwise"
           >
-            <Plus className="w-4 h-4 stroke-[2.5]" />
-            <span>+ Add Spend</span>
+            <Users className="w-4 h-4" />
+            <span>Splitwise</span>
           </button>
         </div>
       </div>
 
       {/* 2. Filter Pills & Search */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
           {[
             { id: 'all', label: 'All' },
-            { id: 'cash', label: '💵 Cash' },
-            { id: 'food', label: '🍔 Food' },
-            { id: 'drinks', label: '🍹 Drinks' },
-            { id: 'stay', label: '🏨 Stay' },
-            { id: 'transit', label: '🚕 Transit' },
-            { id: 'activities', label: '🤿 Activities' },
+            { id: 'cash', label: 'Cash' },
+            { id: 'food', label: 'Food' },
+            { id: 'drinks', label: 'Drinks' },
+            { id: 'stay', label: 'Stay' },
+            { id: 'transit', label: 'Transit' },
+            { id: 'activities', label: 'Activities' },
           ].map((item) => (
             <button
               key={item.id}
@@ -157,16 +140,8 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
               className="clean-card rounded-2xl p-4 border border-slate-200 bg-white hover:border-indigo-300 flex items-center justify-between gap-4 transition-all shadow-2xs"
             >
               <div className="flex items-center gap-3.5">
-                <div className={`w-10 h-10 rounded-xl ${getCategoryBg(exp.category)} flex items-center justify-center text-lg flex-shrink-0 font-medium`}>
-                  {exp.category === 'food' && '🍔'}
-                  {exp.category === 'drinks' && '🍹'}
-                  {exp.category === 'stay' && '🏨'}
-                  {exp.category === 'transit' && '🚕'}
-                  {exp.category === 'activities' && '🤿'}
-                  {exp.category === 'fuel' && '⛽'}
-                  {exp.category === 'shopping' && '🛍'}
-                  {exp.category === 'emergency' && '🩺'}
-                  {exp.category === 'other' && '📦'}
+                <div className={`w-10 h-10 rounded-xl ${getCategoryBg(exp.category)} flex items-center justify-center flex-shrink-0 font-extrabold text-sm uppercase`}>
+                  {exp.category.slice(0, 2)}
                 </div>
 
                 <div>
@@ -210,7 +185,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={() => onDeleteExpense(exp.id)}
+                    onClick={() => setConfirmExp(exp)}
                     className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                     title="Delete Expense"
                   >
@@ -221,6 +196,41 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
             </div>
           );
         })}
+      </div>
+
+      {confirmExp && (
+        <ConfirmDialog
+          message={`"${confirmExp.title}" (Rs.${confirmExp.amount.toLocaleString('en-IN')}) will be deleted.`}
+          onConfirm={() => onDeleteExpense(confirmExp.id)}
+          onClose={() => setConfirmExp(null)}
+        />
+      )}
+
+      {/* Printable full-history statement (screen pe hidden, PDF me aata hai) */}      <div id="expense-statement" className="hidden print:block">
+        <h1 style={{ fontSize: 20, fontWeight: 800 }}>{trip.title} — Expense History</h1>
+        <p style={{ fontSize: 12, color: '#475569' }}>
+          {trip.startDate} to {trip.endDate} • Total: Rs.{totalSpent.toLocaleString('en-IN')} of Rs.{trip.totalBudget.toLocaleString('en-IN')}
+        </p>
+        <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', marginTop: 12 }}>
+          <thead>
+            <tr>
+              {['Date', 'Title', 'Category', 'Paid By', 'Amount'].map((h) => (
+                <th key={h} style={{ textAlign: 'left', borderBottom: '2px solid #0f172a', padding: '6px 4px' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {expenses.map((e) => (
+              <tr key={e.id}>
+                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.date}</td>
+                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.title}</td>
+                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.category}</td>
+                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{trip.members.find((m) => m.id === e.paidByMemberId)?.name || ''}</td>
+                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px', textAlign: 'right' }}>Rs.{e.amount.toLocaleString('en-IN')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

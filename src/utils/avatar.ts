@@ -46,3 +46,27 @@ export function getRandomPhotoAvatar(seed: string): string {
   for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
   return `https://i.pravatar.cc/150?u=${encodeURIComponent(seed)}-${hash % 70}`;
 }
+
+/** Simple emoji faces for squad members (profile photos come later). */
+export const MEMBER_EMOJIS = [
+  '😎', '🤩', '😇', '🥳', '🤠', '😀', '😃', '😄', '😁', '😆',
+  '😅', '🤣', '😂', '🙂', '😉', '😊', '😍', '🥰', '😘', '😜',
+  '🤗', '🤔', '😴', '🤖', '👽', '😺', '🐶', '🦊', '🐼', '🐯',
+  '🦁', '🐸', '🐵', '👻', '🤡', '👾', '🦸', '🧙', '💃', '🕺',
+];
+
+export function getEmojiFor(seed: string, index = 0): string {
+  let hash = index * 13 + 7;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return MEMBER_EMOJIS[hash % MEMBER_EMOJIS.length];
+}
+
+export function getRandomEmoji(): string {
+  return MEMBER_EMOJIS[Math.floor(Math.random() * MEMBER_EMOJIS.length)];
+}
+
+/** True when avatar is a stored emoji (not a photo URL). */
+export function isEmojiAvatar(avatar?: string): boolean {
+  if (!avatar) return false;
+  return !avatar.startsWith('http') && !avatar.startsWith('data:') && !avatar.startsWith('idb:') && !avatar.startsWith('blob:');
+}

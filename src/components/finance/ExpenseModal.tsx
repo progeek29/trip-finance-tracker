@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Expense, Trip, ExpenseCategory, PaymentMode, ExpenseSplit } from '../../types';
-import { X, DollarSign, Users, Sparkles, Banknote, CreditCard, Smartphone, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { Expense, Trip, ExpenseCategory, ExpenseSplit } from '../../types';
+import { X, Users } from 'lucide-react';
 
 interface ExpenseModalProps {
   isOpen: boolean;
@@ -24,13 +24,10 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const [title, setTitle] = useState(initialExpense?.title || '');
   const [amount, setAmount] = useState<number | ''>(initialExpense?.amount || '');
   const [category, setCategory] = useState<ExpenseCategory>(initialExpense?.category || 'food');
-  const [paymentMode, setPaymentMode] = useState<PaymentMode>(initialExpense?.paymentMode || 'upi');
   const [paidByMemberId, setPaidByMemberId] = useState<string>(
     initialExpense?.paidByMemberId || trip.members.find(m => m.isCurrentUser)?.id || trip.members[0].id
   );
   const [cityId, setCityId] = useState<string>(initialExpense?.cityId || trip.cities[0]?.id || '');
-  const [date, setDate] = useState<string>(initialExpense?.date || new Date().toISOString().split('T')[0]);
-  const [time, setTime] = useState<string>(initialExpense?.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
   const [notes, setNotes] = useState<string>(initialExpense?.notes || '');
   const [splitMode, setSplitMode] = useState<'equal' | 'custom'>(
     initialExpense?.splits && initialExpense.splits.length > 0 && initialExpense.splits[0].amount !== (Number(initialExpense.amount) / initialExpense.splits.length)
@@ -38,12 +35,10 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       : 'equal'
   );
 
-  // Selected members for split
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>(
     initialExpense ? initialExpense.splits.map(s => s.memberId) : trip.members.map(m => m.id)
   );
 
-  // Custom amounts mapping
   const [customAmounts, setCustomAmounts] = useState<{ [memberId: string]: number }>(() => {
     const map: { [memberId: string]: number } = {};
     if (initialExpense?.splits) {
@@ -56,7 +51,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
 
   const handleToggleMember = (memberId: string) => {
     if (selectedMemberIds.includes(memberId)) {
-      if (selectedMemberIds.length === 1) return; // Keep at least one
+      if (selectedMemberIds.length === 1) return;
       setSelectedMemberIds(selectedMemberIds.filter(id => id !== memberId));
     } else {
       setSelectedMemberIds([...selectedMemberIds, memberId]);
@@ -71,7 +66,6 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       return;
     }
 
-    // Build splits
     let finalSplits: ExpenseSplit[] = [];
     if (splitMode === 'equal') {
       const splitAmount = Math.round((numAmount / selectedMemberIds.length) * 100) / 100;
@@ -86,6 +80,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       }));
     }
 
+    const now = new Date();
     const expenseData: Expense = {
       id: initialExpense?.id || 'exp_' + Date.now(),
       tripId: trip.id,
@@ -94,10 +89,9 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       amount: numAmount,
       currency: 'INR',
       category,
-      paymentMode,
       paidByMemberId,
-      date,
-      time,
+      date: now.toISOString().split('T')[0],
+      time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       notes,
       isGroupExpense: finalSplits.length > 1,
       splits: finalSplits,
@@ -112,7 +106,6 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
       <div className="glass-panel max-w-lg w-full rounded-3xl p-6 sm:p-8 border border-white/10 bg-slate-900 shadow-2xl my-8">
-        {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-white/10 mb-6">
           <div>
             <h3 className="text-xl font-bold text-white font-display">
@@ -129,7 +122,6 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Title & Amount */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">Expense Title / Merchant *</label>
             <input
@@ -144,9 +136,9 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Total Amount (₹ INR) *</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">Total Amount (INR) *</label>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₹</span>
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">Rs.</span>
                 <input
                   type="number"
                   step="any"
@@ -154,7 +146,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                   placeholder="0.00"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value === '' ? '' : parseFloat(e.target.value))}
-                  className="w-full rounded-xl glass-input pl-8 pr-3 py-2 text-sm font-bold text-white"
+                  className="w-full rounded-xl glass-input pl-12 pr-3 py-2 text-sm font-bold text-white"
                 />
               </div>
             </div>
@@ -166,51 +158,19 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                 onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
                 className="w-full rounded-xl glass-input px-3 py-2 text-sm bg-slate-900"
               >
-                <option value="food">Food & Cafe 🍔</option>
-                <option value="drinks">Drinks & Shacks 🍹</option>
-                <option value="stay">Stay / Hotels 🏨</option>
-                <option value="transit">Transit & Cabs 🚕</option>
-                <option value="activities">Activities & Sports 🤿</option>
-                <option value="fuel">Fuel / Petrol ⛽</option>
-                <option value="shopping">Shopping 🛍</option>
-                <option value="emergency">Emergency 🩺</option>
-                <option value="other">Other 📦</option>
+                <option value="food">Food & Cafe</option>
+                <option value="drinks">Drinks & Shacks</option>
+                <option value="stay">Stay / Hotels</option>
+                <option value="transit">Transit & Cabs</option>
+                <option value="activities">Activities & Sports</option>
+                <option value="fuel">Fuel / Petrol</option>
+                <option value="shopping">Shopping</option>
+                <option value="emergency">Emergency</option>
+                <option value="other">Other</option>
               </select>
             </div>
           </div>
 
-          {/* Payment Mode Pills */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Payment Mode</label>
-            <div className="grid grid-cols-4 gap-2">
-              {[
-                { id: 'upi', label: 'UPI / PhonePe', icon: Smartphone },
-                { id: 'card', label: 'Card / POS', icon: CreditCard },
-                { id: 'cash', label: 'Cash Paid', icon: Banknote },
-                { id: 'sms_auto', label: 'SMS Auto', icon: Sparkles },
-              ].map((m) => {
-                const Icon = m.icon;
-                const isSelected = paymentMode === m.id;
-                return (
-                  <button
-                    type="button"
-                    key={m.id}
-                    onClick={() => setPaymentMode(m.id as PaymentMode)}
-                    className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs font-medium transition-all ${
-                      isSelected
-                        ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 shadow-sm'
-                        : 'bg-slate-900/60 border-white/5 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4 mb-1" />
-                    <span>{m.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Payer & City */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">Paid By</label>
@@ -243,30 +203,6 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
             </div>
           </div>
 
-          {/* Date & Time */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Date</label>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full rounded-xl glass-input px-3 py-2 text-xs"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Time</label>
-              <input
-                type="text"
-                placeholder="07:30 PM"
-                value={time}
-                onChange={(e) => setTime(e.target.value)}
-                className="w-full rounded-xl glass-input px-3 py-2 text-xs"
-              />
-            </div>
-          </div>
-
-          {/* Split Section */}
           <div className="pt-2 border-t border-white/5">
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
@@ -296,12 +232,11 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
               </div>
             </div>
 
-            {/* Member toggle badges */}
             <div className="grid grid-cols-2 gap-2">
               {trip.members.map((member) => {
                 const isSelected = selectedMemberIds.includes(member.id);
-                const equalShare = amount && selectedMemberIds.length > 0 
-                  ? Math.round((Number(amount) / selectedMemberIds.length) * 100) / 100 
+                const equalShare = amount && selectedMemberIds.length > 0
+                  ? Math.round((Number(amount) / selectedMemberIds.length) * 100) / 100
                   : 0;
 
                 return (
@@ -325,7 +260,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
 
                     {isSelected && (
                       <span className="text-[11px] font-bold text-indigo-300">
-                        {splitMode === 'equal' ? `₹${equalShare}` : `₹${customAmounts[member.id] || 0}`}
+                        {splitMode === 'equal' ? `Rs.${equalShare}` : `Rs.${customAmounts[member.id] || 0}`}
                       </span>
                     )}
                   </div>
@@ -334,7 +269,6 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
             </div>
           </div>
 
-          {/* Notes */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">Notes / Bill Details</label>
             <input
@@ -346,7 +280,6 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
             />
           </div>
 
-          {/* Action Buttons */}
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/10">
             <button
               type="button"

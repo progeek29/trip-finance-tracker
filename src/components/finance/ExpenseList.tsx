@@ -219,7 +219,7 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="font-bold text-white text-sm sm:text-base">{exp.title}</h4>
-                      {getPaymentModeBadge(exp.paymentMode, exp.isAutoParsedSMS)}
+                      {exp.paymentMode && getPaymentModeBadge(exp.paymentMode, exp.isAutoParsedSMS)}
                       {city && (
                         <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-white/5">
                           {city.name.split('(')[0].trim()}

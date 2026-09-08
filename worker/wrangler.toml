@@ -1,0 +1,13 @@
+name = "wandersync-push"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# Free push server: receives { tripId, kind, title, body, voiceUrl?, voicePath? }
+# from the app, fans out FCM to every squad device except the sender.
+#
+# Setup (one time):
+#   1. npm i -g wrangler && wrangler login
+#   2. Firebase console → Project Settings → Service accounts → Generate new private key
+#   3. wrangler secret put FIREBASE_SERVICE_ACCOUNT  (paste the whole JSON)
+#   4. npx wrangler deploy
+#   5. Paste the https://wandersync-push.<you>.workers.dev URL into PUSH_WORKER_URL (utils/push.ts)

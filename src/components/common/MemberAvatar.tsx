@@ -1,5 +1,5 @@
 import React from 'react';
-import { getAvatarColor, getInitials } from '../../utils/avatar';
+import { getAvatarColor, getEmojiFor, isEmojiAvatar } from '../../utils/avatar';
 
 interface MemberAvatarProps {
   name: string;
@@ -11,12 +11,13 @@ interface MemberAvatarProps {
 }
 
 const sizes: Record<string, string> = {
-  xs: 'w-6 h-6 text-[10px]',
-  sm: 'w-8 h-8 text-xs',
-  md: 'w-10 h-10 text-sm',
-  lg: 'w-12 h-12 text-base',
+  xs: 'w-6 h-6 text-[13px]',
+  sm: 'w-8 h-8 text-base',
+  md: 'w-10 h-10 text-xl',
+  lg: 'w-12 h-12 text-2xl',
 };
 
+/** Squad face: simple emoji in a colored circle (photos come later). */
 export const MemberAvatar: React.FC<MemberAvatarProps> = ({
   name,
   avatar,
@@ -25,26 +26,14 @@ export const MemberAvatar: React.FC<MemberAvatarProps> = ({
   size = 'md',
   ring = true,
 }) => {
-  const [imgError, setImgError] = React.useState(false);
-  const showImg = avatar && !imgError;
-  if (showImg) {
-    return (
-      <img
-        src={avatar}
-        alt={name}
-        title={name}
-        onError={() => setImgError(true)}
-        className={`${sizes[size]} rounded-full object-cover flex-shrink-0 ${ring ? 'border-2 border-white shadow-sm' : 'border border-slate-200'}`}
-      />
-    );
-  }
+  const emoji = isEmojiAvatar(avatar) ? avatar! : getEmojiFor(`${memberId || ''}${name}`, index);
   const color = getAvatarColor(memberId || name, index);
   return (
     <div
       title={name}
-      className={`${sizes[size]} rounded-full flex items-center justify-center text-white font-extrabold flex-shrink-0 ${color} ${ring ? 'border-2 border-white shadow-sm' : ''}`}
+      className={`${sizes[size]} rounded-full flex items-center justify-center flex-shrink-0 ${color} ${ring ? 'border-2 border-white shadow-sm' : ''}`}
     >
-      {getInitials(name)}
+      <span className="leading-none">{emoji}</span>
     </div>
   );
 };

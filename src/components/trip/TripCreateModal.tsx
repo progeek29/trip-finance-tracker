@@ -1,10 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Trip, TripMember, CityStop } from '../../types';
-import { getRandomAvatar } from '../../utils/avatar';
+import { getRandomEmoji } from '../../utils/avatar';
+import { putMedia, readFileAsDataUrl } from '../../utils/mediaStore';
+import { loadUserProfile, saveUserProfile } from '../../utils/storage';
+import { makeInviteCode } from '../../utils/supabaseClient';
 import { MemberAvatar } from '../common/MemberAvatar';
+import { DatePicker } from '../common/DatePicker';
+import { ContactPickerModal } from '../common/ContactPickerModal';
+import { PhoneInput, isValidPhone, formatPhoneDisplay } from '../common/PhoneInput';
+import { fetchDeviceContacts, type DeviceContact } from '../../utils/deviceContacts';
 import {
-  X, MapPin, Plus, Trash2,
-  Phone, UserPlus, Check, Image, Pencil
+  X, MapPin, Trash2,
+  Check, Image, Pencil
 } from 'lucide-react';
 
 interface TripCreateModalProps {
@@ -12,6 +19,7 @@ interface TripCreateModalProps {
   onClose: () => void;
   onSaveTrip: (trip: Trip) => void;
   editingTrip?: Trip | null;
+  ownerUid?: string | null;
 }
 
 const COVER_IMAGES = [
@@ -23,16 +31,30 @@ const COVER_IMAGES = [
   'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=800&q=80',
 ];
 
-const ME_MEMBER: TripMember = {
-  id: 'm1',
-  name: 'Apurv (You)',
-  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-  isCurrentUser: true,
-  phone: '+91 98765 43210',
-  upiId: 'apurv@oksbi',
-};
+/** Login profile se "you" member banao (naam + mobile prefilled). */
+function youFromProfile(): TripMember {
+  const p = loadUserProfile();
+  return {
+    id: 'm1',
+    name: p?.name || '',
+    avatar: '😎',
+    isCurrentUser: true,
+    phone: p?.phone || '',
+    upiId: '',
+  };
+}
 
-export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: TripCreateModalProps) {
+/** 'Apurv (You)' + suffix double-print fix — naam saaf, (You) ek baar. */
+export function displayMemberName(m: TripMember): string {
+  const clean = m.name.replace(/\(You\)/g, '').trim();
+  return m.isCurrentUser ? `${clean || 'You'} (You)` : clean || 'Friend';
+}
+
+/** Contact picker blocked message (typo-free, ek jagah). */
+export const CONTACT_BLOCKED_MSG =
+  'Could not open phone contacts (permission denied or unavailable). Please add manually below.';
+
+export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, ownerUid }: TripCreateModalProps) {
   const [step, setStep] = useState<'details' | 'squad'>('details');
 
   // Trip details
@@ -48,20 +70,34 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: Tr
   ]);
 
   // Squad
-  const [members, setMembers] = useState<TripMember[]>([ME_MEMBER]);
+  const [members, setMembers] = useState<TripMember[]>(() => [youFromProfile()]);
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
-  const [newMemberUpi, setNewMemberUpi] = useState('');
   const [contactPickerSupported, setContactPickerSupported] = useState(false);
+  const coverUploadRef = useRef<HTMLInputElement>(null);
+
+  const tripDays = startDate && endDate && new Date(endDate) >= new Date(startDate)
+    ? Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1
+    : 0;
 
   useEffect(() => {
-    // Correct Contact Picker API detection
     // @ts-ignore
     setContactPickerSupported(typeof navigator !== 'undefined' && 'contacts' in navigator && typeof (navigator as any).contacts?.select === 'function');
   }, []);
 
+  const prevCreateOpenRef = React.useRef(false);
+  const prevEditingIdRef = React.useRef<string | null>(null);
   useEffect(() => {
+    const editingId = editingTrip?.id || null;
+    const shouldReset = isOpen && (!prevCreateOpenRef.current || prevEditingIdRef.current !== editingId);
+    prevCreateOpenRef.current = isOpen;
+    prevEditingIdRef.current = editingId;
     if (!isOpen) { setStep('details'); return; }
+    if (!shouldReset) return;
+    setEditingMemberId(null);
+    setNewMemberName(''); setNewMemberPhone('');
+    setContactError(null);
+    setShowCoverPicker(false);
     if (editingTrip) {
       setTitle(editingTrip.title);
       setDescription(editingTrip.description);
@@ -74,66 +110,110 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: Tr
     } else {
       setTitle(''); setDescription(''); setStartDate(''); setEndDate('');
       setBudget(''); setCoverImage(COVER_IMAGES[0]);
-      setMembers([ME_MEMBER]);
+      setMembers([youFromProfile()]);
       setCities([{ name: '', stateOrCountry: '', startDate: '', endDate: '', budget: 0 }]);
     }
-  }, [isOpen, editingTrip]);
+  }, [isOpen, editingTrip?.id]);
 
-  const handlePickContacts = async () => {
+  const [contactError, setContactError] = useState<string | null>(null);
+  const [contactList, setContactList] = useState<DeviceContact[] | null>(null);
+
+  const openContactPicker = async () => {
+    setContactError(null);
     try {
-      // @ts-ignore
-      const contacts = await (navigator as any).contacts.select(['name', 'tel'], { multiple: true });
-      const newMembers: TripMember[] = contacts
-        .filter((c: any) => c.name?.length)
-        .map((c: any, i: number) => ({
-          id: `m_contact_${Date.now()}_${i}`,
-          name: c.name[0],
-          avatar: getRandomAvatar(String(c.name[0]) + Date.now() + i),
-          phone: c.tel?.[0] || '',
-          upiId: '',
-        }));
-      setMembers(prev => {
-        const existingPhones = new Set(prev.map(m => m.phone));
-        return [...prev, ...newMembers.filter(m => !existingPhones.has(m.phone))];
-      });
-    } catch (e) {
-      console.log('Contact picker cancelled or unavailable', e);
+      const { contacts } = await fetchDeviceContacts();
+      setContactList(contacts);
+    } catch {
+      setContactError(CONTACT_BLOCKED_MSG);
     }
+  };
+
+  const addPickedContacts = (picked: DeviceContact[]) => {
+    const nowIso = new Date().toISOString();
+    const fresh: TripMember[] = picked.map((c, i) => ({
+      id: `m_contact_${Date.now()}_${i}`,
+      name: c.name,
+      avatar: getRandomEmoji(),
+      phone: c.phone,
+      upiId: '',
+      joinedAt: nowIso,
+    }));
+    setMembers((prev) => {
+      const existingPhones = new Set(prev.map((m) => m.phone));
+      return [...prev, ...fresh.filter((m) => !m.phone || !existingPhones.has(m.phone))];
+    });
+    setContactList(null);
   };
 
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
 
   const handleAddCustomMember = () => {
     if (!newMemberName.trim()) return;
+    if (newMemberPhone && !isValidPhone(newMemberPhone)) {
+      alert('Please enter a valid 10-digit mobile number');
+      return;
+    }
     const name = newMemberName.trim();
     if (editingMemberId) {
-      setMembers(prev => prev.map(m => m.id === editingMemberId ? { ...m, name, phone: newMemberPhone.trim(), upiId: newMemberUpi.trim() } : m));
+      setMembers(prev => prev.map(m => m.id === editingMemberId ? { ...m, name, phone: newMemberPhone.trim() } : m));
       setEditingMemberId(null);
     } else {
       const newM: TripMember = {
         id: `m_${Date.now()}`,
         name,
-        avatar: getRandomAvatar(name + Date.now()),
+        avatar: getRandomEmoji(),
         phone: newMemberPhone.trim(),
-        upiId: newMemberUpi.trim(),
+        upiId: '',
+        joinedAt: new Date().toISOString(),
       };
       setMembers(prev => [...prev, newM]);
     }
-    setNewMemberName(''); setNewMemberPhone(''); setNewMemberUpi('');
+    setNewMemberName(''); setNewMemberPhone('');
   };
 
-  const handleSave = () => {
+  /** "You" card upar — naam + mobile yahin; login profile bhi update hoti hai. */
+  const updateYou = (patch: Partial<TripMember>) => {
+    setMembers(prev => {
+      const next = prev.some((m) => m.isCurrentUser)
+        ? prev.map((m) => (m.isCurrentUser ? { ...m, ...patch } : m))
+        : [youFromProfile(), ...prev.map((m) => ({ ...m }))].map((m, i) => (i === 0 ? { ...m, ...patch } : m));
+      const you = next.find((m) => m.isCurrentUser);
+      const cleanName = you ? you.name.replace(/\(You\)/g, '').trim() : '';
+      if (cleanName && (patch.name !== undefined || patch.phone !== undefined)) {
+        saveUserProfile({ name: cleanName, phone: you?.phone || '' });
+      }
+      return next;
+    });
+  };
+
+  const handleSave = async () => {
     if (!title.trim() || !startDate || !endDate || !budget) return;
+    const youPhone = members.find((m) => m.isCurrentUser)?.phone || '';
+    if (youPhone && !isValidPhone(youPhone)) {
+      alert('Please enter a valid 10-digit mobile number');
+      return;
+    }
+    const tripId = editingTrip?.id || `trip_${Date.now()}`;
+    // Custom uploaded cover → big godown (pointer), defaults stay as URL
+    let cover = coverImage;
+    if (cover.startsWith('data:')) {
+      cover = await putMedia(tripId, 'image', cover);
+    }
+    const finalMembers = members.map((m) =>
+      m.isCurrentUser ? { ...m, name: m.name.trim() || 'You', uid: m.uid || ownerUid || undefined } : m
+    );
     const trip: Trip = {
-      id: editingTrip?.id || `trip_${Date.now()}`,
+      id: tripId,
       title: title.trim(),
       description: description.trim(),
-      coverImage,
+      coverImage: cover,
       startDate,
       endDate,
       totalBudget: Number(budget) || 0,
       currency: 'INR',
-      members,
+      members: finalMembers,
+      inviteCode: editingTrip?.inviteCode || makeInviteCode(),
+      ownerUid: editingTrip?.ownerUid || ownerUid || undefined,
       cities: cities
         .filter(c => c.name.trim())
         .map((c, i) => ({ ...c, id: `city_${Date.now()}_${i}` })),
@@ -146,37 +226,46 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: Tr
 
   if (!isOpen) return null;
 
+  const youId = members.find((m) => m.isCurrentUser)?.id ?? members[0]?.id;
+
+  const canNext = title.trim() && startDate && endDate && budget;
+
+  // Disable past dates for trip start/end
+  const todayStr = (() => {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+  })();
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-
-      <div className="relative z-10 bg-white w-full sm:max-w-lg sm:rounded-3xl rounded-t-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
-        {/* Modal Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+    <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-white flex-shrink-0">
+        <div className="flex items-center gap-3">
+          {step === 'squad' ? (
+            <button onClick={() => setStep('details')} className="p-1.5 -ml-1 rounded-full hover:bg-slate-100 text-slate-700 cursor-pointer">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+          ) : (
+            <button onClick={onClose} className="p-1.5 -ml-1 rounded-full hover:bg-slate-100 text-slate-700 cursor-pointer">
+              <X size={20} />
+            </button>
+          )}
           <div>
-            <h2 className="font-bold text-slate-900 text-lg">
-              {editingTrip ? 'Edit Trip' : 'Plan New Trip'}
+            <h2 className="font-bold text-slate-900 text-base">
+              {editingTrip ? 'Edit Trip' : step === 'details' ? 'Plan New Trip' : 'Add Squad'}
             </h2>
-            <p className="text-slate-400 text-xs">Step {step === 'details' ? '1' : '2'} of 2 — {step === 'details' ? 'Trip Details' : 'Add Squad'}</p>
+            <p className="text-slate-400 text-[11px]">Step {step === 'details' ? '1' : '2'} of 2</p>
           </div>
-          {/* Step tabs */}
-          <div className="flex gap-1.5 mr-8">
-            <button onClick={() => setStep('details')}
-              className={`w-7 h-7 rounded-full text-xs font-bold transition-colors ${step === 'details' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-              1
-            </button>
-            <button onClick={() => step === 'squad' && setStep('squad')}
-              className={`w-7 h-7 rounded-full text-xs font-bold transition-colors ${step === 'squad' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-              2
-            </button>
-          </div>
-          <button onClick={onClose} className="absolute right-4 top-4 p-2 rounded-full hover:bg-slate-100 transition-colors">
-            <X size={18} className="text-slate-500" />
-          </button>
         </div>
+        {/* Step dots */}
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${step === 'details' ? 'bg-indigo-600' : 'bg-indigo-200'}`} />
+          <span className={`w-2 h-2 rounded-full ${step === 'squad' ? 'bg-indigo-600' : 'bg-slate-200'}`} />
+        </div>
+      </div>
 
-        {/* Content */}
-        <div className="overflow-y-auto flex-1 px-5 py-5 space-y-4">
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
           {step === 'details' ? (
             <>
               {/* Cover Image Picker */}
@@ -194,33 +283,66 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: Tr
                   </div>
                 </div>
                 {showCoverPicker && (
-                  <div className="grid grid-cols-3 gap-2 mt-2">
-                    {COVER_IMAGES.map((img) => (
-                      <div
-                        key={img}
-                        onClick={() => { setCoverImage(img); setShowCoverPicker(false); }}
-                        className={`relative h-16 rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${coverImage === img ? 'border-indigo-500' : 'border-transparent hover:border-slate-300'}`}
+                  <>
+                    <div className="grid grid-cols-3 gap-2 mt-2">
+                      {COVER_IMAGES.map((img) => (
+                        <div
+                          key={img}
+                          onClick={() => { setCoverImage(img); setShowCoverPicker(false); }}
+                          className={`relative h-16 rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${coverImage === img ? 'border-indigo-500' : 'border-transparent hover:border-slate-300'}`}
+                        >
+                          <img src={img} alt="" className="w-full h-full object-cover" />
+                          {coverImage === img && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-indigo-500/30">
+                              <Check size={16} className="text-white" />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => coverUploadRef.current?.click()}
+                        className="flex-1 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold cursor-pointer"
                       >
-                        <img src={img} alt="" className="w-full h-full object-cover" />
-                        {coverImage === img && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-indigo-500/30">
-                            <Check size={16} className="text-white" />
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                        Upload
+                      </button>
+                      {!COVER_IMAGES.includes(coverImage) && (
+                        <button
+                          type="button"
+                          onClick={() => setCoverImage(COVER_IMAGES[0])}
+                          className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold cursor-pointer"
+                          title="Back to default cover"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      ref={coverUploadRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        setCoverImage(await readFileAsDataUrl(f));
+                        setShowCoverPicker(false);
+                      }}
+                    />
+                  </>
                 )}
               </div>
 
-              {/* Title */}
+              {/* Location */}
               <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Trip Title *</label>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Add Location *</label>
                 <input
                   type="text"
                   value={title}
                   onChange={e => setTitle(e.target.value)}
-                  placeholder="e.g. Goa Friends Getaway 2026"
+                  placeholder="e.g. Goa"
                   className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-slate-300"
                 />
               </div>
@@ -241,13 +363,11 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: Tr
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Start Date *</label>
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-                    className="date-input" />
+                  <DatePicker value={startDate} onChange={setStartDate} min={todayStr} />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">End Date *</label>
-                  <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)}
-                    className="date-input" />
+                  <DatePicker value={endDate} onChange={setEndDate} min={startDate} />
                 </div>
               </div>
 
@@ -266,28 +386,30 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: Tr
                 </div>
               </div>
 
-              {/* Cities */}
+              {/* Itinerary — spots list (days come from trip dates) */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Cities / Stops</label>
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Itinerary{tripDays > 0 ? ` (${tripDays}-day trip)` : ''}
+                  </label>
                   <button
-                    onClick={() => setCities(prev => [...prev, { name: '', stateOrCountry: '', startDate: '', endDate: '', budget: 0 }])}
-                    className="text-indigo-600 text-xs font-semibold flex items-center gap-1 hover:text-indigo-700"
+                    onClick={() => setCities(prev => [...prev, { name: '', stateOrCountry: '', startDate: '', endDate: '', budget: 0, notes: '' }])}
+                    className="text-indigo-600 text-xs font-semibold hover:text-indigo-700 cursor-pointer"
                   >
-                    <Plus size={12} /> Add City
+                    Add Spot
                   </button>
                 </div>
                 <div className="space-y-2.5">
                   {cities.map((city, i) => (
-                    <div key={i} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                      <div className="flex items-center gap-2 mb-2">
+                    <div key={i} className="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-2">
+                      <div className="flex items-center gap-2">
                         <MapPin size={13} className="text-indigo-400 flex-shrink-0" />
                         <input
                           type="text"
                           value={city.name}
                           onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, name: e.target.value } : c))}
-                          placeholder="City name"
-                          className="flex-1 bg-transparent text-sm text-slate-800 focus:outline-none placeholder-slate-300"
+                          placeholder="Spot name (e.g. Vagator Beach, Chapora Fort)"
+                          className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:border-indigo-400 placeholder-slate-300"
                         />
                         {cities.length > 1 && (
                           <button onClick={() => setCities(prev => prev.filter((_, ci) => ci !== i))}>
@@ -297,23 +419,11 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: Tr
                       </div>
                       <input
                         type="text"
-                        value={city.stateOrCountry}
-                        onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, stateOrCountry: e.target.value } : c))}
-                        placeholder="State / Country"
-                        className="w-full bg-transparent text-xs text-slate-500 focus:outline-none placeholder-slate-300 mb-1.5"
+                        value={city.notes || ''}
+                        onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, notes: e.target.value } : c))}
+                        placeholder="Description (optional — e.g. sunset point, entry Rs.100)"
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-indigo-400 placeholder-slate-300"
                       />
-                      <div className="grid grid-cols-3 gap-1.5">
-                        <input type="date" value={city.startDate}
-                          onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, startDate: e.target.value } : c))}
-                          className="col-span-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 focus:outline-none" />
-                        <input type="date" value={city.endDate}
-                          onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, endDate: e.target.value } : c))}
-                          className="col-span-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 focus:outline-none" />
-                        <input type="number" value={city.budget || ''}
-                          onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, budget: Number(e.target.value) } : c))}
-                          placeholder="₹ Budget"
-                          className="col-span-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 focus:outline-none" />
-                      </div>
                     </div>
                   ))}
                 </div>
@@ -324,31 +434,31 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: Tr
             <>
               <div>
                 <h3 className="text-sm font-bold text-slate-700 mb-1">Your Squad</h3>
-                <p className="text-xs text-slate-400 mb-4">Add friends to split expenses and track together.</p>
+                <p className="text-xs text-slate-400 mb-4">Add friends — expenses split automatically.</p>
 
-                {/* Current members */}
+                {/* Squad members (without you) */}
                 <div className="space-y-2 mb-4">
-                  {members.map((m, i) => (
-                    <div key={m.id} className="flex items-center gap-3 bg-slate-50 rounded-xl px-3 py-2.5 border border-slate-100">
-                      <MemberAvatar name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="sm" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-800 truncate">
-                          {m.name} {m.isCurrentUser && <span className="text-indigo-400 text-xs font-normal">(You)</span>}
-                        </p>
-                        {m.phone && <p className="text-xs text-slate-400 truncate">{m.phone}</p>}
-                      </div>
-                      {!m.isCurrentUser && (
+                  {members.filter((m) => m.id !== youId).map((m, i) => (
+                    <div key={m.id} className="bg-slate-50 rounded-xl px-3 py-2.5 border border-slate-100 space-y-1.5">
+                      <div className="flex items-center gap-3">
+                        <MemberAvatar name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="sm" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-slate-800 truncate">
+                            {displayMemberName(m)}
+                          </p>
+                          {m.phone && <p className="text-xs text-slate-400 truncate">{formatPhoneDisplay(m.phone)}</p>}
+                        </div>
                         <div className="flex items-center gap-1">
                           <button
-                            title="New random photo"
-                            onClick={() => setMembers(prev => prev.map(mm => mm.id === m.id ? { ...mm, avatar: getRandomAvatar(m.name + Math.random()) } : mm))}
+                            title="Shuffle emoji"
+                            onClick={() => setMembers(prev => prev.map(mm => mm.id === m.id ? { ...mm, avatar: getRandomEmoji() } : mm))}
                             className="text-[10px] font-bold text-indigo-600 hover:underline px-1"
                           >
-                            ↻
+                            Shuffle
                           </button>
                           <button
                             title="Edit member"
-                            onClick={() => { setEditingMemberId(m.id); setNewMemberName(m.name); setNewMemberPhone(m.phone || ''); setNewMemberUpi(m.upiId || ''); }}
+                            onClick={() => { setEditingMemberId(m.id); setNewMemberName(m.name); setNewMemberPhone(m.phone || ''); }}
                           >
                             <Pencil size={13} className="text-slate-300 hover:text-indigo-500 transition-colors" />
                           </button>
@@ -356,103 +466,101 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip }: Tr
                             <X size={14} className="text-slate-300 hover:text-red-400 transition-colors" />
                           </button>
                         </div>
-                      )}
+                      </div>
+                      <div className="flex items-center gap-1.5 pl-[38px]">
+                        <span className="text-[11px] text-slate-500 font-medium">Budget:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={m.budget || ''}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? undefined : Number(e.target.value);
+                            setMembers(prev => prev.map(mm => mm.id === m.id ? { ...mm, budget: val } : mm));
+                          }}
+                          placeholder="0"
+                          className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 focus:outline-none focus:border-indigo-400"
+                        />
+                        <span className="text-[10px] text-slate-400">/trip</span>
+                      </div>
                     </div>
                   ))}
                 </div>
 
-                {/* Pick from Contacts */}
-                {contactPickerSupported ? (
-                  <button
-                    onClick={handlePickContacts}
-                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-500 to-violet-500 text-white font-semibold py-3 rounded-xl hover:from-indigo-600 hover:to-violet-600 active:scale-95 transition-all shadow-md shadow-indigo-200 mb-4"
-                  >
-                    <Phone size={16} /> 📱 Pick from Phone Contacts
-                  </button>
-                ) : (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 text-center">
-                    <p className="text-amber-700 text-xs font-medium">📱 Contact Picker works on Android Chrome.</p>
-                    <p className="text-amber-500 text-xs">Add friends manually below or on your phone.</p>
-                  </div>
-                )}
-
-                {/* Manual Add */}
-                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">{editingMemberId ? 'Edit Member' : 'Add Manually'}</p>
-                  <div className="space-y-2.5">
-                    <input
-                      type="text"
-                      value={newMemberName}
-                      onChange={e => setNewMemberName(e.target.value)}
-                      placeholder="Friend's name *"
-                      className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-slate-300"
-                    />
-                    <input
-                      type="tel"
-                      value={newMemberPhone}
-                      onChange={e => setNewMemberPhone(e.target.value)}
-                      placeholder="Phone number"
-                      className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-slate-300"
-                    />
-                    <input
-                      type="text"
-                      value={newMemberUpi}
-                      onChange={e => setNewMemberUpi(e.target.value)}
-                      placeholder="UPI ID (for settlements)"
-                      className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-slate-300"
-                    />
+                {/* Add contacts icon + Manual add */}
+                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{editingMemberId ? 'Edit Member' : 'Add Squad Member'}</p>
                     <button
-                      onClick={handleAddCustomMember}
-                      disabled={!newMemberName.trim()}
-                      className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-semibold py-2.5 rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      onClick={openContactPicker}
+                      title="Pick from contacts"
+                      className="w-9 h-9 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-600 flex items-center justify-center transition-colors cursor-pointer"
                     >
-                      <UserPlus size={15} /> {editingMemberId ? 'Save Member' : 'Add to Squad'}
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     </button>
-                    {editingMemberId && (
-                      <button
-                        onClick={() => { setEditingMemberId(null); setNewMemberName(''); setNewMemberPhone(''); setNewMemberUpi(''); }}
-                        className="w-full text-[11px] text-slate-500 font-bold py-1 cursor-pointer"
-                      >
-                        Cancel edit
-                      </button>
-                    )}
                   </div>
+                  <input
+                    type="text"
+                    value={newMemberName}
+                    onChange={e => setNewMemberName(e.target.value)}
+                    placeholder="Friend's name *"
+                    className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-slate-300"
+                  />
+                  <PhoneInput
+                    value={newMemberPhone}
+                    onChange={setNewMemberPhone}
+                    placeholder="Phone number"
+                  />
+                  <button
+                    onClick={handleAddCustomMember}
+                    disabled={!newMemberName.trim()}
+                    className="w-full bg-indigo-600 text-white font-semibold py-2.5 rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  >
+                    {editingMemberId ? 'Save' : 'Add to Squad'}
+                  </button>
+                  {editingMemberId && (
+                    <button
+                      onClick={() => { setEditingMemberId(null); setNewMemberName(''); setNewMemberPhone(''); }}
+                      className="w-full text-[11px] text-slate-500 font-bold py-1 cursor-pointer"
+                    >
+                      Cancel edit
+                    </button>
+                  )}
                 </div>
+                {contactError && (
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mt-3 font-medium">{contactError}</p>
+                )}
               </div>
             </>
           )}
         </div>
 
         {/* Footer Actions */}
-        <div className="border-t border-slate-100 px-5 py-4 flex gap-3">
+        <div className="border-t border-slate-200 px-5 py-4 bg-white flex-shrink-0">
           {step === 'details' ? (
-            <>
-              <button onClick={onClose} className="flex-1 border border-slate-200 text-slate-600 font-semibold py-3 rounded-xl hover:bg-slate-50 transition-colors">
-                Cancel
-              </button>
-              <button
-                onClick={() => setStep('squad')}
-                disabled={!title || !startDate || !endDate || !budget}
-                className="flex-1 bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                Next → Add Squad
-              </button>
-            </>
+            <button
+              onClick={() => setStep('squad')}
+              disabled={!canNext}
+              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] transition-all shadow-md cursor-pointer"
+            >
+              Next
+            </button>
           ) : (
-            <>
-              <button onClick={() => setStep('details')} className="flex-1 border border-slate-200 text-slate-600 font-semibold py-3 rounded-xl hover:bg-slate-50 transition-colors">
-                ← Back
-              </button>
-              <button
-                onClick={handleSave}
-                className="flex-1 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-semibold py-3 rounded-xl hover:from-indigo-700 hover:to-violet-700 active:scale-95 transition-all shadow-md"
-              >
-                {editingTrip ? '✓ Save Changes' : '🚀 Create Trip!'}
-              </button>
-            </>
+            <button
+              onClick={handleSave}
+              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-md cursor-pointer"
+            >
+              {editingTrip ? 'Save' : 'Save Trip'}
+            </button>
           )}
         </div>
+
+        {contactList && (
+          <ContactPickerModal
+            contacts={contactList}
+            onClose={() => setContactList(null)}
+            onAdd={addPickedContacts}
+          />
+        )}
       </div>
-    </div>
   );
 }

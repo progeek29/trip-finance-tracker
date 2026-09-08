@@ -19,6 +19,12 @@ export interface TripMember {
   isCurrentUser?: boolean;
   phone?: string;
   upiId?: string;
+  /** Firebase anonymous uid of this member's device (pairing + targeted notifications) */
+  uid?: string;
+  /** ISO date this member joined the trip */
+  joinedAt?: string;
+  /** Per-member budget (in INR) — each member can set their own spend limit */
+  budget?: number;
 }
 
 export interface CityStop {
@@ -38,7 +44,12 @@ export interface ExpenseSplit {
   percentage?: number;
 }
 
-export interface Expense {
+export interface SyncedMeta {
+  updatedAt?: number;
+  updatedBy?: string;
+}
+
+export interface Expense extends SyncedMeta {
   id: string;
   tripId: string;
   cityId?: string;
@@ -46,7 +57,7 @@ export interface Expense {
   amount: number;
   currency: string;
   category: ExpenseCategory;
-  paymentMode: PaymentMode;
+  paymentMode?: PaymentMode;
   paidByMemberId: string;
   date: string;
   time?: string;
@@ -83,20 +94,31 @@ export interface TransitReminder {
   isCompleted?: boolean;
 }
 
-export interface DocumentVaultItem {
+export interface DocumentVaultItem extends SyncedMeta {
   id: string;
   tripId: string;
   title: string;
   category: 'ticket' | 'id_proof' | 'hotel' | 'visa' | 'insurance' | 'rental' | 'other';
-  fileType: 'pdf' | 'image' | 'link';
+  fileType: 'pdf' | 'image' | 'csv' | 'file' | 'link';
   fileUrl?: string;
   previewUrl?: string;
+  fileName?: string;
   fileSize?: string;
   notes?: string;
   uploadedAt: string;
   uploadedByMemberId: string;
   tags?: string[];
   referenceNumber?: string;
+  /** Extra "about this stay" write-up shown on the ticket card (hotel category) */
+  stayDetails?: string;
+  /** Extra stay photos shown on the ticket card (hotel category) */
+  stayPhotos?: string[];
+  /** Bell on the ticket itself — remind datetime (ISO) + free-text note */
+  remindAt?: string;
+  reminderNote?: string;
+  /** Phone folder mirror path(s): Documents/WanderSync/<trip>/ (native only) */
+  phonePath?: string;
+  phonePaths?: string[];
 }
 
 export interface SharedPhoto {
@@ -111,6 +133,8 @@ export interface SharedPhoto {
   likesCount: number;
   locationTag?: string;
   isPublicHighlight?: boolean;
+  /** Phone folder mirror path (native only) */
+  phonePath?: string;
 }
 
 export interface PlaceRecommendation {
@@ -123,12 +147,16 @@ export interface PlaceRecommendation {
   costType: 'per_person' | 'per_night' | 'entry_fee' | 'meal_for_two';
   rating: number; // 1-5
   imageUrl: string;
+  /** Extra photos for this place (imageUrl stays the cover for compat) */
+  imageUrls?: string[];
   bestTimeToVisit?: string;
   tips?: string;
   authorName: string;
   authorAvatar: string;
   verifiedByTrip: boolean;
   addressOrLandmark?: string;
+  /** Phone folder mirror paths (native only) */
+  phonePaths?: string[];
 }
 
 export interface Trip {
@@ -144,10 +172,34 @@ export interface Trip {
   cities: CityStop[];
   isActive: boolean;
   status: 'upcoming' | 'ongoing' | 'completed';
+  /** 6-char share code (created on Share, used to join from other phones) */
+  inviteCode?: string;
+  /** Firebase uid of the trip creator (admin) */
+  ownerUid?: string;
 }
 
-export interface SMSParseResult {
-  amount: number;
+export interface TripTodo extends SyncedMeta {
+  id: string;
+  tripId: string;
+  text: string;
+  done: boolean;
+  createdAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  type: 'text' | 'location' | 'siren' | 'system';
+  text?: string;
+  mentions?: { id: string; name: string }[];
+  lat?: number;
+  lng?: number;
+  replyTo?: { id: string; senderName: string; text: string };
+  createdAt?: unknown;
+}
+
+export interface SMSParseResult {  amount: number;
   merchant: string;
   bankName: string;
   accountEnding?: string;

@@ -134,6 +134,45 @@ export function inferCategoryFromMerchant(text: string): ExpenseCategory {
 }
 
 /**
+ * Recurring/non-trip debits that must NEVER auto-log as trip expenses:
+ * SIP, mutual funds, EMIs, loans, rent, credit-card bills, insurance, etc.
+ * A 3rd-May Rs.6000 SIP during a trip stays out of the ledger.
+ */
+const RECURRING_SKIP_PATTERNS = [
+  /\bsips?\b/i,
+  /mutual\s*fund/i,
+  /\bamc\b/i,
+  /\bemi\b/i,
+  /equated/i,
+  /\brent\b/i,
+  /house\s*rent/i,
+  /credit\s*card.*(bill|due|payment|outstanding|autopay|minimum)/i,
+  /(bill|due|outstanding).*(credit\s*card)/i,
+  /insurance/i,
+  /\blic\b/i,
+  /\bloan\b/i,
+  /\bppf\b/i,
+  /\bnps\b/i,
+  /\brd\b/i,
+  /\brecurring\b/i,
+  /demat/i,
+  /zerodha/i,
+  /groww/i,
+  /upstox/i,
+  /angel\s*one/i,
+  /folio/i,
+  /\bnach\b/i,
+  /\becs\b/i,
+  /mandate/i,
+  /premium\s*(paid|due|debit)/i,
+];
+
+export function isRecurringDebit(smsText: string): boolean {
+  const t = (smsText || '').toLowerCase();
+  return RECURRING_SKIP_PATTERNS.some((re) => re.test(t));
+}
+
+/**
  * Checks whether an expense date falls within an active trip date range
  */
 export function isDateWithinTrip(dateStr: string, startDate: string, endDate: string): boolean {

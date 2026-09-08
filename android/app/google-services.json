@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "178924875934",
+    "project_id": "wandersync-e31dc",
+    "storage_bucket": "wandersync-e31dc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:178924875934:android:b67b59d441f71ef83bcb8f",
+        "android_client_info": {
+          "package_name": "com.wandersync.tripapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAN9fA9uhMkcmG1Rq9uwojZ6ILDHEKV2qA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
