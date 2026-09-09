@@ -260,6 +260,13 @@ io.on('connection', (socket) => {
     if (members && members.delete(socket.id)) emitPresence(tid);
   });
 
+  // Soft bell ping — ephemeral broadcast, NO db row, NO timeline log.
+  // Receivers chime + flash; sender stays silent (already chimed locally).
+  socket.on('bell:ring', ({ tripId: tid, uid: u, name: n }) => {
+    if (!tid) return;
+    io.to(roomOf(tid)).emit('bell:ring', { tripId: tid, uid: u, name: n || 'Someone' });
+  });
+
   // Typing indicator (ephemeral — never stored)
   socket.on('chat:typing', ({ tripId: tid, uid: u, name: n, typing }) => {
     if (!tid) return;

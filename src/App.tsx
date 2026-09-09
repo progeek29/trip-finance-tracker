@@ -549,11 +549,13 @@ export function App() {
       return 0;
     }
   });
-  const showNotifFlash = (msg: string, name?: string) => {
-    setPushFlash({ text: msg, name });
+  const showNotifFlash = (msg: string, name?: string, opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setPushFlash({ text: msg, name });
+      if (pushFlashTimer.current) window.clearTimeout(pushFlashTimer.current);
+      pushFlashTimer.current = window.setTimeout(() => setPushFlash(null), 5000);
+    }
     setBellPulse((p) => p + 1);
-    if (pushFlashTimer.current) window.clearTimeout(pushFlashTimer.current);
-    pushFlashTimer.current = window.setTimeout(() => setPushFlash(null), 5000);
   };
 
   // Check auth on mount — and restore name/phone from server so login
@@ -753,33 +755,33 @@ export function App() {
     for (const id of want) {
       if (joinedSirenRooms.current.has(id)) continue;
       const leave = joinTripRoom(id, { uid, name }, {
+        onBellRing: (b) => {
+          if (uid && b.uid === uid) return; // own ping — already chimed locally
+          playChimeSoft();
+          const who = b.name || 'Someone';
+          const when = fmtWhen();
+          pushActivity({ id: `bell_${id}_${Date.now()}`, title: `@${who} rang the bell`, sub: when, at: Date.now() });
+          showNotifFlash(`@${who} rang the bell`, who, { silent: true });
+        },
         onMessage: (m) => {
           const r = m as ChatMessage & { _deleted?: boolean };
           if (r._deleted) return;
           if (uid && r.senderId === uid) return;
+          if (r.type !== 'siren') return;
           const viewingThisChat =
             appViewRef.current === 'trip_dashboard' &&
             activeTabRef.current === 'chat' &&
             activeTripId === id;
-          // Soft bell → gentle chime + flash + feed entry (no alarm, no rings)
-          if (r.type === 'bell') {
-            if (viewingThisChat) return; // ChatView already chimed
-            playChimeSoft();
-            const who = r.senderName || 'Someone';
-            const when = fmtWhen();
-            pushActivity({ id: `bell_${r.id}`, title: `@${who} rang the bell`, sub: when, at: Date.now() });
-            showNotifFlash(`@${who} rang the bell`, who);
-            return;
-          }
-          if (r.type !== 'siren') return;
           if (viewingThisChat) return; // ChatView already alarming
           playReceiverSiren();
-          pokeSirenOverlay(8000);
           const who = r.senderName || 'Someone';
           const when = fmtWhen();
           const title = `${who} triggered the emergency siren`;
           pushActivity({ id: `siren_${r.id}`, title, sub: when, at: Date.now() });
           showNotifFlash(`${title} • ${when}`, who);
+          setSirenBanner(`${who} triggered the emergency siren`);
+          if (sirenBannerTimer.current) window.clearTimeout(sirenBannerTimer.current);
+          sirenBannerTimer.current = window.setTimeout(() => setSirenBanner(null), 5000);
         },
       });
       joinedSirenRooms.current.set(id, leave);
@@ -787,51 +789,20 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed, myUid, trips]);
 
-  // Emergency rings overlay — App root pe (landing/dashboard/profile, har screen).
-  // Sender heartbeat (3s) refresh karta hai → loop me kabhi gayab nahi;
-  // receiver pe har siren event 8s dikhta hai.
-  const [sirenUntil, setSirenUntil] = useState(0);
-  const sirenHideTimer = useRef<number | null>(null);
-  const pokeSirenOverlay = (ms: number) => {
-    if (sirenHideTimer.current) window.clearTimeout(sirenHideTimer.current);
-    sirenHideTimer.current = null;
-    if (ms <= 0) {
-      setSirenUntil(0);
-      return;
-    }
-    setSirenUntil(Date.now() + ms);
-    sirenHideTimer.current = window.setTimeout(() => setSirenUntil(0), ms + 300);
-  };
-  useEffect(() => {
-    const onOverlay = (ev: Event) => {
-      const d = (ev as CustomEvent).detail as { until?: number } | undefined;
-      if (!d || !d.until) {
-        pokeSirenOverlay(0);
-        return;
-      }
-      pokeSirenOverlay(Math.max(0, d.until - Date.now()));
-    };
-    window.addEventListener('ws_siren_overlay', onOverlay);
-    return () => window.removeEventListener('ws_siren_overlay', onOverlay);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Receiver red banner (drops from header, auto-fades with the sound)
+  const [sirenBanner, setSirenBanner] = useState<string | null>(null);
+  const sirenBannerTimer = useRef<number | null>(null);
 
   // Landing refresh triggers: open landing, focus window, periodic poll
 
-  const SirenOverlay = (
-    <div
-      className="fixed inset-0 z-[60] pointer-events-none items-center justify-center overflow-hidden"
-      style={{ display: sirenUntil && Date.now() <= sirenUntil ? 'flex' : 'none' }}
-    >
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="siren-ripple absolute w-48 h-48 rounded-full border-4 border-rose-500 bg-rose-500/10"
-          style={{ animationDelay: `${i * 0.4}s` }}
-        />
-      ))}
+  // Receiver siren banner — red, drops from header, auto-fades with the sound
+  const SirenBanner = sirenBanner ? (
+    <div className="fixed top-0 left-0 right-0 z-[70] flex justify-center pointer-events-none px-4">
+      <div className="siren-toast-drop bg-[#ef4444] text-white text-[13px] font-semibold px-4 py-2 rounded-b-xl shadow-lg truncate max-w-md w-fit">
+        {sirenBanner}
+      </div>
     </div>
-  );
+  ) : null;
 
   // Flash toast — har notification ka visible banner (top, auto-hide 5s)
   const FlashToast = pushFlash ? (
@@ -959,7 +930,7 @@ export function App() {
         );
       if (mentionsMe) {
         const when = notifDate(m.createdAt);
-        showNotifFlash(`${m.senderName} mentioned you • ${when}`, m.senderName);
+        showNotifFlash(`${m.senderName} mentioned you • ${when}`, m.senderName, { silent: true });
         loudNotify(
           'Mention in squad chat',
           `${m.senderName} mentioned you • ${when}`,
@@ -1493,7 +1464,7 @@ export function App() {
             setMyUid(null);
           }}
         />
-        {SirenOverlay}
+        {SirenBanner}
         {FlashToast}
       </>
     );
@@ -1502,7 +1473,7 @@ export function App() {
   if (appView === 'landing') {
     return (
       <>
-        {SirenOverlay}
+        {SirenBanner}
         {FlashToast}
         <TripLandingView
           trips={trips}
@@ -1557,7 +1528,7 @@ export function App() {
           : undefined
       }
     >
-      {SirenOverlay}
+      {SirenBanner}
       {FlashToast}
       <Navbar
         activeTab={activeTab}

@@ -13,6 +13,9 @@ const SOCKET_URL = `http://${socketHost()}:3001`;
 
 let socket: Socket | null = null;
 let refCount = 0;
+/** Rooms the app believes it is in — re-joined automatically on reconnect
+ *  (server restarts wipe rooms; without this ALL realtime silently dies). */
+const joinedRooms = new Map<string, { me: { uid?: string | null; name?: string }; count: number }>();
 
 export interface TypingPayload {
   tripId: string;
@@ -35,6 +38,16 @@ function ensureSocket(): Socket {
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1500,
     });
+    socket.on('connect', () => {
+      // Small delay: immediate room:join inside 'connect' never takes effect
+      // (verified by probe) — 400ms later it lands reliably.
+      window.setTimeout(() => {
+        if (!socket?.connected) return;
+        for (const [tripId, entry] of joinedRooms) {
+          socket?.emit('room:join', { tripId, uid: entry.me.uid || undefined, name: entry.me.name || 'Friend' });
+        }
+      }, 400);
+    });
   }
   if (!socket.connected) socket.connect();
   return socket;
@@ -54,10 +67,13 @@ export function joinTripRoom(
     onRead?: (r: { tripId: string; messageId: string; count: number }) => void;
     onPin?: (p: { id: string; tripId: string; pinned: boolean }) => void;
     onDelete?: (d: { tripId: string; messageId: string }) => void;
+    onBellRing?: (b: { tripId: string; uid?: string; name?: string }) => void;
   }
 ): () => void {
   const s = ensureSocket();
   refCount += 1;
+  const prev = joinedRooms.get(tripId);
+  joinedRooms.set(tripId, { me, count: (prev?.count || 0) + 1 });
   s.emit('room:join', { tripId, uid: me.uid || undefined, name: me.name || 'Friend' });
 
   const msgFn = handlers.onMessage ? (m: ChatMessage) => handlers.onMessage!(m) : undefined;
@@ -66,6 +82,7 @@ export function joinTripRoom(
   const readFn = handlers.onRead ? (r: { tripId: string; messageId: string; count: number }) => handlers.onRead!(r) : undefined;
   const pinFn = handlers.onPin ? (p: { id: string; tripId: string; pinned: boolean }) => handlers.onPin!(p) : undefined;
   const delFn = handlers.onDelete ? (d: { tripId: string; messageId: string }) => handlers.onDelete!(d) : undefined;
+  const bellFn = handlers.onBellRing ? (b: { tripId: string; uid?: string; name?: string }) => handlers.onBellRing!(b) : undefined;
 
   if (msgFn) s.on('chat:new', msgFn);
   if (typeFn) s.on('chat:typing', typeFn);
@@ -73,6 +90,7 @@ export function joinTripRoom(
   if (readFn) s.on('chat:read', readFn);
   if (pinFn) s.on('chat:pin', pinFn);
   if (delFn) s.on('chat:delete', delFn);
+  if (bellFn) s.on('bell:ring', bellFn);
 
   let left = false;
   return () => {
@@ -84,8 +102,14 @@ export function joinTripRoom(
     if (readFn) s.off('chat:read', readFn);
     if (pinFn) s.off('chat:pin', pinFn);
     if (delFn) s.off('chat:delete', delFn);
+    if (bellFn) s.off('bell:ring', bellFn);
     s.emit('room:leave', { tripId });
     refCount = Math.max(0, refCount - 1);
+    const entry = joinedRooms.get(tripId);
+    if (entry) {
+      if (entry.count <= 1) joinedRooms.delete(tripId);
+      else joinedRooms.set(tripId, { me: entry.me, count: entry.count - 1 });
+    }
     if (refCount === 0) {
       window.setTimeout(() => {
         if (refCount === 0 && socket) {
@@ -127,6 +151,13 @@ export function sendChatViaSocket(msg: {
       reject(e instanceof Error ? e : new Error('send failed'));
     }
   });
+}
+
+/** Soft bell ping — ephemeral, no DB row, no timeline log. */
+export function emitBellRing(tripId: string, me: { uid?: string | null; name?: string }): void {
+  try {
+    ensureSocket().emit('bell:ring', { tripId, uid: me.uid || undefined, name: me.name || 'Someone' });
+  } catch { /* offline */ }
 }
 
 export function sendReadReceipt(tripId: string, messageId: string, uid: string): void {

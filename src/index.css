@@ -182,11 +182,20 @@
   color: #dc2626 !important;
 }
 @keyframes siren-pulse {
-  0% { transform: scale(0.55); opacity: 0.7; }
-  100% { transform: scale(1.7); opacity: 0; }
+  0% { transform: translate(50%, -50%) scale(0); opacity: 1; }
+  100% { transform: translate(50%, -50%) scale(12); opacity: 0; }
 }
 .siren-ripple {
-  animation: siren-pulse 1.2s ease-out infinite;
+  animation: siren-pulse 1.5s linear infinite;
+}
+
+/* Siren banner — drops from the header, auto-fades with the sound */
+@keyframes siren-toast-in {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.siren-toast-drop {
+  animation: siren-toast-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 /* Expense PDF: print me sirf statement dikhe */
