@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Compass, Wallet, ListChecks, FolderOpen, Plus, ArrowLeft, MessageCircle, Bell } from 'lucide-react';
+import { Compass, Wallet, ListChecks, Plus, ArrowLeft, MessageCircle, Bell } from 'lucide-react';
 import { Logo } from './Logo';
 
 export type CleanTab = 'trip' | 'todo' | 'expenses' | 'chat' | 'split' | 'vault';
@@ -35,7 +35,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'todo' as CleanTab, label: 'Todo', icon: ListChecks },
     { id: 'expenses' as CleanTab, label: 'Expenses', icon: Wallet },
     { id: 'chat' as CleanTab, label: 'Chat', icon: MessageCircle },
-    { id: 'vault' as CleanTab, label: 'Vault', icon: FolderOpen },
+    // VAULT DISABLED (temp) — data + views intact, button hidden. Re-add:
+    // { id: 'vault' as CleanTab, label: 'Vault', icon: FolderOpen },
   ];
 
   const spentPct = totalBudget > 0 ? Math.min(100, Math.round((totalSpent / totalBudget) * 100)) : 0;

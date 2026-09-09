@@ -86,6 +86,117 @@ app.get('/api/auth/user', async (req, res) => {
   }
 });
 
+// ─── User directory + password management ────────
+
+function normPhone(p) {
+  return String(p || '').replace(/\D/g, '').slice(-10);
+}
+
+async function requireAdmin(adminId) {
+  if (!adminId) return null;
+  const { rows } = await pool.query('SELECT id, email, role FROM users WHERE id = $1', [adminId]);
+  const admin = rows[0];
+  if (!admin || admin.role !== 'admin') return null;
+  return admin;
+}
+
+// GET /api/users — user directory WITHOUT password hashes
+// (must stay before the generic /:table route)
+app.get('/api/users', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, email, name, phone, role, "createdAt" FROM users ORDER BY email'
+    );
+    res.json({ data: rows, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/auth/forgot-password — self-service reset via the registered
+// mobile number (no email/SMS infra). Email + phone must match the account.
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email, phone, newPassword } = req.body;
+    if (!email || !phone) return res.json({ data: null, error: 'Email and registered mobile number required' });
+    if (!newPassword || newPassword.length < 6) return res.json({ data: null, error: 'New password must be at least 6 characters' });
+
+    const { rows } = await pool.query('SELECT id, phone FROM users WHERE email = $1', [String(email).trim()]);
+    if (rows.length === 0) return res.json({ data: null, error: 'No account found with this email' });
+    const user = rows[0];
+    if (!normPhone(phone) || normPhone(user.phone) !== normPhone(phone)) {
+      return res.json({ data: null, error: 'Mobile number does not match our records' });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, user.id]);
+    res.json({ data: { ok: true }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/admin/create-user — admin creates a login-ready user (hashed server-side)
+app.post('/api/admin/create-user', async (req, res) => {
+  try {
+    const { adminId, email, password, name, phone, role } = req.body;
+    if (!await requireAdmin(adminId)) return res.json({ data: null, error: 'Admin access required' });
+    if (!email || !password) return res.json({ data: null, error: 'Email and password required' });
+    if (password.length < 6) return res.json({ data: null, error: 'Password must be at least 6 characters' });
+
+    const safeRole = ['user', 'owner', 'admin'].includes(role) ? role : 'user';
+    const { rows: existing } = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.length > 0) return res.json({ data: null, error: 'User already exists' });
+
+    const id = 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const hash = await bcrypt.hash(password, 10);
+    await pool.query(
+      'INSERT INTO users (id, email, name, phone, role, password_hash) VALUES ($1, $2, $3, $4, $5, $6)',
+      [id, email, name || '', phone || '', safeRole, hash]
+    );
+    res.json({ data: [{ id, email, name: name || '', phone: phone || '', role: safeRole }], error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/admin/reset-password — admin sets a new password for any user
+// (passwords are bcrypt hashes: nobody, not even admin, can SEE a password)
+app.post('/api/admin/reset-password', async (req, res) => {
+  try {
+    const { adminId, userId, newPassword } = req.body;
+    if (!await requireAdmin(adminId)) return res.json({ data: null, error: 'Admin access required' });
+    if (!userId || !newPassword || newPassword.length < 6) {
+      return res.json({ data: null, error: 'Valid user and 6+ character password required' });
+    }
+    const { rows } = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+    if (rows.length === 0) return res.json({ data: null, error: 'User not found' });
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, userId]);
+    res.json({ data: { ok: true }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/admin/delete-user — admin deletes a user + their owned trips (refuses self-delete)
+app.post('/api/admin/delete-user', async (req, res) => {
+  try {
+    const { adminId, userId } = req.body;
+    const admin = await requireAdmin(adminId);
+    if (!admin) return res.json({ data: null, error: 'Admin access required' });
+    if (!userId) return res.json({ data: null, error: 'User required' });
+    if (userId === admin.id) return res.json({ data: null, error: 'You cannot delete your own admin account' });
+
+    await pool.query('DELETE FROM trips WHERE "ownerUid" = $1', [userId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+    res.json({ data: { ok: true }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
 // ─── Generic table CRUD (AFTER specific routes) ────────────
 
 // GET /api/:table — list rows with optional filters
@@ -121,7 +232,11 @@ app.post('/api/:table', async (req, res) => {
   try {
     const { table } = req.params;
     const body = req.body;
+    // Same rule as PUT: password hashes never enter via generic upsert.
     const rows = Array.isArray(body) ? body : [body];
+    if (table === 'users') {
+      for (const r of rows) delete r.password_hash;
+    }
     if (rows.length === 0) return res.json({ data: [], error: null });
 
     const cols = Object.keys(rows[0]);
@@ -159,6 +274,9 @@ app.put('/api/:table', async (req, res) => {
   try {
     const { table } = req.params;
     const { _filters, ...updates } = req.body;
+    // Password hashes can only be written through the auth/admin endpoints
+    // (which bcrypt them) — never as plaintext via generic update.
+    if (table === 'users') delete updates.password_hash;
     const filters = _filters || {};
 
     const setClauses = [];

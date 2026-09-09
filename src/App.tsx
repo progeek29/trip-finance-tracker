@@ -140,6 +140,8 @@ function loadSessionView(): AppView {
 function loadSessionTab(): CleanTab {
   try {
     const t = sessionStorage.getItem('ws_active_tab') as CleanTab;
+    // 'vault' may be stored from before it was disabled — fall back to trip
+    if (t === 'vault') return 'trip';
     return VALID_TABS.includes(t) ? t : 'trip';
   } catch {
     return 'trip';

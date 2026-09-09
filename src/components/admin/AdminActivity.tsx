@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Users, MapPin, Trash2, Plus, Pencil, Shield, User, X } from 'lucide-react';
-import { supabase, getAllUsers, adminDeleteUser, adminCreateUser, adminUpdateUser, type ManagedUser } from '../../utils/supabaseClient';
+import { supabase, getAllUsers, adminDeleteUser, adminCreateUser, adminUpdateUser, adminResetPassword, type ManagedUser } from '../../utils/supabaseClient';
 import type { Trip } from '../../types';
 
 interface AdminActivityProps {
@@ -16,6 +16,9 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
   const [showAddUser, setShowAddUser] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', phone: '', role: 'user' });
+  const [modalError, setModalError] = useState('');
+  const [resetPw, setResetPw] = useState('');
+  const [resetMsg, setResetMsg] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -31,9 +34,14 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
   useEffect(() => { load(); }, []);
 
   const handleDeleteUser = async (uid: string) => {
+    if (uid === myUid) return;
     if (!confirm('Delete this user and all their trips?')) return;
-    await adminDeleteUser(uid);
-    load();
+    try {
+      await adminDeleteUser(uid);
+      load();
+    } catch (e: any) {
+      alert(e?.message || 'Delete failed');
+    }
   };
 
   const handleDeleteTrip = async (tripId: string) => {
@@ -43,22 +51,55 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
   };
 
   const handleAddUser = async () => {
-    if (!newUser.email || !newUser.name) return;
-    await adminCreateUser(newUser.email, newUser.password, newUser.name, newUser.phone, newUser.role);
-    setNewUser({ email: '', password: '', name: '', phone: '', role: 'user' });
-    setShowAddUser(false);
-    load();
+    setModalError('');
+    if (!newUser.email || !newUser.name) { setModalError('Name and email required'); return; }
+    if (!newUser.password || newUser.password.length < 6) { setModalError('Set a login password (min 6 characters)'); return; }
+    try {
+      await adminCreateUser(newUser.email, newUser.password, newUser.name, newUser.phone, newUser.role);
+      setNewUser({ email: '', password: '', name: '', phone: '', role: 'user' });
+      setShowAddUser(false);
+      load();
+    } catch (e: any) {
+      setModalError(e?.message || 'Create failed');
+    }
   };
 
   const handleUpdateUser = async () => {
     if (!editingUser) return;
-    await adminUpdateUser(editingUser.id, {
-      name: editingUser.name,
-      phone: editingUser.phone,
-      role: editingUser.role,
-    });
-    setEditingUser(null);
-    load();
+    setModalError('');
+    // Never let an admin demote/remove their own admin access (would lock out)
+    const original = users.find((x) => x.id === editingUser.id);
+    if (editingUser.id === myUid && original?.role === 'admin' && editingUser.role !== 'admin') {
+      setModalError('You cannot remove your own admin role');
+      return;
+    }
+    try {
+      await adminUpdateUser(editingUser.id, {
+        name: editingUser.name,
+        phone: editingUser.phone,
+        role: editingUser.role,
+      });
+      setEditingUser(null);
+      setResetPw('');
+      setResetMsg('');
+      load();
+    } catch (e: any) {
+      setModalError(e?.message || 'Update failed');
+    }
+  };
+
+  const handleResetPw = async () => {
+    if (!editingUser) return;
+    setModalError('');
+    setResetMsg('');
+    if (resetPw.length < 6) { setModalError('New password must be at least 6 characters'); return; }
+    try {
+      await adminResetPassword(editingUser.id, resetPw);
+      setResetPw('');
+      setResetMsg('Password updated — share it with the user securely.');
+    } catch (e: any) {
+      setModalError(e?.message || 'Reset failed');
+    }
   };
 
   const totalMembers = trips.reduce((a, t) => a + (t.members?.length || 0), 0);
@@ -121,7 +162,7 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
         <div className="px-4 space-y-2 pb-24">
           {/* Add User Button */}
           <button
-            onClick={() => setShowAddUser(true)}
+            onClick={() => { setShowAddUser(true); setModalError(''); }}
             className="w-full py-2.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer hover:bg-indigo-100"
           >
             <Plus className="w-4 h-4" /> Add User
@@ -149,14 +190,16 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
                 </div>
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => setEditingUser(u)}
+                    onClick={() => { setEditingUser(u); setModalError(''); setResetPw(''); setResetMsg(''); }}
                     className="p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer"
                   >
                     <Pencil className="w-3.5 h-3.5 text-slate-400" />
                   </button>
                   <button
                     onClick={() => handleDeleteUser(u.id)}
-                    className="p-1.5 rounded-lg hover:bg-red-50 cursor-pointer"
+                    disabled={u.id === myUid}
+                    title={u.id === myUid ? 'You cannot delete your own account' : 'Delete user'}
+                    className="p-1.5 rounded-lg hover:bg-red-50 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
                   >
                     <Trash2 className="w-3.5 h-3.5 text-red-400" />
                   </button>
@@ -208,12 +251,16 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
             </div>
             <input value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} placeholder="Name" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500" />
             <input value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} placeholder="Email" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500" />
+            <input value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} placeholder="Login password (min 6)" type="password" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500" />
             <input value={newUser.phone} onChange={(e) => setNewUser({ ...newUser, phone: e.target.value })} placeholder="Phone" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500" />
             <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500">
               <option value="user">User</option>
               <option value="owner">Owner</option>
               <option value="admin">Admin</option>
             </select>
+            {modalError && (
+              <p className="text-[11px] text-red-600 bg-red-50 rounded-lg px-3 py-2">{modalError}</p>
+            )}
             <button onClick={handleAddUser} className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer">Create</button>
           </div>
         </div>
@@ -236,6 +283,21 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
               <option value="admin">Admin</option>
             </select>
             <button onClick={handleUpdateUser} className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer">Save Changes</button>
+            {/* Password reset — nobody can SEE a password (bcrypt hashes);
+                admin sets a new one and shares it with the user */}
+            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 space-y-2">
+              <p className="text-[11px] font-bold text-slate-700">Reset password</p>
+              <div className="flex gap-2">
+                <input value={resetPw} onChange={(e) => setResetPw(e.target.value)} placeholder="New password (min 6)" type="password" className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-xs bg-white focus:outline-none focus:border-indigo-500" />
+                <button onClick={handleResetPw} className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer">Set</button>
+              </div>
+              {resetMsg && (
+                <p className="text-[11px] text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2">{resetMsg}</p>
+              )}
+            </div>
+            {modalError && (
+              <p className="text-[11px] text-red-600 bg-red-50 rounded-lg px-3 py-2">{modalError}</p>
+            )}
           </div>
         </div>
       )}

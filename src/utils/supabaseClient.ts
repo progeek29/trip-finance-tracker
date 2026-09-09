@@ -80,6 +80,21 @@ export async function authSignIn(email: string, password: string): Promise<{ uid
   return { uid: data.user.id, isAdmin: cachedIsAdmin };
 }
 
+export async function authForgotPassword(email: string, phone: string, newPassword: string): Promise<void> {
+  const { error } = await api('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, phone, newPassword }),
+  });
+  if (error) throw new Error(error);
+}
+
+async function currentAdminId(): Promise<string> {
+  if (cachedUid) return cachedUid;
+  const u = await authGetUser();
+  if (!u) throw new Error('NOT_LOGGED_IN');
+  return u.uid;
+}
+
 export async function authSignOut(): Promise<void> {
   clearToken();
   cachedUid = null;
@@ -254,12 +269,12 @@ export async function getAllUsers(): Promise<ManagedUser[]> {
 }
 
 export async function adminCreateUser(email: string, password: string, name: string, phone: string, role: string): Promise<ManagedUser | null> {
-  const id = 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
-  const { data, error } = await api('/users', {
+  const adminId = await currentAdminId();
+  const { data, error } = await api('/admin/create-user', {
     method: 'POST',
-    body: JSON.stringify({ id, email, name, phone, role }),
+    body: JSON.stringify({ adminId, email, password, name, phone, role }),
   });
-  if (error) return null;
+  if (error) throw new Error(error);
   return data?.[0] as ManagedUser || null;
 }
 
@@ -271,17 +286,22 @@ export async function adminUpdateUser(id: string, updates: Partial<Pick<ManagedU
   return !error;
 }
 
-export async function adminDeleteUser(uid: string): Promise<boolean> {
-  const { data: trips } = await api('/trips', { method: 'GET' });
-  if (Array.isArray(trips)) {
-    for (const t of trips) {
-      if (t.ownerUid === uid) {
-        await api(`/trips?id=${t.id}`, { method: 'DELETE' });
-      }
-    }
-  }
-  await api(`/users?id=${uid}`, { method: 'DELETE' });
-  return true;
+export async function adminResetPassword(userId: string, newPassword: string): Promise<void> {
+  const adminId = await currentAdminId();
+  const { error } = await api('/admin/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ adminId, userId, newPassword }),
+  });
+  if (error) throw new Error(error);
+}
+
+export async function adminDeleteUser(uid: string): Promise<void> {
+  const adminId = await currentAdminId();
+  const { error } = await api('/admin/delete-user', {
+    method: 'POST',
+    body: JSON.stringify({ adminId, userId: uid }),
+  });
+  if (error) throw new Error(error);
 }
 
 export function makeInviteCode(): string {

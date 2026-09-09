@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Plane, Mail, Lock, ArrowRight, User } from 'lucide-react';
-import { authSignUp, authSignIn } from '../../utils/supabaseClient';
+import { authSignUp, authSignIn, authForgotPassword } from '../../utils/supabaseClient';
 import { PhoneInput, isValidPhone } from './PhoneInput';
 
 interface AuthScreenProps {
@@ -16,6 +16,11 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showForgot, setShowForgot] = useState(false);
+  const [fPhone, setFPhone] = useState('');
+  const [fNewPass, setFNewPass] = useState('');
+  const [fMsg, setFMsg] = useState('');
+  const [fLoading, setFLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,6 +60,30 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
       setError(err?.message || 'Something went wrong');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFMsg('');
+    setError('');
+    if (!email.trim() || !fPhone.trim()) {
+      setError('Email and registered mobile number required');
+      return;
+    }
+    if (fNewPass.length < 6) {
+      setError('New password must be at least 6 characters');
+      return;
+    }
+    setFLoading(true);
+    try {
+      await authForgotPassword(email.trim(), fPhone.trim(), fNewPass);
+      setFMsg('Password reset! Now login with your new password.');
+      setFNewPass('');
+    } catch (err: any) {
+      setError(err?.message || 'Reset failed');
+    } finally {
+      setFLoading(false);
     }
   };
 
@@ -130,6 +159,56 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
             </div>
           </div>
 
+          {/* Forgot password (login only) */}
+          {isLogin && !showForgot && (
+            <button
+              type="button"
+              onClick={() => { setShowForgot(true); setError(''); setFMsg(''); }}
+              className="w-full text-center text-xs text-indigo-600 font-bold hover:underline cursor-pointer"
+            >
+              Forgot password?
+            </button>
+          )}
+          {isLogin && showForgot && (
+            <div className="space-y-3 rounded-2xl bg-slate-50 border border-slate-200 p-3">
+              <p className="text-[11px] text-slate-500">
+                Enter your <b>registered mobile number</b> to verify it's you, then set a new password.
+              </p>
+              <PhoneInput label="Registered mobile number" value={fPhone} onChange={setFPhone} />
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">New password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="password"
+                    value={fNewPass}
+                    onChange={(e) => setFNewPass(e.target.value)}
+                    placeholder="Min 6 characters"
+                    className="w-full rounded-xl border border-slate-200 pl-10 pr-3 py-2.5 text-sm bg-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  />
+                </div>
+              </div>
+              {fMsg && (
+                <p className="text-xs text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2">{fMsg}</p>
+              )}
+              <button
+                type="button"
+                onClick={handleForgot}
+                disabled={fLoading}
+                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold text-sm cursor-pointer"
+              >
+                {fLoading ? 'Resetting…' : 'Reset Password'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowForgot(false); setError(''); setFMsg(''); }}
+                className="w-full text-center text-xs text-slate-500 font-bold hover:underline cursor-pointer"
+              >
+                Back to login
+              </button>
+            </div>
+          )}
+
           {/* Invite code - signup only */}
           {!isLogin && (
             <div>
@@ -152,6 +231,7 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
             <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
           )}
 
+          {!showForgot && (
           <button
             type="submit"
             disabled={loading}
@@ -166,6 +246,7 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
               </>
             )}
           </button>
+          )}
 
           <p className="text-center text-xs text-slate-500">
             {isLogin ? "Don't have an account?" : 'Already have an account?'}{' '}
