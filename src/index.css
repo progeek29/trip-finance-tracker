@@ -191,6 +191,17 @@
   animation: siren-toast-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
+/* Number inputs: no up/down spinner arrows anywhere (accidental value changes) */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* Expense PDF: only the statement is visible in print */
 @media print {
   body * {

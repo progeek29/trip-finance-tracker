@@ -426,14 +426,14 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
-      <div className="bg-white max-w-md w-full rounded-3xl p-6 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto">
+      <div className="bg-white max-w-md w-full rounded-xl border border-[#e2e8f0] p-6 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h4 className="font-extrabold text-slate-900">Squad Members ({members.length})</h4>
+          <h4 className="font-extrabold text-slate-900" style={{ letterSpacing: '0.02em' }}>Squad Members ({members.length})</h4>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
-        <div className="space-y-2">
+        <div className="divide-y divide-[#f1f5f9]">
           {members.map((m, i) => (
-            <div key={m.id} className="bg-slate-50 rounded-xl px-3 py-2 border border-slate-100 space-y-1.5">
+            <div key={m.id} className="py-2.5 space-y-1.5">
               <div className="flex items-center gap-2.5">
                 <MemberAvatar name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="sm" />
                 <div className="flex-1 min-w-0">
@@ -442,15 +442,15 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                     {(() => {
                       const st = memberStatus(trip, m);
                       return st === 'OWNER' ? (
-                        <span className="ml-1.5 text-[9px] font-extrabold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">OWNER</span>
+                        <span className="ml-1.5 text-[9px] font-extrabold rounded-full px-1.5 py-0.5" style={{ background: '#fef3c7', color: '#d97706' }}>OWNER</span>
                       ) : st === 'JOINED' ? (
-                        <span className="ml-1.5 text-[9px] font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5">JOINED</span>
+                        <span className="ml-1.5 text-[9px] font-extrabold rounded-full px-1.5 py-0.5" style={{ background: '#dcfce7', color: '#15803d' }}>JOINED</span>
                       ) : (
-                        <span className="ml-1.5 text-[9px] font-extrabold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5" title="No app yet — expenses still split normally">MANUAL</span>
+                        <span className="ml-1.5 text-[9px] font-extrabold rounded-full px-1.5 py-0.5 bg-slate-100 text-slate-500" title="No app yet — expenses still split normally">MANUAL</span>
                       );
                     })()}
                   </p>
-                  <p className="text-[11px] text-slate-400 truncate">{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p>
+                  <p className="text-[11px] truncate" style={{ color: '#64748b' }}>{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p>
                 </div>
                 <button onClick={() => setMembers((prev) => prev.map((mm) => (mm.id === m.id ? { ...mm, avatar: getRandomEmoji() } : mm)))} className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer">Shuffle</button>
                 {isOwner && !m.isCurrentUser && (
@@ -465,25 +465,26 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
               {m.isCurrentUser ? (
                 memberStatus(trip, m) === 'OWNER' ? (
                   <div className="flex items-center gap-1.5 pl-[38px]">
-                    <span className="text-[10px] text-slate-400 font-medium">Trip budget:</span>
+                    <span className="text-[10px] font-medium" style={{ color: '#64748b' }}>Trip budget:</span>
                     <span className="text-[11px] font-bold text-slate-600">₹{Number(trip.totalBudget).toLocaleString('en-IN')}</span>
-                    <span className="text-[10px] text-slate-400">(Edit Trip se change)</span>
+                    <span className="text-[10px]" style={{ color: '#64748b' }}>(Edit Trip se change)</span>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-1.5 pl-[38px]">
-                    <span className="text-[10px] text-slate-400 font-medium">Budget:</span>
-                    <input
-                      type="number"
-                      min={0}
-                      value={m.budget || ''}
-                      onChange={(e) => {
-                        const val = e.target.value === '' ? undefined : Number(e.target.value);
-                        setMembers((prev) => prev.map((mm) => (mm.id === m.id ? { ...mm, budget: val } : mm)));
-                      }}
-                      placeholder="0"
-                      className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100"
-                    />
-                    <span className="text-[10px] text-slate-400">/trip</span>
+                  <div className="pl-[38px]">
+                    <div className="relative">
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 select-none">₹</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={m.budget || ''}
+                        onChange={(e) => {
+                          const val = e.target.value === '' ? undefined : Number(e.target.value);
+                          setMembers((prev) => prev.map((mm) => (mm.id === m.id ? { ...mm, budget: val } : mm)));
+                        }}
+                        placeholder="Budget per Trip"
+                        className="w-full rounded-xl bg-slate-50 border border-slate-200 pl-9 pr-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                      />
+                    </div>
                   </div>
                 )
               ) : null}
@@ -491,13 +492,13 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
           ))}
         </div>
         {isOwner && (
-          <button onClick={() => { setShowAdd(!showAdd); setEditingId(null); setNewName(''); setNewPhone(''); }} className="w-full py-2.5 rounded-xl border border-dashed border-indigo-300 text-indigo-600 text-xs font-bold cursor-pointer">
+          <button onClick={() => { setShowAdd(!showAdd); setEditingId(null); setNewName(''); setNewPhone(''); }} className="w-full h-11 rounded-lg border border-dashed border-indigo-300 text-indigo-600 text-xs font-bold cursor-pointer" style={{ letterSpacing: '0.02em' }}>
             {showAdd ? 'Hide' : 'Add Member'}
           </button>
         )}
         {showAdd && (
-          <div className="bg-slate-50 rounded-xl p-3 border space-y-2">
-            <p className="text-[11px] font-bold text-slate-500 uppercase">{editingId ? 'Edit member' : 'Add manually or pick contacts'}</p>
+          <div className="bg-[#f8fafc] rounded-xl p-3 space-y-2">
+            <p className="text-[11px] font-bold text-slate-500 uppercase" style={{ letterSpacing: '0.02em' }}>{editingId ? 'Edit member' : 'Add manually or pick contacts'}</p>
             <button
               onClick={async () => {
                 setContactError(null);
@@ -508,25 +509,27 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                   setContactError('Could not open phone contacts (permission denied or unavailable). Add manually below.');
                 }
               }}
-              className="w-full bg-indigo-600 text-white text-xs font-bold py-2 rounded-xl hover:bg-indigo-700 cursor-pointer"
+              className="w-full bg-indigo-600 text-white text-xs font-bold h-11 rounded-xl hover:bg-indigo-700 cursor-pointer flex items-center justify-center gap-2" style={{ letterSpacing: '0.02em' }}
             >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               Add Contacts
             </button>
             {contactError && (
               <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 font-medium">{contactError}</p>
             )}
-            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name *" className="w-full border rounded-xl px-3 py-2 text-xs" />
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name *" className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100" />
             <PhoneInput value={newPhone} onChange={setNewPhone} placeholder="Phone" />
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-slate-500 font-medium">Budget</span>
-              <input type="number" min={0} value={newBudget} onChange={(e) => setNewBudget(e.target.value)} placeholder="0" className="flex-1 border rounded-xl px-3 py-2 text-xs" />
-              <span className="text-[11px] text-slate-400">/trip</span>
+            <div>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 select-none">₹</span>
+                <input type="number" min={0} value={newBudget} onChange={(e) => setNewBudget(e.target.value)} placeholder="Budget per Trip" className="w-full rounded-xl bg-slate-50 border border-slate-200 pl-9 pr-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100" />
+              </div>
             </div>
-            <button onClick={addOrSave} disabled={!newName.trim()} className="w-full bg-indigo-600 text-white text-xs font-bold py-2 rounded-xl disabled:opacity-40 cursor-pointer">{editingId ? 'Save' : 'Add to Squad'}</button>
+            <button onClick={addOrSave} disabled={!newName.trim()} className="w-full bg-indigo-600 text-white text-xs font-bold h-11 rounded-xl disabled:opacity-40 cursor-pointer" style={{ letterSpacing: '0.02em' }}>{editingId ? 'Save' : 'Add to Squad'}</button>
           </div>
         )}
-        <div className="pt-1 border-t border-slate-100">
-          <button onClick={() => onSave(members)} className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer">Save</button>
+        <div className="pt-1 border-t border-[#f1f5f9]">
+          <button onClick={() => onSave(members)} className="w-full h-11 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer" style={{ letterSpacing: '0.02em' }}>Save</button>
         </div>
       </div>
 

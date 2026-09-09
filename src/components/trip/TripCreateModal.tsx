@@ -454,20 +454,21 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                           </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5 pl-[38px]">
-                        <span className="text-[11px] text-slate-500 font-medium">Budget:</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={m.budget || ''}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? undefined : Number(e.target.value);
-                            setMembers(prev => prev.map(mm => mm.id === m.id ? { ...mm, budget: val } : mm));
-                          }}
-                          placeholder="0"
-                          className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 focus:outline-none focus:border-indigo-400"
-                        />
-                        <span className="text-[10px] text-slate-400">/trip</span>
+                      <div className="pl-[38px]">
+                        <div className="relative">
+                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 select-none">₹</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={m.budget || ''}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? undefined : Number(e.target.value);
+                              setMembers(prev => prev.map(mm => mm.id === m.id ? { ...mm, budget: val } : mm));
+                            }}
+                            placeholder="Budget per Trip"
+                            className="w-full rounded-xl bg-slate-50 border border-slate-200 pl-9 pr-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                          />
+                        </div>
                       </div>
                     </div>
                   ))}
