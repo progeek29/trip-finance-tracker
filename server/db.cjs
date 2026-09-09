@@ -5,11 +5,15 @@ const { Pool, types } = require('pg');
 types.setTypeParser(1700, (v) => (v === null ? null : parseFloat(v)));
 types.setTypeParser(20, (v) => (v === null ? null : parseInt(v, 10)));
 
-// Local dev uses the LAN Postgres below; production (Neon etc.) sets DATABASE_URL.
+// Local dev uses the LAN Postgres below; production sets DATABASE_URL.
+// SSL only when the URL asks for it (Neon: ?sslmode=require). The on-VM
+// Postgres has no SSL — forcing it breaks with "server does not support SSL".
+const _dbUrl = process.env.DATABASE_URL || '';
+const _needSSL = /sslmode=require/i.test(_dbUrl);
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
+      ssl: _needSSL ? { rejectUnauthorized: false } : false,
     })
   : new Pool({
       host: process.env.PGHOST || 'localhost',
