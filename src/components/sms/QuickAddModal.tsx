@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Trip, Expense, ExpenseCategory } from '../../types';
+import { Trip, Expense } from '../../types';
 import { X } from 'lucide-react';
 import { CustomSelect } from '../common/CustomSelect';
 import { formatPhoneDisplay } from '../common/PhoneInput';
@@ -25,7 +25,6 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 }) => {
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState<number | ''>('');
-  const [category, setCategory] = useState<ExpenseCategory>('food');
   const [paidByMemberId, setPaidByMemberId] = useState<string>('');
   const [splitMemberIds, setSplitMemberIds] = useState<string[]>([]);
   const [splitMode, setSplitMode] = useState<SplitMode>('equal');
@@ -44,7 +43,6 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
     if (!shouldReset) return;
     setTitle(initialExpense?.title || '');
     setAmount(initialExpense?.amount ?? '');
-    setCategory(initialExpense?.category || 'food');
     setPaidByMemberId(
       initialExpense?.paidByMemberId ||
         trip.members.find((m) => m.isCurrentUser)?.id ||
@@ -112,7 +110,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       title: title.trim(),
       amount: numAmount,
       currency: 'INR',
-      category,
+      category: initialExpense?.category || 'other',
       paymentMode: initialExpense?.paymentMode || 'upi',
       paidByMemberId,
       date: initialExpense?.date || now.toISOString().split('T')[0],
@@ -131,17 +129,6 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const toggleSplitMember = (id: string) => {
     setSplitMemberIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
-
-  const categories: { id: ExpenseCategory; label: string }[] = [
-    { id: 'food', label: 'Food' },
-    { id: 'drinks', label: 'Drinks' },
-    { id: 'stay', label: 'Stay' },
-    { id: 'transit', label: 'Transit' },
-    { id: 'activities', label: 'Activities' },
-    { id: 'fuel', label: 'Fuel' },
-    { id: 'shopping', label: 'Shopping' },
-    { id: 'other', label: 'Other' },
-  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
@@ -185,26 +172,6 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                   }`}
                 />
               </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1.5">Category</label>
-              <div className="grid grid-cols-4 gap-1.5">
-                {categories.map((cat) => (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => setCategory(cat.id)}
-                    className={`py-1.5 px-2 rounded-xl text-[11px] font-bold flex items-center justify-center transition-all cursor-pointer ${
-                      category === cat.id
-                        ? 'bg-indigo-600 text-white shadow-xs'
-                        : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <span className="truncate">{cat.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
 
             <div>
               <CustomSelect

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Trip, Expense, Settlement, ExpenseEvent } from '../../types';
 import { calculateMemberBalances, simplifyDebts } from '../../utils/debtSimplifier';
-import { Search, Edit2, Trash2, Download, Users, Plus, ArrowRight, CheckCircle2, History } from 'lucide-react';
+import { Search, Edit2, Trash2, Download, Users, ArrowRight, CheckCircle2, History, Receipt } from 'lucide-react';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { MemberAvatar } from '../common/MemberAvatar';
 
@@ -13,7 +13,6 @@ interface CleanExpensesViewProps {
   onEditExpense: (exp: Expense) => void;
   onDeleteExpense: (id: string) => void;
   onGoSplit: () => void;
-  onLogSpend: () => void;
   onSettle: (fromMemberId: string, toMemberId: string, amount: number) => void;
   myUid?: string | null;
 }
@@ -26,20 +25,16 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
   onEditExpense,
   onDeleteExpense,
   onGoSplit,
-  onLogSpend,
   onSettle,
   myUid,
 }) => {
   const [view, setView] = useState<'balances' | 'all'>('balances');
-  const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
   const [confirmExp, setConfirmExp] = useState<Expense | null>(null);
   const [confirmSettle, setConfirmSettle] = useState<{ from: string; to: string; amount: number } | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const totalSpent = expenses.reduce((a, b) => a + (Number(b.amount) || 0), 0);
-  const cashSpent = expenses.filter(e => e.paymentMode === 'cash').reduce((a, b) => a + (Number(b.amount) || 0), 0);
-  const digitalSpent = totalSpent - cashSpent;
 
   const me = (myUid ? trip.members.find((m) => m.uid === myUid) : undefined)
     || trip.members.find((m) => m.isCurrentUser) || trip.members[0];
@@ -49,27 +44,12 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
   const getMember = (id: string) => trip.members.find((m) => m.id === id) || { id, name: 'Friend', avatar: '' };
 
   const filtered = expenses.filter(e => {
-    if (filter === 'cash' && e.paymentMode !== 'cash') return false;
-    if (filter !== 'all' && filter !== 'cash' && e.category !== filter) return false;
     if (search) {
       const q = search.toLowerCase();
       return e.title.toLowerCase().includes(q) || e.notes?.toLowerCase().includes(q);
     }
     return true;
   });
-
-  const getCategoryBg = (cat: string) => {
-    switch (cat) {
-      case 'food': return 'bg-amber-100 text-amber-800';
-      case 'drinks': return 'bg-pink-100 text-pink-800';
-      case 'stay': return 'bg-indigo-100 text-indigo-800';
-      case 'transit': return 'bg-sky-100 text-sky-800';
-      case 'activities': return 'bg-emerald-100 text-emerald-800';
-      case 'shopping': return 'bg-purple-100 text-purple-800';
-      case 'fuel': return 'bg-orange-100 text-orange-800';
-      default: return 'bg-slate-100 text-slate-800';
-    }
-  };
 
   return (
     <div className="space-y-5 max-w-3xl mx-auto pb-24">
@@ -164,16 +144,8 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
               <div className="text-3xl sm:text-4xl font-extrabold text-slate-900 font-display mt-1 tracking-tight">
                 ₹{totalSpent.toLocaleString('en-IN')}
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs mt-2.5">
-                <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 font-bold border border-amber-200">
-                  ₹{cashSpent.toLocaleString('en-IN')} cash
-                </span>
-                <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-800 font-bold border border-indigo-200">
-                  ₹{digitalSpent.toLocaleString('en-IN')} online / UPI
-                </span>
-                <span className="text-slate-500 font-medium">
-                  of ₹{Number(trip.totalBudget).toLocaleString('en-IN')}
-                </span>
+              <div className="text-[11px] text-slate-500 font-medium mt-1">
+                of ₹{Number(trip.totalBudget).toLocaleString('en-IN')} trip budget
               </div>
             </div>
 
@@ -196,33 +168,9 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
             </div>
           </div>
 
-          {/* 2. Filter Pills & Search */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-              {[
-                { id: 'all', label: 'All' },
-                { id: 'cash', label: 'Cash' },
-                { id: 'food', label: 'Food' },
-                { id: 'drinks', label: 'Drinks' },
-                { id: 'stay', label: 'Stay' },
-                { id: 'transit', label: 'Transit' },
-                { id: 'activities', label: 'Activities' },
-              ].map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setFilter(item.id)}
-                  className={`flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                    filter === item.id
-                      ? 'bg-indigo-600 text-white shadow-xs shadow-indigo-200'
-                      : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="relative flex-shrink-0 sm:w-48">
+          {/* Search */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="relative flex-1">
               <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
@@ -244,10 +192,10 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
                   key={exp.id}
                   className="clean-card rounded-2xl p-4 border border-slate-200 bg-white hover:border-indigo-300 flex items-center justify-between gap-4 transition-all shadow-2xs"
                 >
-                  <div className="flex items-center gap-3.5">
-                    <div className={`w-10 h-10 rounded-xl ${getCategoryBg(exp.category)} flex items-center justify-center flex-shrink-0 font-extrabold text-sm uppercase`}>
-                      {exp.category.slice(0, 2)}
-                    </div>
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center flex-shrink-0">
+                  <Receipt size={16} />
+                </div>
 
                     <div>
                       <div className="flex items-center gap-2">
@@ -337,7 +285,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
             <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', marginTop: 12 }}>
               <thead>
                 <tr>
-                  {['Date', 'Title', 'Category', 'Paid By', 'Amount'].map((h) => (
+                  {['Date', 'Title', 'Paid By', 'Amount'].map((h) => (
                     <th key={h} style={{ textAlign: 'left', borderBottom: '2px solid #0f172a', padding: '6px 4px' }}>{h}</th>
                   ))}
                 </tr>
@@ -347,7 +295,6 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
                   <tr key={e.id}>
                     <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.date}</td>
                     <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.title}</td>
-                    <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.category}</td>
                     <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{trip.members.find((m) => m.id === e.paidByMemberId)?.name || ''}</td>
                     <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px', textAlign: 'right' }}>Rs.{Number(e.amount).toLocaleString('en-IN')}</td>
                   </tr>
@@ -357,15 +304,6 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
           </div>
         </>
       )}
-
-      {/* Floating + Log Spend */}
-      <button
-        onClick={onLogSpend}
-        className="fixed bottom-28 right-4 z-40 flex items-center gap-1.5 px-4 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 active:scale-95 transition-all cursor-pointer"
-        title="Log Spend"
-      >
-        <Plus size={16} strokeWidth={2.75} /> Log Spend
-      </button>
 
       {confirmExp && (
         <ConfirmDialog

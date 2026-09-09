@@ -1708,7 +1708,6 @@ export function App() {
             onEditExpense={handleEditExpense}
             onDeleteExpense={handleDeleteExpense}
             onGoSplit={() => setActiveTab('split')}
-            onLogSpend={() => { setEditingExpense(null); setIsQuickAddOpen(true); }}
             onSettle={handleSettle}
             myUid={myUid}
           />
