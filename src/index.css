@@ -115,6 +115,61 @@
   height: 0;
 }
 
+/* Notification bell jiggle — rotate only (same size), red while ringing */
+@keyframes bell-jiggle {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(14deg); }
+  40% { transform: rotate(-12deg); }
+  60% { transform: rotate(8deg); }
+  80% { transform: rotate(-6deg); }
+}
+.bell-jiggle {
+  animation: bell-jiggle 0.45s ease-in-out 4;
+  color: #dc2626 !important;
+}
+
+/* Chat typing dots — sequential wave bounce */
+@keyframes wave-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+.typing-dot {
+  animation: wave-bounce 1.2s ease-in-out infinite;
+}
+
+/* Siren bell — single-tap swing (origin top center) */
+@keyframes bell-swing {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(18deg); }
+  40% { transform: rotate(-14deg); }
+  60% { transform: rotate(8deg); }
+  80% { transform: rotate(-5deg); }
+}
+.bell-swing {
+  animation: bell-swing 0.5s ease-in-out;
+  transform-origin: top center;
+}
+
+/* Emergency siren — violent shake loop + expanding radar ripples */
+@keyframes violent-shake {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(-3px, 2px) rotate(-4deg); }
+  40% { transform: translate(3px, -2px) rotate(4deg); }
+  60% { transform: translate(-3px, -2px) rotate(-3deg); }
+  80% { transform: translate(3px, 2px) rotate(3deg); }
+}
+.siren-shake {
+  animation: violent-shake 0.3s linear infinite;
+  color: #dc2626 !important;
+}
+@keyframes siren-pulse {
+  0% { transform: scale(0.55); opacity: 0.7; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+.siren-ripple {
+  animation: siren-pulse 1.2s ease-out infinite;
+}
+
 /* Expense PDF: print me sirf statement dikhe */
 @media print {
   body * {

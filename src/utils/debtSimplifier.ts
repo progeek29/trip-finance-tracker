@@ -1,4 +1,4 @@
-import { Expense, SettlementDebt, TripMember } from '../types';
+import { Expense, SettlementDebt, TripMember, Settlement } from '../types';
 
 export interface MemberBalance {
   memberId: string;
@@ -9,9 +9,11 @@ export interface MemberBalance {
 }
 
 /**
- * Calculates net balances for each member based on group expenses
+ * Calculates net balances for each member based on group expenses.
+ * Settlements (recorded pay-backs) adjust ONLY the balance ledger —
+ * spend totals are never touched.
  */
-export function calculateMemberBalances(members: TripMember[], expenses: Expense[]): MemberBalance[] {
+export function calculateMemberBalances(members: TripMember[], expenses: Expense[], settlements: Settlement[] = []): MemberBalance[] {
   const memberMap = new Map<string, TripMember>(members.map(m => [m.id, m]));
   
   // Initialize balance map
@@ -43,7 +45,16 @@ export function calculateMemberBalances(members: TripMember[], expenses: Expense
   return members.map(m => {
     const totalPaid = paidMap.get(m.id) || 0;
     const totalOwed = owedMap.get(m.id) || 0;
-    const netBalance = Math.round((totalPaid - totalOwed) * 100) / 100;
+    // Settlements: fromMember paid outside the expense list → their net rises,
+    // receiver's net falls. Spend ledger untouched.
+    let settledOut = 0;
+    let settledIn = 0;
+    for (const s of settlements) {
+      const amt = Number(s.amount) || 0;
+      if (s.fromMemberId === m.id) settledOut += amt;
+      if (s.toMemberId === m.id) settledIn += amt;
+    }
+    const netBalance = Math.round((totalPaid - totalOwed + settledOut - settledIn) * 100) / 100;
 
     return {
       memberId: m.id,

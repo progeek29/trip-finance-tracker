@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Trip, TripMember, CityStop } from '../../types';
 import { getRandomEmoji } from '../../utils/avatar';
 import { putMedia, readFileAsDataUrl } from '../../utils/mediaStore';
-import { loadUserProfile, saveUserProfile } from '../../utils/storage';
+import { loadUserProfile } from '../../utils/storage';
 import { makeInviteCode } from '../../utils/supabaseClient';
 import { MemberAvatar } from '../common/MemberAvatar';
 import { DatePicker } from '../common/DatePicker';
@@ -171,21 +171,6 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
     setNewMemberName(''); setNewMemberPhone('');
   };
 
-  /** "You" card upar — naam + mobile yahin; login profile bhi update hoti hai. */
-  const updateYou = (patch: Partial<TripMember>) => {
-    setMembers(prev => {
-      const next = prev.some((m) => m.isCurrentUser)
-        ? prev.map((m) => (m.isCurrentUser ? { ...m, ...patch } : m))
-        : [youFromProfile(), ...prev.map((m) => ({ ...m }))].map((m, i) => (i === 0 ? { ...m, ...patch } : m));
-      const you = next.find((m) => m.isCurrentUser);
-      const cleanName = you ? you.name.replace(/\(You\)/g, '').trim() : '';
-      if (cleanName && (patch.name !== undefined || patch.phone !== undefined)) {
-        saveUserProfile({ name: cleanName, phone: you?.phone || '' });
-      }
-      return next;
-    });
-  };
-
   const handleSave = async () => {
     if (!title.trim() || !startDate || !endDate || !budget) return;
     const youPhone = members.find((m) => m.isCurrentUser)?.phone || '';
@@ -218,7 +203,8 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
         .filter(c => c.name.trim())
         .map((c, i) => ({ ...c, id: `city_${Date.now()}_${i}` })),
       isActive: editingTrip?.isActive || false,
-      status: editingTrip?.status || (new Date(startDate) > new Date() ? 'upcoming' : 'ongoing'),
+      // Status is always derived live from dates (never a stale stored value)
+      status: (new Date(startDate) > new Date() ? 'upcoming' : 'inprogress'),
     };
     onSaveTrip(trip);
     onClose();
@@ -434,7 +420,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
             <>
               <div>
                 <h3 className="text-sm font-bold text-slate-700 mb-1">Your Squad</h3>
-                <p className="text-xs text-slate-400 mb-4">Add friends — expenses split automatically.</p>
+                <p className="text-xs text-slate-400 mb-4">Add friends — expenses split automatically. Your own budget stays the Total Budget from Step 1.</p>
 
                 {/* Squad members (without you) */}
                 <div className="space-y-2 mb-4">

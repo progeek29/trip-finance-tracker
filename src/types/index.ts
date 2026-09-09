@@ -75,6 +75,30 @@ export interface SettlementDebt {
   amount: number;
 }
 
+/** Recorded pay-back between two members. Balance ledger only — never touches spend. */
+export interface Settlement extends SyncedMeta {
+  id: string;
+  tripId: string;
+  fromMemberId: string; // who paid (the ower)
+  toMemberId: string; // who received
+  amount: number;
+  date: string;
+  note?: string;
+}
+
+/** Transparent edit log for expenses — visible in trip history. */
+export interface ExpenseEvent {
+  id: string;
+  tripId: string;
+  expenseId: string;
+  action: 'created' | 'updated' | 'deleted';
+  title: string;
+  amount: number;
+  byUid?: string;
+  byName: string;
+  at: number;
+}
+
 export interface TransitReminder {
   id: string;
   tripId: string;
@@ -171,7 +195,7 @@ export interface Trip {
   members: TripMember[];
   cities: CityStop[];
   isActive: boolean;
-  status: 'upcoming' | 'ongoing' | 'completed';
+  status: 'upcoming' | 'inprogress' | 'completed';
   /** 6-char share code (created on Share, used to join from other phones) */
   inviteCode?: string;
   /** Firebase uid of the trip creator (admin) */
@@ -184,6 +208,8 @@ export interface TripTodo extends SyncedMeta {
   text: string;
   done: boolean;
   createdAt: string;
+  /** Creator's uid — har user ka TODO separate dikhta hai */
+  ownerUid?: string;
 }
 
 export interface ChatMessage {

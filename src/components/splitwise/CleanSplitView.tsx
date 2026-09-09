@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Trip, Expense, TripMember } from '../../types';
+import { Trip, Expense, TripMember, Settlement } from '../../types';
 import { calculateMemberBalances, simplifyDebts } from '../../utils/debtSimplifier';
-import { ArrowRight, CheckCircle2, Edit2, Trash2, Receipt, ChevronLeft } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Edit2, Trash2, Receipt, ChevronLeft, Undo2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { MemberAvatar } from '../common/MemberAvatar';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -9,33 +9,44 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 interface CleanSplitViewProps {
   trip: Trip;
   expenses: Expense[];
+  settlements: Settlement[];
   onOpenQuickAdd: () => void;
   onEditExpense: (e: Expense) => void;
   onDeleteExpense: (id: string) => void;
   onBackToExpenses: () => void;
+  onSettle: (fromMemberId: string, toMemberId: string, amount: number) => void;
+  onUndoSettlement: (id: string) => void;
+  myUid?: string | null;
 }
 
 export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
   trip,
   expenses,
+  settlements,
   onOpenQuickAdd,
   onEditExpense,
   onDeleteExpense,
   onBackToExpenses,
+  onSettle,
+  onUndoSettlement,
+  myUid,
 }) => {
-  const [settledIds, setSettledIds] = useState<string[]>([]);
   const [confirmBill, setConfirmBill] = useState<Expense | null>(null);
+  const [confirmSettle, setConfirmSettle] = useState<{ from: string; to: string; amount: number } | null>(null);
 
-  const balances = calculateMemberBalances(trip.members, expenses);
-  const settlements = simplifyDebts(balances);
+  const balances = calculateMemberBalances(trip.members, expenses, settlements);
+  const debts = simplifyDebts(balances);
+  const settlementsMine = settlements.filter((s) => s.tripId === trip.id);
   const groupBills = expenses.filter((e) => e.isGroupExpense);
 
-  const currentMember = trip.members.find((m) => m.isCurrentUser) || trip.members[0];
+  const currentMember = (myUid ? trip.members.find((m) => m.uid === myUid) : undefined)
+    || trip.members.find((m) => m.isCurrentUser) || trip.members[0];
   const myBalance = balances.find((b) => b.memberId === currentMember?.id)?.netBalance || 0;
 
-  const handleSettle = (key: string) => {
+  const handleSettle = (fromMemberId: string, toMemberId: string, amount: number) => {
     confetti({ particleCount: 70, spread: 60, origin: { y: 0.7 } });
-    setSettledIds((prev) => [...prev, key]);
+    onSettle(fromMemberId, toMemberId, amount);
+    setConfirmSettle(null);
   };
 
   const getMember = (id: string): TripMember => {
@@ -67,20 +78,18 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
           <h3 className="text-sm font-extrabold text-slate-900 font-display">Suggested Transfers to Settle Up</h3>
           <span className="text-xs text-slate-500 font-medium">Simplified 1-on-1 Payments</span>
         </div>
-        {settlements.length === 0 ? (
+        {debts.length === 0 ? (
           <div className="clean-card rounded-2xl p-6 text-center border border-slate-200 bg-white">
             <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
             <p className="text-xs text-slate-700 font-bold">All group expenses are completely settled!</p>
           </div>
         ) : (
           <div className="space-y-2.5">
-            {settlements.map((debt, idx) => {
+            {debts.map((debt, idx) => {
               const from = getMember(debt.fromMemberId);
               const to = getMember(debt.toMemberId);
-              const key = `${debt.fromMemberId}_${debt.toMemberId}_${debt.amount}`;
-              const isSettled = settledIds.includes(key);
               return (
-                <div key={idx} className={`clean-card rounded-2xl p-4 border flex items-center justify-between gap-4 transition-all ${isSettled ? 'opacity-60 bg-emerald-50/60 border-emerald-200' : 'border-slate-200 bg-white hover:border-indigo-300 shadow-2xs'}`}>
+                <div key={idx} className="clean-card rounded-2xl p-4 border border-slate-200 bg-white hover:border-indigo-300 shadow-2xs flex items-center justify-between gap-4 transition-all">
                   <div className="flex items-center gap-3">
                     <div className="flex -space-x-2">
                       <MemberAvatar name={from.name} avatar={from.avatar} memberId={from.id} size="sm" />
@@ -96,9 +105,9 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-base font-extrabold text-slate-900 font-display">₹{debt.amount.toLocaleString('en-IN')}</span>
-                    <button disabled={isSettled} onClick={() => handleSettle(key)} className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${isSettled ? 'bg-emerald-100 text-emerald-800' : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs shadow-emerald-200'}`}>
-                      {isSettled ? 'Settled' : 'Settle'}
+                    <span className="text-base font-extrabold text-slate-900 font-display">₹{Number(debt.amount).toLocaleString('en-IN')}</span>
+                    <button onClick={() => setConfirmSettle({ from: debt.fromMemberId, to: debt.toMemberId, amount: debt.amount })} className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs shadow-emerald-200">
+                      Settle
                     </button>
                   </div>
                 </div>
@@ -107,6 +116,31 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Recorded pay-backs (balance ledger only — spend untouched) */}
+      {settlementsMine.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-extrabold text-slate-900 font-display">Recorded Pay-backs ({settlementsMine.length})</h3>
+          {settlementsMine.map((s) => {
+            const from = getMember(s.fromMemberId);
+            const to = getMember(s.toMemberId);
+            return (
+              <div key={s.id} className="clean-card rounded-2xl p-3.5 border border-emerald-200 bg-emerald-50/50 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <p className="text-xs font-bold text-slate-800 truncate">
+                    {from.name.split(' ')[0]} paid {to.name.split(' ')[0]} <span className="font-extrabold">₹{Number(s.amount).toLocaleString('en-IN')}</span>
+                    <span className="block text-[10px] text-slate-500 font-medium">{s.date}</span>
+                  </p>
+                </div>
+                <button onClick={() => onUndoSettlement(s.id)} className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 cursor-pointer flex-shrink-0" title="Undo this pay-back">
+                  <Undo2 size={12} /> Undo
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Group bills with add/edit/delete */}
       <div className="space-y-3">
@@ -125,13 +159,14 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
         <div className="space-y-2">
           {groupBills.map((e) => {
             const payer = getMember(e.paidByMemberId);
+            const mySplit = currentMember ? e.splits.find((s) => s.memberId === currentMember.id)?.amount : undefined;
             return (
               <div key={e.id} className="clean-card rounded-2xl p-3.5 border border-slate-200 bg-white flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <MemberAvatar name={payer.name} avatar={payer.avatar} memberId={payer.id} size="sm" />
                   <div className="min-w-0">
                     <p className="text-xs font-extrabold text-slate-900 truncate">{e.title}</p>
-                    <p className="text-[11px] text-slate-500">Paid by {payer.name} • ₹{e.amount.toLocaleString('en-IN')} • split {e.splits.length} ways</p>
+                    <p className="text-[11px] text-slate-500">Paid by {payer.name} • ₹{Number(e.amount).toLocaleString('en-IN')} • split {e.splits.length} ways{mySplit !== undefined ? ` • your share ₹${Number(mySplit).toLocaleString('en-IN')}` : ''}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
@@ -163,6 +198,13 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
           message={`"${confirmBill.title}" will be deleted.`}
           onConfirm={() => onDeleteExpense(confirmBill.id)}
           onClose={() => setConfirmBill(null)}
+        />
+      )}
+      {confirmSettle && (
+        <ConfirmDialog
+          message={`${getMember(confirmSettle.from).name.split(' ')[0]} pays ${getMember(confirmSettle.to).name.split(' ')[0]} Rs.${Number(confirmSettle.amount).toLocaleString('en-IN')} — recorded as pay-back (spend totals don't change).`}
+          onConfirm={() => handleSettle(confirmSettle.from, confirmSettle.to, confirmSettle.amount)}
+          onClose={() => setConfirmSettle(null)}
         />
       )}
     </div>

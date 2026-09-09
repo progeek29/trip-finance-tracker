@@ -140,7 +140,7 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
                 value={inviteCode}
                 onChange={(e) => {
                   setInviteCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6));
-                  setError(null);
+                  setError('');
                 }}
                 placeholder="e.g. GOA4X8"
                 className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-center text-lg font-extrabold tracking-[0.3em] focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 placeholder-slate-300 placeholder:tracking-normal placeholder:text-sm placeholder:font-medium"

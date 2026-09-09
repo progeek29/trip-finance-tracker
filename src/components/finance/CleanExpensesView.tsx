@@ -1,30 +1,52 @@
 import React, { useState } from 'react';
-import { Trip, Expense } from '../../types';
-import { Search, Edit2, Trash2, Download, Users } from 'lucide-react';
+import { Trip, Expense, Settlement, ExpenseEvent } from '../../types';
+import { calculateMemberBalances, simplifyDebts } from '../../utils/debtSimplifier';
+import { Search, Edit2, Trash2, Download, Users, Plus, ArrowRight, CheckCircle2, History } from 'lucide-react';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { MemberAvatar } from '../common/MemberAvatar';
 
 interface CleanExpensesViewProps {
   trip: Trip;
   expenses: Expense[];
+  settlements: Settlement[];
+  expenseEvents: ExpenseEvent[];
   onEditExpense: (exp: Expense) => void;
   onDeleteExpense: (id: string) => void;
   onGoSplit: () => void;
+  onLogSpend: () => void;
+  onSettle: (fromMemberId: string, toMemberId: string, amount: number) => void;
+  myUid?: string | null;
 }
 
 export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
   trip,
   expenses,
+  settlements,
+  expenseEvents,
   onEditExpense,
   onDeleteExpense,
   onGoSplit,
+  onLogSpend,
+  onSettle,
+  myUid,
 }) => {
+  const [view, setView] = useState<'balances' | 'all'>('balances');
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
   const [confirmExp, setConfirmExp] = useState<Expense | null>(null);
+  const [confirmSettle, setConfirmSettle] = useState<{ from: string; to: string; amount: number } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
-  const totalSpent = expenses.reduce((a, b) => a + b.amount, 0);
-  const cashSpent = expenses.filter(e => e.paymentMode === 'cash').reduce((a, b) => a + b.amount, 0);
+  const totalSpent = expenses.reduce((a, b) => a + (Number(b.amount) || 0), 0);
+  const cashSpent = expenses.filter(e => e.paymentMode === 'cash').reduce((a, b) => a + (Number(b.amount) || 0), 0);
   const digitalSpent = totalSpent - cashSpent;
+
+  const me = (myUid ? trip.members.find((m) => m.uid === myUid) : undefined)
+    || trip.members.find((m) => m.isCurrentUser) || trip.members[0];
+  const balances = calculateMemberBalances(trip.members, expenses, settlements);
+  const debts = simplifyDebts(balances);
+  const myBalance = balances.find((b) => b.memberId === me?.id)?.netBalance || 0;
+  const getMember = (id: string) => trip.members.find((m) => m.id === id) || { id, name: 'Friend', avatar: '' };
 
   const filtered = expenses.filter(e => {
     if (filter === 'cash' && e.paymentMode !== 'cash') return false;
@@ -50,188 +72,315 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
   };
 
   return (
-    <div className="space-y-5 max-w-3xl mx-auto">
-      {/* 1. Large Spend Header */}
-      <div className="clean-card rounded-3xl p-6 sm:p-7 border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <span className="text-[11px] font-extrabold text-slate-400 block uppercase tracking-wider">
-            Total Trip Spend
-          </span>
-          <div className="text-3xl sm:text-4xl font-extrabold text-slate-900 font-display mt-1 tracking-tight">
-            ₹{totalSpent.toLocaleString('en-IN')}
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs mt-2.5">
-            <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 font-bold border border-amber-200">
-              ₹{cashSpent.toLocaleString('en-IN')} cash
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-800 font-bold border border-indigo-200">
-              ₹{digitalSpent.toLocaleString('en-IN')} online / UPI
-            </span>
-            <span className="text-slate-500 font-medium">
-              of ₹{trip.totalBudget.toLocaleString('en-IN')}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
+    <div className="space-y-5 max-w-3xl mx-auto pb-24">
+      {/* View toggle: Balances (default) · All Expenses */}
+      <div className="flex gap-1.5 p-1 bg-white border border-slate-200 rounded-xl">
+        {(['balances', 'all'] as const).map((v) => (
           <button
-            onClick={() => window.print()}
-            className="flex items-center justify-center w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-colors cursor-pointer"
-            title="Download full history as PDF"
+            key={v}
+            onClick={() => setView(v)}
+            className={`flex-1 py-2 rounded-lg text-xs font-bold cursor-pointer ${view === v ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
           >
-            <Download className="w-4 h-4" />
+            {v === 'balances' ? 'Balances' : `All Expenses (${expenses.length})`}
           </button>
-          <button
-            onClick={onGoSplit}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm shadow-emerald-200 transition-all cursor-pointer"
-            title="Open Splitwise"
-          >
-            <Users className="w-4 h-4" />
-            <span>Splitwise</span>
-          </button>
-        </div>
+        ))}
       </div>
 
-      {/* 2. Filter Pills & Search */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-          {[
-            { id: 'all', label: 'All' },
-            { id: 'cash', label: 'Cash' },
-            { id: 'food', label: 'Food' },
-            { id: 'drinks', label: 'Drinks' },
-            { id: 'stay', label: 'Stay' },
-            { id: 'transit', label: 'Transit' },
-            { id: 'activities', label: 'Activities' },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setFilter(item.id)}
-              className={`flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                filter === item.id
-                  ? 'bg-indigo-600 text-white shadow-xs shadow-indigo-200'
-                  : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+      {view === 'balances' ? (
+        <>
+          {/* My balance card */}
+          <div className="clean-card rounded-3xl p-6 border border-slate-200 bg-white shadow-xs">
+            <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">Your Balance</span>
+            <div className={`text-3xl font-extrabold font-display mt-1 tracking-tight ${myBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {myBalance >= 0 ? `+₹${myBalance.toLocaleString('en-IN')}` : `-₹${Math.abs(myBalance).toLocaleString('en-IN')}`}
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-1">
+              {myBalance >= 0 ? 'Friends owe you money.' : 'You owe money to settle up your share.'}
+            </p>
+          </div>
 
-        <div className="relative flex-shrink-0 sm:w-48">
-          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search spends..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          />
-        </div>
-      </div>
-
-      {/* 3. Expenses List */}
-      <div className="space-y-2.5">
-        {filtered.map((exp) => {
-          const payer = trip.members.find(m => m.id === exp.paidByMemberId)?.name || 'Friend';
-          return (
-            <div
-              key={exp.id}
-              className="clean-card rounded-2xl p-4 border border-slate-200 bg-white hover:border-indigo-300 flex items-center justify-between gap-4 transition-all shadow-2xs"
-            >
-              <div className="flex items-center gap-3.5">
-                <div className={`w-10 h-10 rounded-xl ${getCategoryBg(exp.category)} flex items-center justify-center flex-shrink-0 font-extrabold text-sm uppercase`}>
-                  {exp.category.slice(0, 2)}
-                </div>
-
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-extrabold text-slate-900 text-sm">{exp.title}</h4>
-                    {exp.paymentMode === 'cash' && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 font-bold border border-amber-200">
-                        Cash
-                      </span>
-                    )}
-                    {exp.isAutoParsedSMS && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
-                        SMS Auto
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="text-xs text-slate-500 mt-0.5 font-medium">
-                    Paid by <strong className="text-slate-700">{payer}</strong> • {new Date(exp.date).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                    {exp.splits.length > 1 && ` • Split 4 ways`}
-                  </div>
-                </div>
+          {/* Who owes whom */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-extrabold text-slate-900 font-display">Who Owes Whom</h3>
+              <button onClick={onGoSplit} className="text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer">Full splitwise →</button>
+            </div>
+            {debts.length === 0 ? (
+              <div className="clean-card rounded-2xl p-6 text-center border border-slate-200 bg-white">
+                <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
+                <p className="text-xs text-slate-700 font-bold">All settled — nobody owes anybody.</p>
               </div>
+            ) : (
+              debts.map((debt, idx) => {
+                const from = getMember(debt.fromMemberId);
+                const to = getMember(debt.toMemberId);
+                return (
+                  <div key={idx} className="clean-card rounded-2xl p-4 border border-slate-200 bg-white flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex -space-x-2 flex-shrink-0">
+                        <MemberAvatar name={from.name} avatar={from.avatar} memberId={from.id} size="sm" />
+                        <MemberAvatar name={to.name} avatar={to.avatar} memberId={to.id} size="sm" />
+                      </div>
+                      <p className="text-xs font-extrabold text-slate-900 truncate">
+                        {from.name.split(' ')[0]} <ArrowRight className="w-3 h-3 text-slate-400 inline" /> {to.name.split(' ')[0]}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-sm font-extrabold text-slate-900">₹{Number(debt.amount).toLocaleString('en-IN')}</span>
+                      <button onClick={() => setConfirmSettle({ from: debt.fromMemberId, to: debt.toMemberId, amount: debt.amount })} className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer">
+                        Settle
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
 
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <span className="font-extrabold text-slate-900 text-base font-display">
-                    ₹{exp.amount.toLocaleString('en-IN')}
+          {/* Member nets */}
+          <div className="space-y-2.5">
+            <h3 className="text-sm font-extrabold text-slate-900 font-display">Member Balances</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {balances.map((b, i) => (
+                <div key={b.memberId} className="clean-card rounded-2xl p-4 border border-slate-200 bg-white space-y-2 text-center shadow-2xs">
+                  <div className="flex justify-center"><MemberAvatar name={b.member.name} avatar={b.member.avatar} memberId={b.memberId} index={i} size="lg" /></div>
+                  <span className="text-xs font-extrabold text-slate-900 block truncate">{b.member.name}</span>
+                  <span className={`text-xs font-extrabold block px-2 py-0.5 rounded-full ${b.netBalance >= 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+                    {b.netBalance >= 0 ? `+₹${b.netBalance.toLocaleString('en-IN')}` : `-₹${Math.abs(b.netBalance).toLocaleString('en-IN')}`}
                   </span>
-                  {exp.splits.length > 1 && (
-                    <span className="text-[10px] text-slate-400 font-semibold block">₹{exp.splits[0].amount}/each</span>
-                  )}
                 </div>
-
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => onEditExpense(exp)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
-                    title="Edit Expense"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => setConfirmExp(exp)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                    title="Delete Expense"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          {/* 1. Large Spend Header */}
+          <div className="clean-card rounded-3xl p-6 sm:p-7 border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <span className="text-[11px] font-extrabold text-slate-400 block uppercase tracking-wider">
+                Total Trip Spend
+              </span>
+              <div className="text-3xl sm:text-4xl font-extrabold text-slate-900 font-display mt-1 tracking-tight">
+                ₹{totalSpent.toLocaleString('en-IN')}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs mt-2.5">
+                <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 font-bold border border-amber-200">
+                  ₹{cashSpent.toLocaleString('en-IN')} cash
+                </span>
+                <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-800 font-bold border border-indigo-200">
+                  ₹{digitalSpent.toLocaleString('en-IN')} online / UPI
+                </span>
+                <span className="text-slate-500 font-medium">
+                  of ₹{Number(trip.totalBudget).toLocaleString('en-IN')}
+                </span>
               </div>
             </div>
-          );
-        })}
-      </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => window.print()}
+                className="flex items-center justify-center w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-colors cursor-pointer"
+                title="Download full history as PDF"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+              <button
+                onClick={onGoSplit}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm shadow-emerald-200 transition-all cursor-pointer"
+                title="Open Splitwise"
+              >
+                <Users className="w-4 h-4" />
+                <span>Splitwise</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 2. Filter Pills & Search */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'cash', label: 'Cash' },
+                { id: 'food', label: 'Food' },
+                { id: 'drinks', label: 'Drinks' },
+                { id: 'stay', label: 'Stay' },
+                { id: 'transit', label: 'Transit' },
+                { id: 'activities', label: 'Activities' },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setFilter(item.id)}
+                  className={`flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    filter === item.id
+                      ? 'bg-indigo-600 text-white shadow-xs shadow-indigo-200'
+                      : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative flex-shrink-0 sm:w-48">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search spends..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              />
+            </div>
+          </div>
+
+          {/* 3. Expenses List */}
+          <div className="space-y-2.5">
+            {filtered.map((exp) => {
+              const payer = trip.members.find(m => m.id === exp.paidByMemberId)?.name || 'Friend';
+              const myShare = me ? exp.splits.find((s) => s.memberId === me.id)?.amount : undefined;
+              return (
+                <div
+                  key={exp.id}
+                  className="clean-card rounded-2xl p-4 border border-slate-200 bg-white hover:border-indigo-300 flex items-center justify-between gap-4 transition-all shadow-2xs"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className={`w-10 h-10 rounded-xl ${getCategoryBg(exp.category)} flex items-center justify-center flex-shrink-0 font-extrabold text-sm uppercase`}>
+                      {exp.category.slice(0, 2)}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-extrabold text-slate-900 text-sm">{exp.title}</h4>
+                        {exp.paymentMode === 'cash' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 font-bold border border-amber-200">
+                            Cash
+                          </span>
+                        )}
+                        {exp.isAutoParsedSMS && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
+                            SMS Auto
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="text-xs text-slate-500 mt-0.5 font-medium">
+                        Paid by <strong className="text-slate-700">{payer}</strong> • {new Date(exp.date).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                        {exp.splits.length > 1 && ` • Split ${exp.splits.length} ways`}
+                        {myShare !== undefined && exp.splits.length > 1 && ` • your share ₹${Number(myShare).toLocaleString('en-IN')}`}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <span className="font-extrabold text-slate-900 text-base font-display">
+                        ₹{Number(exp.amount).toLocaleString('en-IN')}
+                      </span>
+                      {exp.splits.length > 1 && (
+                        <span className="text-[10px] text-slate-400 font-semibold block">₹{Number(exp.splits[0]?.amount || 0).toLocaleString('en-IN')}/each</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => onEditExpense(exp)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+                        title="Edit Expense"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setConfirmExp(exp)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                        title="Delete Expense"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 4. History — every edit/delete with timestamp */}
+          <div className="space-y-2">
+            <button onClick={() => setHistoryOpen(!historyOpen)} className="flex items-center gap-1.5 text-xs font-extrabold text-slate-700 hover:text-indigo-600 cursor-pointer">
+              <History size={13} /> Expense History ({expenseEvents.length}) {historyOpen ? '▲' : '▼'}
+            </button>
+            {historyOpen && (
+              <div className="space-y-1.5">
+                {expenseEvents.length === 0 && (
+                  <p className="text-[11px] text-slate-400 font-medium">No edits yet.</p>
+                )}
+                {expenseEvents.map((ev) => (
+                  <div key={ev.id} className="bg-white border border-slate-200 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-slate-600 font-medium truncate">
+                      <strong className="text-slate-800">{ev.byName}</strong> {ev.action} <strong className="text-slate-800">"{ev.title}"</strong> (Rs.{Number(ev.amount).toLocaleString('en-IN')})
+                    </p>
+                    <span className="text-[10px] text-slate-400 font-medium flex-shrink-0">
+                      {new Date(ev.at).toLocaleDateString([], { day: 'numeric', month: 'short' })}, {new Date(ev.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Printable full-history statement (screen pe hidden, PDF me aata hai) */}
+          <div id="expense-statement" className="hidden print:block">
+            <h1 style={{ fontSize: 20, fontWeight: 800 }}>{trip.title} — Expense History</h1>
+            <p style={{ fontSize: 12, color: '#475569' }}>
+              {trip.startDate} to {trip.endDate} • Total: Rs.{totalSpent.toLocaleString('en-IN')} of Rs.{Number(trip.totalBudget).toLocaleString('en-IN')}
+            </p>
+            <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', marginTop: 12 }}>
+              <thead>
+                <tr>
+                  {['Date', 'Title', 'Category', 'Paid By', 'Amount'].map((h) => (
+                    <th key={h} style={{ textAlign: 'left', borderBottom: '2px solid #0f172a', padding: '6px 4px' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {expenses.map((e) => (
+                  <tr key={e.id}>
+                    <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.date}</td>
+                    <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.title}</td>
+                    <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.category}</td>
+                    <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{trip.members.find((m) => m.id === e.paidByMemberId)?.name || ''}</td>
+                    <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px', textAlign: 'right' }}>Rs.{Number(e.amount).toLocaleString('en-IN')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {/* Floating + Log Spend */}
+      <button
+        onClick={onLogSpend}
+        className="fixed bottom-28 right-4 z-40 flex items-center gap-1.5 px-4 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 active:scale-95 transition-all cursor-pointer"
+        title="Log Spend"
+      >
+        <Plus size={16} strokeWidth={2.75} /> Log Spend
+      </button>
 
       {confirmExp && (
         <ConfirmDialog
-          message={`"${confirmExp.title}" (Rs.${confirmExp.amount.toLocaleString('en-IN')}) will be deleted.`}
+          message={`"${confirmExp.title}" (Rs.${Number(confirmExp.amount).toLocaleString('en-IN')}) will be deleted.`}
           onConfirm={() => onDeleteExpense(confirmExp.id)}
           onClose={() => setConfirmExp(null)}
         />
       )}
-
-      {/* Printable full-history statement (screen pe hidden, PDF me aata hai) */}      <div id="expense-statement" className="hidden print:block">
-        <h1 style={{ fontSize: 20, fontWeight: 800 }}>{trip.title} — Expense History</h1>
-        <p style={{ fontSize: 12, color: '#475569' }}>
-          {trip.startDate} to {trip.endDate} • Total: Rs.{totalSpent.toLocaleString('en-IN')} of Rs.{trip.totalBudget.toLocaleString('en-IN')}
-        </p>
-        <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', marginTop: 12 }}>
-          <thead>
-            <tr>
-              {['Date', 'Title', 'Category', 'Paid By', 'Amount'].map((h) => (
-                <th key={h} style={{ textAlign: 'left', borderBottom: '2px solid #0f172a', padding: '6px 4px' }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {expenses.map((e) => (
-              <tr key={e.id}>
-                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.date}</td>
-                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.title}</td>
-                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{e.category}</td>
-                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px' }}>{trip.members.find((m) => m.id === e.paidByMemberId)?.name || ''}</td>
-                <td style={{ borderBottom: '1px solid #e2e8f0', padding: '6px 4px', textAlign: 'right' }}>Rs.{e.amount.toLocaleString('en-IN')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {confirmSettle && (
+        <ConfirmDialog
+          message={`Record pay-back of Rs.${Number(confirmSettle.amount).toLocaleString('en-IN')}? Spend totals don't change.`}
+          onConfirm={() => { onSettle(confirmSettle.from, confirmSettle.to, confirmSettle.amount); setConfirmSettle(null); }}
+          onClose={() => setConfirmSettle(null)}
+        />
+      )}
     </div>
   );
 };

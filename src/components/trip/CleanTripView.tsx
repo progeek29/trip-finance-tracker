@@ -61,15 +61,16 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
   const totalSpent = expenses.reduce((a, b) => a + b.amount, 0);
   const remaining = trip.totalBudget - totalSpent;
   const percentSpent = trip.totalBudget > 0 ? Math.min(100, Math.round((totalSpent / trip.totalBudget) * 100)) : 0;
-  // Per-member: what this user's share was spent vs their budget
-  const myMember = trip.members.find((m) => m.isCurrentUser);
+  // Per-member: what this user's share was spent vs their budget.
+  // Viewer rule (utils/budget): owner → trip total · member → own budget (0 = not set).
+  // "Me" = uid match first (isCurrentUser flag can go stale after a remote merge).
+  const myMember = (myUid ? trip.members.find((m) => m.uid === myUid) : undefined)
+    || trip.members.find((m) => m.isCurrentUser);
   const myBudget = myMember?.budget || 0;
-  const mySpent = myBudget > 0
-    ? expenses.reduce((sum, e) => {
-        const mySplit = e.splits.find((s) => s.memberId === myMember?.id);
-        return sum + (mySplit?.amount || 0);
-      }, 0)
-    : 0;
+  const mySpent = expenses.reduce((sum, e) => {
+    const mySplit = e.splits.find((s) => s.memberId === myMember?.id);
+    return sum + (mySplit?.amount || 0);
+  }, 0);
 
   const handleSimulateIncomingSMS = () => {
     const merchants = ['Cafe Mambo Baga', 'Burger Factory Anjuna', 'Thalassa Siolim', 'Goa Cab Service', "Tito's Club"];
@@ -89,7 +90,7 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
     onUpdateTrip({ ...trip, cities: trip.cities.filter((c) => c.id !== confirmStop.id) });
   };
 
-  // Trip countdown — unmissable banner data (also saved as a reminder on trip create)
+  // Trip countdown — always live from dates (never stored)
   const nowMs = Date.now();
   const startMs = new Date(trip.startDate + 'T00:00:00').getTime();
   const endMs = new Date(trip.endDate + 'T00:00:00').getTime();
@@ -98,8 +99,16 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
   const tripDayCount = !isNaN(startMs) && !isNaN(endMs) && endMs >= startMs
     ? Math.ceil((endMs - startMs) / 86400000) + 1
     : 0;
+  const liveDayNum = tripDayCount > 0
+    ? Math.min(tripDayCount, Math.max(1, Math.floor((nowMs - startMs) / 86400000) + 1))
+    : 0;
+  const bannerTitle =
+    tripPhase === 'upcoming'
+      ? daysToStart <= 0 ? 'Starts today' : daysToStart === 1 ? 'Starts tomorrow' : `Starts in ${daysToStart} days`
+      : tripPhase === 'live' && tripDayCount > 0 ? `Day ${liveDayNum} of ${tripDayCount}` : 'Trip live';
   const isOwner = isAdmin || !trip.ownerUid || trip.ownerUid === myUid;
-  const myName = trip.members.find((m) => m.isCurrentUser)?.name?.replace(/\(You\)/g, '').trim() || 'Someone';
+  const myName = ((myUid ? trip.members.find((m) => m.uid === myUid) : undefined)
+    || trip.members.find((m) => m.isCurrentUser))?.name?.replace(/\(You\)/g, '').trim() || 'Someone';
 
   return (
     <div className="space-y-5 max-w-3xl mx-auto">
@@ -107,12 +116,21 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
       {tripPhase === 'upcoming' && (
         <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md flex items-center justify-between gap-3">
           <div>
-            <p className="text-lg font-extrabold font-display leading-tight">Starts {daysToStart <= 0 ? 'very soon' : `in ${daysToStart} day${daysToStart > 1 ? 's' : ''}`}</p>
+            <p className="text-lg font-extrabold font-display leading-tight">{bannerTitle}</p>
             <p className="text-[11px] text-indigo-100 font-medium">
               {new Date(trip.startDate + 'T00:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
             </p>
           </div>
-          <span className="text-2xl font-extrabold bg-white/20 rounded-2xl px-3 py-1.5">{daysToStart <= 0 ? '!' : daysToStart}</span>
+          <span className="text-2xl font-extrabold bg-white/20 rounded-2xl px-3 py-1.5">{daysToStart <= 1 ? '!' : daysToStart}</span>
+        </div>
+      )}
+      {tripPhase === 'live' && tripDayCount > 1 && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md flex items-center justify-between gap-3">
+          <div>
+            <p className="text-lg font-extrabold font-display leading-tight">{bannerTitle}</p>
+            <p className="text-[11px] text-emerald-100 font-medium">Enjoy every moment</p>
+          </div>
+          <span className="text-2xl font-extrabold bg-white/20 rounded-2xl px-3 py-1.5">{liveDayNum}/{tripDayCount}</span>
         </div>
       )}
       {simulatedToast && (
@@ -172,13 +190,28 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
               </button>
             </div>
             <div className="bg-black/30 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-white/10 text-left sm:text-right">
-              {myBudget > 0 ? (
-                <>
-                  <span className="text-[11px] text-slate-300 block">Your Budget</span>
-                  <span className="text-sm font-extrabold text-emerald-400">
-                    ₹{Math.max(0, myBudget - mySpent).toLocaleString('en-IN')} <span className="text-slate-300 font-normal text-xs">left of ₹{myBudget.toLocaleString('en-IN')}</span>
-                  </span>
-                </>
+              {!isOwner ? (
+                myBudget > 0 ? (
+                  <>
+                    <span className="text-[11px] text-slate-300 block">Your Budget</span>
+                    <span className="text-sm font-extrabold text-emerald-400">
+                      ₹{Math.max(0, myBudget - mySpent).toLocaleString('en-IN')} <span className="text-slate-300 font-normal text-xs">left of ₹{myBudget.toLocaleString('en-IN')}</span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[11px] text-slate-300 block">Your Budget</span>
+                    <span className="text-sm font-extrabold text-slate-100">
+                      ₹0 <span className="text-slate-300 font-normal text-xs">not set</span>
+                    </span>
+                    <button
+                      onClick={() => setSquadOpen(true)}
+                      className="block mt-0.5 text-[11px] font-bold text-indigo-300 hover:text-white hover:underline cursor-pointer sm:ml-auto"
+                    >
+                      Set your budget
+                    </button>
+                  </>
+                )
               ) : (
                 <>
                   <span className="text-[11px] text-slate-300 block">Remaining Budget</span>
@@ -199,14 +232,14 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <button onClick={onGoExpenses} className="text-left clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-2xs space-y-1 hover:border-indigo-400 cursor-pointer group">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-            {myBudget > 0 ? 'Your Share' : 'Total Spent'}
+            {!isOwner ? 'Your Share' : 'Total Spent'}
             <span className="flex items-center gap-0.5 text-[10px] font-bold text-indigo-600">History <ChevronRight size={12} strokeWidth={2.75} stroke="currentColor" /></span>
           </span>
-          <div className="text-xl font-extrabold text-slate-900 font-display">₹{(myBudget > 0 ? mySpent : totalSpent).toLocaleString('en-IN')}</div>
+          <div className="text-xl font-extrabold text-slate-900 font-display">₹{(!isOwner ? mySpent : totalSpent).toLocaleString('en-IN')}</div>
           <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
-            <div className="bg-indigo-600 h-1.5 rounded-full" style={{ width: `${myBudget > 0 ? Math.min(100, Math.round((mySpent / myBudget) * 100)) : percentSpent}%` }} />
+            <div className="bg-indigo-600 h-1.5 rounded-full" style={{ width: `${!isOwner ? (myBudget > 0 ? Math.min(100, Math.round((mySpent / myBudget) * 100)) : 0) : percentSpent}%` }} />
           </div>
-          <span className="text-[10px] text-slate-500 font-medium block pt-1">{myBudget > 0 ? `₹${Math.max(0, myBudget - mySpent).toLocaleString('en-IN')} left of ₹${myBudget.toLocaleString('en-IN')}` : `₹${remaining.toLocaleString('en-IN')} remaining of ₹${trip.totalBudget.toLocaleString('en-IN')}`} · tap for history</span>
+          <span className="text-[10px] text-slate-500 font-medium block pt-1">{!isOwner ? (myBudget > 0 ? `₹${Math.max(0, myBudget - mySpent).toLocaleString('en-IN')} left of ₹${myBudget.toLocaleString('en-IN')}` : `Budget ₹0 (not set) · ₹${totalSpent.toLocaleString('en-IN')} trip total`) : `₹${remaining.toLocaleString('en-IN')} remaining of ₹${trip.totalBudget.toLocaleString('en-IN')}`} · tap for history</span>
         </button>
         <button onClick={() => setSquadOpen(true)} className="text-left clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-2xs space-y-1 hover:border-indigo-400 cursor-pointer">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
@@ -406,6 +439,9 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                   <p className="text-xs font-bold truncate">
                     {m.isCurrentUser ? `${m.name.replace(/\(You\)/g, '').trim() || 'You'} (You)` : m.name}
                     {trip.ownerUid && m.uid === trip.ownerUid && <span className="ml-1.5 text-[9px] font-extrabold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">OWNER</span>}
+                    {m.uid
+                      ? <span className="ml-1.5 text-[9px] font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5">JOINED</span>
+                      : <span className="ml-1.5 text-[9px] font-extrabold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5" title="No app yet — expenses still split normally">MANUAL</span>}
                   </p>
                   <p className="text-[11px] text-slate-400 truncate">{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p>
                 </div>
@@ -418,28 +454,41 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                 )}
               </div>
               {m.isCurrentUser ? (
-                <div className="flex items-center gap-1.5 pl-[38px]">
-                  <span className="text-[10px] text-slate-400 font-medium">Budget:</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={m.budget || ''}
-                    onChange={(e) => {
-                      const val = e.target.value === '' ? undefined : Number(e.target.value);
-                      setMembers((prev) => prev.map((mm) => (mm.id === m.id ? { ...mm, budget: val } : mm)));
-                    }}
-                    placeholder="0"
-                    className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100"
-                  />
-                  <span className="text-[10px] text-slate-400">/trip</span>
-                </div>
+                isOwner ? (
+                  <div className="flex items-center gap-1.5 pl-[38px]">
+                    <span className="text-[10px] text-slate-400 font-medium">Trip budget:</span>
+                    <span className="text-[11px] font-bold text-slate-600">₹{Number(trip.totalBudget).toLocaleString('en-IN')}</span>
+                    <span className="text-[10px] text-slate-400">(Edit Trip se change)</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 pl-[38px]">
+                    <span className="text-[10px] text-slate-400 font-medium">Budget:</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={m.budget || ''}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? undefined : Number(e.target.value);
+                        setMembers((prev) => prev.map((mm) => (mm.id === m.id ? { ...mm, budget: val } : mm)));
+                      }}
+                      placeholder="0"
+                      className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100"
+                    />
+                    <span className="text-[10px] text-slate-400">/trip</span>
+                  </div>
+                )
               ) : m.budget ? (
                 <div className="flex items-center gap-1.5 pl-[38px]">
                   <span className="text-[10px] text-slate-400 font-medium">Budget:</span>
                   <span className="text-[11px] font-bold text-slate-600">₹{m.budget.toLocaleString('en-IN')}</span>
                   <span className="text-[10px] text-slate-400">/trip</span>
                 </div>
-              ) : null}
+              ) : (
+                <div className="flex items-center gap-1.5 pl-[38px]">
+                  <span className="text-[10px] text-slate-400 font-medium">Budget:</span>
+                  <span className="text-[11px] font-bold text-slate-400">Not set</span>
+                </div>
+              )}
             </div>
           ))}
         </div>

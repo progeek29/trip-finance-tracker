@@ -33,7 +33,23 @@ function safeSet(key: string, value: string): void {
 export function loadTripsData(): Trip[] {
   const saved = localStorage.getItem(STORAGE_KEYS.TRIPS);
   if (saved) {
-    try { return JSON.parse(saved); } catch (e) { console.error(e); }
+    try {
+      const raw = JSON.parse(saved);
+      if (Array.isArray(raw)) {
+        // Heal: server pg-numeric kabhi string me aata tha — number me normalize
+        return raw.map((t) => ({
+          ...t,
+          totalBudget: Number(t.totalBudget) || 0,
+          members: Array.isArray(t.members)
+            ? t.members.map((m: { budget?: unknown }) => ({
+                ...m,
+                budget: m.budget === undefined || m.budget === null || m.budget === '' ? undefined : Number(m.budget) || 0,
+              }))
+            : t.members,
+        }));
+      }
+      return raw;
+    } catch (e) { console.error(e); }
   }
   return [];
 }
@@ -73,7 +89,20 @@ export function saveTripData(trip: Trip): void {
 export function loadExpensesData(): Expense[] {
   const saved = localStorage.getItem(STORAGE_KEYS.EXPENSES);
   if (saved) {
-    try { return JSON.parse(saved); } catch (e) { console.error(e); }
+    try {
+      const raw = JSON.parse(saved);
+      if (Array.isArray(raw)) {
+        // Heal: string amounts ("013244" concat bug) — number me normalize
+        return raw.map((e) => ({
+          ...e,
+          amount: Number(e.amount) || 0,
+          splits: Array.isArray(e.splits)
+            ? e.splits.map((s: { amount?: unknown }) => ({ ...s, amount: Number(s.amount) || 0 }))
+            : e.splits,
+        }));
+      }
+      return raw;
+    } catch (e) { console.error(e); }
   }
   return [];
 }
@@ -189,6 +218,47 @@ export function loadTodosData(): TripTodo[] {
 
 export function saveTodosData(todos: TripTodo[]): void {
   safeSet(TODOS_KEY, JSON.stringify(todos));
+}
+
+// ─── Settlements (balance ledger only — never touches spend) ───────────────
+
+const SETTLEMENTS_KEY = 'ws_settlements_v1';
+
+export function loadSettlementsData(): import('../types').Settlement[] {
+  try {
+    const saved = localStorage.getItem(SETTLEMENTS_KEY);
+    if (saved) {
+      const raw = JSON.parse(saved);
+      if (Array.isArray(raw)) {
+        return raw.map((s) => ({ ...s, amount: Number(s.amount) || 0 }));
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  return [];
+}
+
+export function saveSettlementsData(s: import('../types').Settlement[]): void {
+  safeSet(SETTLEMENTS_KEY, JSON.stringify(s));
+}
+
+// ─── Expense events (transparent edit history) ─────────────────────────────
+
+const EXPENSE_EVENTS_KEY = 'ws_expense_events_v1';
+
+export function loadExpenseEventsData(): import('../types').ExpenseEvent[] {
+  try {
+    const saved = localStorage.getItem(EXPENSE_EVENTS_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {
+    console.error(e);
+  }
+  return [];
+}
+
+export function saveExpenseEventsData(e: import('../types').ExpenseEvent[]): void {
+  safeSet(EXPENSE_EVENTS_KEY, JSON.stringify(e));
 }
 
 // ─── Utilities ───────────────────────────────────────────────────────────────

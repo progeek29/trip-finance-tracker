@@ -12,6 +12,10 @@ interface QuickAddModalProps {
   initialExpense?: Expense | null;
 }
 
+type SplitMode = 'equal' | 'custom';
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   isOpen,
   onClose,
@@ -24,8 +28,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const [category, setCategory] = useState<ExpenseCategory>('food');
   const [paidByMemberId, setPaidByMemberId] = useState<string>('');
   const [splitMemberIds, setSplitMemberIds] = useState<string[]>([]);
+  const [splitMode, setSplitMode] = useState<SplitMode>('equal');
+  const [customAmounts, setCustomAmounts] = useState<Record<string, number | ''>>({});
   const [notes, setNotes] = useState('');
-  const [formError, setFormError] = useState<'title' | 'amount' | null>(null);
+  const [formError, setFormError] = useState<'title' | 'amount' | 'split' | null>(null);
 
   // Sync state ONLY on open / editing target change — not on every trip object re-render
   const prevOpenRef = React.useRef(false);
@@ -49,6 +55,22 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       ? initialExpense.splits.map((s) => s.memberId)
       : trip.members.map((m) => m.id);
     setSplitMemberIds(defaultSplit);
+    setCustomAmounts({});
+    // Editing an unequal bill → reopen in custom mode with values prefilled
+    if (initialExpense && initialExpense.splits.length > 1) {
+      const amts = initialExpense.splits.map((s) => Number(s.amount));
+      const allEqual = amts.every((a) => Math.abs(a - amts[0]) < 0.005);
+      if (!allEqual) {
+        setSplitMode('custom');
+        const pre: Record<string, number> = {};
+        initialExpense.splits.forEach((s) => { pre[s.memberId] = Number(s.amount); });
+        setCustomAmounts(pre);
+      } else {
+        setSplitMode('equal');
+      }
+    } else {
+      setSplitMode('equal');
+    }
     setNotes(initialExpense?.notes || '');
     setFormError(null);
   }, [isOpen, initialExpense]);
@@ -66,24 +88,35 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       setFormError('amount');
       return;
     }
-    setFormError(null);
     // Whom to split with — chips below, defaults to full squad
     const activeSplitIds = splitMemberIds.length > 0 ? splitMemberIds : trip.members.map((m) => m.id);
-    const perHead = Math.round((numAmount / activeSplitIds.length) * 100) / 100;
-    const splits = activeSplitIds.map((memberId) => ({ memberId, amount: perHead }));
+    let splits: { memberId: string; amount: number }[];
+    if (splitMode === 'custom' && activeSplitIds.length > 1) {
+      splits = activeSplitIds.map((memberId) => ({ memberId, amount: Number(customAmounts[memberId]) || 0 }));
+      const sum = round2(splits.reduce((a, s) => a + s.amount, 0));
+      if (Math.abs(sum - numAmount) > 0.01) {
+        setFormError('split');
+        return;
+      }
+    } else {
+      const perHead = round2(numAmount / activeSplitIds.length);
+      splits = activeSplitIds.map((memberId) => ({ memberId, amount: perHead }));
+    }
+    setFormError(null);
 
     const now = new Date();
     const expenseData: Expense = {
       id: initialExpense?.id || 'exp_' + Date.now(),
       tripId: trip.id,
       cityId: initialExpense?.cityId || trip.cities[0]?.id,
-      title,
+      title: title.trim(),
       amount: numAmount,
       currency: 'INR',
       category,
+      paymentMode: initialExpense?.paymentMode || 'upi',
       paidByMemberId,
-      date: now.toISOString().split('T')[0],
-      time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      date: initialExpense?.date || now.toISOString().split('T')[0],
+      time: initialExpense?.time || now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       notes,
       isGroupExpense: activeSplitIds.length > 1,
       splits,
@@ -187,7 +220,21 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
             </div>
 
             <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-100 space-y-2">
-              <span className="text-[11px] font-bold text-slate-700 block">Split between</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-700">Split between</span>
+                <div className="flex gap-1 p-0.5 bg-white rounded-lg border border-indigo-100">
+                  {(['equal', 'custom'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => { setSplitMode(m); setFormError(null); }}
+                      className={`px-2 py-1 rounded-md text-[10px] font-bold capitalize cursor-pointer ${splitMode === m ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-indigo-600'}`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {trip.members.map((m) => {
                   const selected = splitMemberIds.includes(m.id);
@@ -216,10 +263,50 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                 </button>
               </div>
               {splitMemberIds.length > 0 && amount ? (
-                <p className="text-[11px] text-slate-600 font-medium">
-                  ₹{Number(amount).toLocaleString('en-IN')} ÷ {splitMemberIds.length} = <strong>₹{(Math.round((Number(amount) / splitMemberIds.length) * 100) / 100).toLocaleString('en-IN')} each</strong>
-                </p>
+                splitMode === 'equal' ? (
+                  <p className="text-[11px] text-slate-600 font-medium">
+                    ₹{Number(amount).toLocaleString('en-IN')} ÷ {splitMemberIds.length} = <strong>₹{(Math.round((Number(amount) / splitMemberIds.length) * 100) / 100).toLocaleString('en-IN')} each</strong>
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {splitMemberIds.map((id) => {
+                      const m = trip.members.find((x) => x.id === id);
+                      if (!m) return null;
+                      return (
+                        <div key={id} className="flex items-center gap-2">
+                          <span className="flex-1 text-[11px] font-bold text-slate-700 truncate">{m.name.split(' ')[0]}</span>
+                          <span className="flex items-center gap-1">
+                            <span className="text-[11px] text-slate-400 font-bold">₹</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={customAmounts[id] ?? ''}
+                              onChange={(e) => { setCustomAmounts((p) => ({ ...p, [id]: e.target.value === '' ? '' : Number(e.target.value) })); setFormError(null); }}
+                              placeholder="0"
+                              className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-800 focus:outline-none focus:border-indigo-400"
+                            />
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {(() => {
+                      const numAmount = Number(amount) || 0;
+                      const sum = round2(splitMemberIds.reduce((a, id) => a + (Number(customAmounts[id]) || 0), 0));
+                      const left = round2(numAmount - sum);
+                      return (
+                        <p className={`text-[11px] font-bold ${Math.abs(left) < 0.01 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                          Split total ₹{sum.toLocaleString('en-IN')} · {Math.abs(left) < 0.01 ? 'matches bill' : `₹${Math.abs(left).toLocaleString('en-IN')} ${left > 0 ? 'left' : 'over'}`}
+                        </p>
+                      );
+                    })()}
+                  </div>
+                )
               ) : null}
+              {formError === 'split' && (
+                <p className="text-[11px] text-rose-500 font-bold">
+                  Custom amounts must add up to the bill amount.
+                </p>
+              )}
             </div>
 
             <div className="pt-3 border-t border-slate-100">

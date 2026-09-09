@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { PhoneInput, isValidPhone } from './PhoneInput';
 import { lookupInvite, joinTripById } from '../../utils/invites';
-import { supabase } from '../../utils/supabaseClient';
 import type { UserProfile } from '../../utils/storage';
 import type { Trip } from '../../types';
 
@@ -72,27 +71,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, initial, tri
     setChoices(null);
     try {
       const ids = await lookupInvite(clean);
-      if (ids.length === 1) {
-        await joinOne(ids[0]);
-      } else {
-        const trips: Trip[] = [];
-        for (const id of ids) {
-          const { data } = await supabase.from('trips').select('*').eq('id', id).maybeSingle();
-          if (data) trips.push(data as unknown as Trip);
-        }
-        if (trips.length === 0) throw new Error('NOT_FOUND');
-        if (trips.length === 1) {
-          await joinOne(trips[0].id);
-        } else {
-          setChoices(trips);
-        }
-      }
+      await joinOne(ids[0]);
     } catch (err) {
-      setError(
-        err instanceof Error && err.message === 'NOT_FOUND'
-          ? 'No trip found with this code.'
-          : 'Could not join right now. Check internet and retry.'
-      );
+      const msg = err instanceof Error ? err.message : '';
+      if (msg === 'NOT_FOUND') {
+        setError('No trip found with this code. Check the letters and try again.');
+      } else if (msg === 'NOT_LOGGED_IN') {
+        setError('Please log in first to join a trip.');
+      } else {
+        setError('Could not join right now. Check internet and retry.');
+      }
     } finally {
       setBusy(false);
     }
@@ -104,8 +92,15 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, initial, tri
       const trip = await joinTripById(tripId);
       onJoinTrip(trip);
       onClose();
-    } catch {
-      setError('Could not join right now. Check internet and retry.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg === 'NOT_FOUND') {
+        setError('That trip no longer exists.');
+      } else if (msg === 'NOT_LOGGED_IN') {
+        setError('Please log in first to join a trip.');
+      } else {
+        setError('Could not join right now. Check internet and retry.');
+      }
     } finally {
       setBusy(false);
     }

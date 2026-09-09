@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, User, Phone, Mail, Shield, LogOut, Copy, Check } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Shield, LogOut, Pencil } from 'lucide-react';
 import { PhoneInput, isValidPhone } from './PhoneInput';
 import { lookupInvite, joinTripById } from '../../utils/invites';
 import { supabase } from '../../utils/supabaseClient';
@@ -32,6 +32,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 }) => {
   const [name, setName] = useState(profile?.name || '');
   const [phone, setPhone] = useState(profile?.phone || '');
+  const [email, setEmail] = useState('');
+  const [savedEmail, setSavedEmail] = useState('');
+  const [uid, setUid] = useState<string | null>(null);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailMsg, setEmailMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +49,48 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     setPhone(profile?.phone || '');
   }, [profile]);
 
+  // Current login email (DB se) — change yahin se, DB me update hoga
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      const u = data?.user as { id?: string; email?: string } | null;
+      if (u?.id) {
+        setUid(u.id);
+        setEmail(u.email || '');
+        setSavedEmail(u.email || '');
+      }
+    }).catch(() => {});
+  }, []);
+
   const isAdmin = profile?.role === 'admin';
+
+  const updateEmail = async () => {
+    const clean = email.trim().toLowerCase();
+    setEmailMsg(null);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) {
+      setEmailMsg({ ok: false, text: 'Enter a valid email address.' });
+      return;
+    }
+    if (!uid) {
+      setEmailMsg({ ok: false, text: 'Login session missing — logout & login again.' });
+      return;
+    }
+    if (clean === savedEmail.toLowerCase()) return;
+    setEmailBusy(true);
+    try {
+      const { error } = await supabase.from('users').update({ email: clean }).eq('id', uid);
+      if (error) throw new Error(error.message || 'update failed');
+      setSavedEmail(clean);
+      setEmailMsg({ ok: true, text: 'Email updated! Login next time with the new email.' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      setEmailMsg({
+        ok: false,
+        text: /unique|duplicate|already/i.test(msg) ? 'This email is already registered.' : 'Could not update email. Check internet and retry.',
+      });
+    } finally {
+      setEmailBusy(false);
+    }
+  };
 
   const submitProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,28 +115,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     }
     setBusy(true);
     setError(null);
+    setSuccess(null);
     setChoices(null);
     try {
       const ids = await lookupInvite(clean);
-      if (ids.length === 1) {
-        await joinOne(ids[0]);
-      } else {
-        const trips: Trip[] = [];
-        for (const id of ids) {
-          const { data } = await supabase.from('trips').select('*').eq('id', id).maybeSingle();
-          if (data) trips.push(data as unknown as Trip);
-        }
-        if (trips.length === 0) throw new Error('NOT_FOUND');
-        if (trips.length === 1) {
-          await joinOne(trips[0].id);
-        } else {
-          setChoices(trips);
-        }
-      }
+      await joinOne(ids[0]);
     } catch (err) {
       setError(
         err instanceof Error && err.message === 'NOT_FOUND'
-          ? 'No trip found with this code.'
+          ? 'No trip found with this code. Check the letters and try again.'
           : 'Could not join right now. Check internet and retry.'
       );
     } finally {
@@ -105,9 +138,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       onJoinTrip(trip);
       setSuccess(`Joined "${trip.title}"!`);
       setCode('');
-      setTimeout(() => setSuccess(null), 2000);
-    } catch {
-      setError('Could not join right now. Check internet and retry.');
+      setTimeout(() => setSuccess(null), 2500);
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message === 'NOT_FOUND'
+          ? 'That trip no longer exists.'
+          : err instanceof Error && err.message === 'NOT_LOGGED_IN'
+            ? 'Please log in again, then retry.'
+            : 'Could not join right now. Check internet and retry.'
+      );
     } finally {
       setBusy(false);
     }
@@ -168,9 +207,33 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
             <PhoneInput label="Mobile number" value={phone} onChange={setPhone} />
 
-            <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
-              <Mail size={12} />
-              <span>{profile?.name ? 'Email is set during signup' : 'Email set during signup'}</span>
+            <div>
+              <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 mb-1">
+                <Mail size={12} /> Email (login ID)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); setEmailMsg(null); }}
+                  placeholder="you@email.com"
+                  className="flex-1 min-w-0 rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 placeholder-slate-300"
+                />
+                <button
+                  type="button"
+                  onClick={updateEmail}
+                  disabled={emailBusy || !email.trim() || email.trim().toLowerCase() === savedEmail.toLowerCase()}
+                  className="w-8 h-8 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-500/10 active:bg-slate-500/15 active:scale-95 disabled:opacity-30 disabled:hover:bg-transparent flex items-center justify-center flex-shrink-0 self-center transition-all cursor-pointer"
+                  title="Save email"
+                >
+                  <Pencil size={15} strokeWidth={1.75} />
+                </button>
+              </div>
+              {emailMsg && (
+                <p className={`mt-1.5 text-[11px] font-bold rounded-lg px-3 py-1.5 ${emailMsg.ok ? 'text-emerald-600 bg-emerald-50' : 'text-rose-500 bg-rose-50'}`}>
+                  {emailMsg.text}
+                </p>
+              )}
             </div>
 
             {error && (

@@ -1,6 +1,6 @@
 import { supabase, ensureCloudUser } from './supabaseClient';
 import { resolveMedia } from './mediaStore';
-import type { Trip, Expense, DocumentVaultItem, TripTodo } from '../types';
+import type { Trip, Expense, DocumentVaultItem, TripTodo, Settlement, ExpenseEvent } from '../types';
 
 /**
  * Live sync for shared trips: Supabase DB + Storage.
@@ -13,6 +13,8 @@ export interface RemoteSnapshot {
   expenses: (Expense & { _deleted?: boolean })[];
   todos: (TripTodo & { _deleted?: boolean })[];
   documents: (DocumentVaultItem & { _deleted?: boolean })[];
+  settlements: (Settlement & { _deleted?: boolean })[];
+  expenseEvents: ExpenseEvent[];
 }
 
 async function myUid(): Promise<string> {
@@ -25,7 +27,9 @@ export async function pushTripShared(
   trip: Trip,
   expenses: Expense[],
   todos: TripTodo[],
-  documents: DocumentVaultItem[]
+  documents: DocumentVaultItem[],
+  settlements: Settlement[] = [],
+  expenseEvents: ExpenseEvent[] = []
 ): Promise<void> {
   const uid = await myUid();
   const now = Date.now();
@@ -58,7 +62,7 @@ export async function pushTripShared(
         tripId: e.tripId,
         cityId: e.cityId,
         title: e.title,
-        amount: e.amount,
+        amount: Number(e.amount) || 0,
         currency: e.currency,
         category: e.category,
         paymentMode: e.paymentMode,
@@ -71,6 +75,7 @@ export async function pushTripShared(
         isAutoParsedSMS: e.isAutoParsedSMS,
         originalSMS: e.originalSMS,
         updatedAt: e.updatedAt || now,
+        updatedBy: e.updatedBy || uid,
       }))
     );
   }
@@ -84,7 +89,45 @@ export async function pushTripShared(
         tripId: t.tripId,
         text: t.text,
         done: t.done,
+        ownerUid: t.ownerUid || t.updatedBy || uid,
         updatedAt: t.updatedAt || now,
+        updatedBy: t.updatedBy || uid,
+      }))
+    );
+  }
+
+  // Upsert settlements (balance ledger only)
+  const mySettlements = settlements.filter((s) => s.tripId === trip.id);
+  if (mySettlements.length > 0) {
+    await supabase.from('settlements').upsert(
+      mySettlements.map((s) => ({
+        id: s.id,
+        tripId: s.tripId,
+        fromMemberId: s.fromMemberId,
+        toMemberId: s.toMemberId,
+        amount: Number(s.amount) || 0,
+        date: s.date,
+        note: s.note || null,
+        updatedAt: s.updatedAt || now,
+        updatedBy: s.updatedBy || uid,
+      }))
+    );
+  }
+
+  // Upsert expense events (immutable history — union by id)
+  const myEvents = expenseEvents.filter((e) => e.tripId === trip.id);
+  if (myEvents.length > 0) {
+    await supabase.from('expense_events').upsert(
+      myEvents.slice(-100).map((e) => ({
+        id: e.id,
+        tripId: e.tripId,
+        expenseId: e.expenseId,
+        action: e.action,
+        title: e.title,
+        amount: Number(e.amount) || 0,
+        byUid: e.byUid || null,
+        byName: e.byName,
+        at: e.at,
       }))
     );
   }
@@ -134,6 +177,7 @@ export async function pushTripShared(
       notes: d.notes,
       remoteUrl: remoteUrl || null,
       updatedAt: d.updatedAt || now,
+      updatedBy: d.updatedBy || uid,
     });
   }
 }
@@ -141,7 +185,7 @@ export async function pushTripShared(
 /** Delete propagation: tombstone so pull removes it everywhere. */
 export async function pushTombstone(
   tripId: string,
-  col: 'expenses' | 'todos' | 'documents',
+  col: 'expenses' | 'todos' | 'documents' | 'settlements',
   id: string
 ): Promise<void> {
   try {
@@ -159,17 +203,21 @@ export async function pushTombstone(
 /** One-time pull (join / refresh). */
 export async function pullTripShared(tripId: string): Promise<RemoteSnapshot | null> {
   try {
-    const [tripRes, expRes, todoRes, docRes] = await Promise.all([
+    const [tripRes, expRes, todoRes, docRes, settleRes, eventRes] = await Promise.all([
       supabase.from('trips').select('*').eq('id', tripId).maybeSingle(),
       supabase.from('expenses').select('*').eq('tripId', tripId),
       supabase.from('todos').select('*').eq('tripId', tripId),
       supabase.from('documents').select('*').eq('tripId', tripId),
+      supabase.from('settlements').select('*').eq('tripId', tripId),
+      supabase.from('expense_events').select('*').eq('tripId', tripId),
     ]);
     return {
       trip: (tripRes.data || {}) as RemoteSnapshot['trip'],
       expenses: (expRes.data || []) as Expense[],
       todos: (todoRes.data || []) as TripTodo[],
       documents: (docRes.data || []) as DocumentVaultItem[],
+      settlements: (settleRes.data || []) as Settlement[],
+      expenseEvents: (eventRes.data || []) as ExpenseEvent[],
     };
   } catch {
     return null;
@@ -178,7 +226,7 @@ export async function pullTripShared(tripId: string): Promise<RemoteSnapshot | n
 
 /** Live pull: trip + expenses + todos + documents via Supabase Realtime. */
 export function subscribeTripShared(tripId: string, cb: (snap: RemoteSnapshot) => void): () => void {
-  const state: RemoteSnapshot = { trip: {}, expenses: [], todos: [], documents: [] };
+  const state: RemoteSnapshot = { trip: {}, expenses: [], todos: [], documents: [], settlements: [], expenseEvents: [] };
   const emit = () => cb({ ...state });
 
   // Initial load
@@ -189,6 +237,8 @@ export function subscribeTripShared(tripId: string, cb: (snap: RemoteSnapshot) =
       state.expenses = snap.expenses;
       state.todos = snap.todos;
       state.documents = snap.documents;
+      state.settlements = snap.settlements;
+      state.expenseEvents = snap.expenseEvents;
       emit();
     }
   })();
@@ -237,6 +287,25 @@ export function subscribeTripShared(tripId: string, cb: (snap: RemoteSnapshot) =
         state.documents[idx] = row;
       } else {
         state.documents.push(row);
+      }
+      emit();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'settlements', filter: `tripId=eq.${tripId}` }, (payload) => {
+      const row = payload.new as Settlement;
+      const idx = state.settlements.findIndex((s) => s.id === row.id);
+      if (payload.eventType === 'DELETE') {
+        state.settlements = state.settlements.filter((s) => s.id !== (payload.old as any).id);
+      } else if (idx >= 0) {
+        state.settlements[idx] = row;
+      } else {
+        state.settlements.push(row);
+      }
+      emit();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_events', filter: `tripId=eq.${tripId}` }, (payload) => {
+      const row = payload.new as ExpenseEvent;
+      if (payload.eventType !== 'DELETE' && !state.expenseEvents.some((e) => e.id === row.id)) {
+        state.expenseEvents = [...state.expenseEvents, row].slice(-200);
       }
       emit();
     })

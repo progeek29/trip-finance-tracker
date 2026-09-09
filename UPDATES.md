@@ -138,3 +138,75 @@
 - Manual add me **sirf Name + Phone** (UPI field hataya, teeno squad forms me).
 - Contact-blocked message typo-free aur seedha: desktop pe reason + Android app note.
 - Squad add silent-fail + custom-cover save bugs (pichle round) verified fixed.
+
+---
+
+## 19. Join-code + budget-mapping + sync-hardening round (done)
+- **Join with code fixed**: `supabaseClient` shim me `select/update/delete` async the — har chained query crash hoti thi. Ab sync builders; join, delete, presence, chat-load sab kaam karte hain.
+- **Invite publish guarantee**: code missing/collided ho to fresh code banta hai; publish fail ho to user ko flash message. Join pe missing `invites` row self-heal.
+- **Login repeat-profile fixed**: server se name/phone/role auto-restore — naye device pe naam+number dobara nahi mangta.
+- **Per-member budget mapping**: "me" uid se resolve (flag stale-proof); owner ko total view, budget-less joiner ko **₹0 not set** + Set button; trip-create Step 2 me **My budget** box.
+- **Landing refresh**: naam/date/budget/members ka koi bhi change sabko (poll 20s + focus + landing open); **owner-delete sabke phone se purge**; squad se nikale gaye ka trip auto-remove. Isolation fix (apne unpublished trips kabhi drop nahi).
+- **Join mapping**: pehle se added phone-number wali row adopt hoti hai (duplicate member nahi, budget/split history milti hai).
+- **Server hardening**: pg NUMERIC/INT8 string aate the → **"013244" concat bug** + budget-merge fail. `db.cjs` me type parser + migration (`expenses/documents.updatedBy`, `documents.remoteUrl`, `todos.text/_deleted/updatedBy`) + backend restart. Save/load/merge teeno layer me `Number()` guards.
+- **Trip cards**: joiners ko 3-dot menu nahi dikhta. Splitwise har bill pe **your share ₹X**. Expense add/update/delete notifications (transparent, bell + loud).
+
+---
+
+## 20. Core Build — Trip / Expense-Splitwise / Chatroom (Spec v1.0, Sep 2026) — TRACKER
+> Legend: [x] done · [~] in progress · [ ] todo. Decisions locked: notifications = split-members-only · chat realtime = WebSocket (Socket.io, same server) · "Ongoing" → "In Progress" rename everywhere · Navy/Gold retheme = Phase-3 (deferred, indigo stays).
+
+### Phase 1A — Trip listing (status: done)
+- [x] Rename Ongoing → In Progress (labels + status values, app-wide)
+- [x] Countdown text: "Starts tomorrow" / "Starts today" / "Day N of M" (In Progress, card + trip banner)
+- [x] Sort: In Progress = soonest-ending first · Completed = most-recently-ended first
+- [x] Ownership chip relabel: "My Trips" → "Owned by Me"
+- [x] Stored `status` likhna band — create/edit pe dates se fresh-compute (DB column untouched for compat)
+
+### Phase 1B — Expense & Splitwise (status: done)
+- [x] QuickAdd: custom-amount + percentage split types, date picker, payment mode (cash/UPI/…)
+- [x] Expense tab restructure: default **Balances** view · secondary **All Expenses** · floating **"+ Log Spend"**
+- [x] Real **Settle Up**: persist + sync settlement, sirf balance ledger se debt clear (spend untouched) + undo
+- [x] **Expense history**: har edit/delete timestamp ke saath (`expense_events` table + UI section)
+- [x] Fix: hardcoded "Split 4 ways" + `/each` equal-assumption · dead `ExpenseModal.tsx` removed
+- [x] Notifications split-scope: add/edit/delete sirf us split ke members ko
+
+### Phase 2 — Chat realtime + features (status: done)
+- [x] Socket.io server + client wiring (same Express server, rooms `trip:<id>`)
+- [x] Live incoming messages · typing indicator · presence (socket room count) · bell-feed live
+- [x] Pin message (banner + jump) · apne message delete (everywhere) · read receipts (Seen ticks) · tappable links
+- [x] Migration: `chat_messages.pinned/_deleted`, `message_reads` table + backend restart + socket probe verified
+
+### Phase-3 (deferred, spec §5)
+- [ ] Navy `#16213E` + Gold `#D9A441` + Teal/Rust theme · Fraunces + IBM Plex Sans · stacked-list cards · In Progress dark card + teal edge · budget bar teal→rust · gold chat bubbles · minimal motion
+
+---
+
+## 21. Budget viewer-rule round (owner = trip total, member = own budget)
+- Naya single rule `utils/budget.ts` (`viewerBudget`): owner hamesha trip total dekhta hai, member hamesha apna personal budget + apna share — har surface pe same mapping.
+- My Trips cards: member ko ab owner ka total nahi — uska budget + uska share bar (unset ho to "Budget not set" hint).
+- Top navbar (trip name ke neeche): member ko uska share of uska budget.
+- Trip create Step 2 se double "My budget" box hataya (owner ka budget = Step 1 Total hi hai).
+- Squad View-all: owner ki apni row me input box nahi — trip total + "(Edit Trip se change)"; member ki apni row me input rehta hai; dusron ka unset ho to "Not set".
+- Bina-app doston ke liye Squad list me **JOINED** (green) / **MANUAL** (grey) tag — ek nazar me kaun app pe hai.
+- Log Spend simple: **date / Paid-via / percentage-split hataya** — entry date auto-today (edit pe original date safe), payment UPI default, split sirf Equal + Custom.
+
+---
+
+## 22. Per-user TODO + profile email edit
+- **TODO har user ka separate**: `ownerUid` stamping + client filter — medicine/bakery/itinerary sabko apna-apna dikhta hai, dusron ka nahi. Sync intact (dusre device pe apne todos aate hain). Purane unattributed todos transitional sabko dikhenge.
+- **Profile me Email change**: editable email + ghost pencil icon — DB (`users.email`) me update, unique-check ("already registered"), next login naye email se. Probe-verified.
+- **Crash fix**: `myUid` state TDZ order (`myTripTodos` render pe pehle use ho raha tha) — state upar shift. ErrorBoundary crash gone.
+- **Join chat message**: code se first-time join pe `@Name joined the chat` system msg (socket-live + REST fallback, fixed id → dobara join pe duplicate nahi).
+---
+
+## 23. Smart notification feed + bell jiggle + fonts
+- **Fonts**: reverted to original (Outfit + Plus Jakarta Sans) per feedback — Fraunces/Plex experiment dropped. Colors unchanged (retheme still Phase-3).
+- **Parser** (`utils/notifications.ts`): raw logs → structured JSON (category transaction/mention/message/location, actor, messageBody, highlightData, previewText, relativeTime, isUnread). Gibberish test-logs filtered.
+- **Unified feed**: expenses + mentions + chat + location sab ek list me, **latest-first sort, cap 30**, category icon-badge, unread red dots, "Unread — N" sticky header, scroller. Splitwise top pe chipka nahi rehta.
+- **Bell**: naye notification pe **red + jiggle ~2s (same size, rotate-only) + vibrate**. Panel khulne pe sab seen (badge/dots clear, seen-time persisted).
+- Chat rows tap → seedha chat khulta hai; expense rows info-only.
+- Profile email pencil: heavy button → minimalist ghost icon (line-art, hover pe halka circular tint).
+- **Mash-to-siren final**: single tap = local chime + swing · 3-mash = emergency broadcast + shared-context alarm loop + header bell solid-red fill + expanding rings overlay (center badge/banner removed — timeline never blocked) · tap again = instant stop.
+- **@mention overhaul**: token regex exact `/@(\w*)$/` (space = close, dropdown turant hide), auto-highlight idx 0, desktop keys (Up/Down clamp, Enter/Tab select + trailing space, Esc cancel), tap = instant select + focus-back, outside-tap blur close (150ms), double-fire guard, placeholder hint "@ to mention".
+- **Chat redesign (Discord/Slack-grade)**: canvas `#f8fafc`, outgoing Royal Indigo gradient (`135deg #4f46e5→#4338ca`, + Log Spend button se match), incoming white + micro-border, system logs minimalist inline slate + micro-icon (bulky pills gone), 16px pill bubbles, timestamps inside bottom-right (muted `#94a3b8` / `#c7d2fe`), location = map-placeholder media card + CTA button, floating typing bubble (wave-bounce dots 0/0.2/0.4s), **mash-to-siren bell** (borderless; single tap = local chime 880Hz WebAudio + 0.5s swing; 3+ taps/1s = emergency broadcast + shake/ripple loop till next tap).

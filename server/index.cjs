@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
+const http = require('http');
+const { Server } = require('socket.io');
 const pool = require('./db.cjs');
 
 const app = express();
@@ -211,6 +213,154 @@ app.delete('/api/:table', async (req, res) => {
 });
 
 const PORT = 3001;
-app.listen(PORT, () => {
-  console.log(`WanderSync API running on http://localhost:${PORT}`);
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+});
+
+// ─── Realtime: one room per trip ───────────────────────────
+// Rooms: `trip:<tripId>`. Socket user info comes from client handshake
+// (local-network app; REST token auth stays the gate for writes via API).
+
+/** Live socket members per room: tripId -> Map(socketId -> {uid, name}) */
+const roomMembers = new Map();
+
+function roomOf(tripId) {
+  return `trip:${tripId}`;
+}
+
+function emitPresence(tripId) {
+  const members = roomMembers.get(tripId);
+  const online = members
+    ? [...members.values()].reduce((acc, m) => {
+        if (!acc.some((x) => x.uid === m.uid)) acc.push(m);
+        return acc;
+      }, [])
+    : [];
+  io.to(roomOf(tripId)).emit('presence:online', { tripId, online, count: online.length });
+}
+
+io.on('connection', (socket) => {
+  socket.on('room:join', ({ tripId: tid, uid: u, name: n }) => {
+    if (!tid) return;
+    socket.join(roomOf(tid));
+    if (u) {
+      if (!roomMembers.has(tid)) roomMembers.set(tid, new Map());
+      roomMembers.get(tid).set(socket.id, { uid: u, name: n || 'Friend', socketId: socket.id });
+      emitPresence(tid);
+    }
+    socket.data.tripId = tid;
+    if (u) socket.data.uid = u;
+  });
+
+  socket.on('room:leave', ({ tripId: tid }) => {
+    if (!tid) return;
+    socket.leave(roomOf(tid));
+    const members = roomMembers.get(tid);
+    if (members && members.delete(socket.id)) emitPresence(tid);
+  });
+
+  // Typing indicator (ephemeral — never stored)
+  socket.on('chat:typing', ({ tripId: tid, uid: u, name: n, typing }) => {
+    if (!tid) return;
+    socket.to(roomOf(tid)).emit('chat:typing', { tripId: tid, uid: u, name: n, typing: !!typing });
+  });
+
+  // Send message: persist, then broadcast to the whole room (incl. sender as ack)
+  socket.on('chat:send', async (msg, ack) => {
+    try {
+      const { id, tripId: tid, type, text, lat, lng, replyTo, mentions, senderId, senderName } = msg || {};
+      if (!id || !tid) {
+        if (ack) ack({ error: 'id and tripId required' });
+        return;
+      }
+      await pool.query(
+        `INSERT INTO chat_messages (id, "tripId", type, text, lat, lng, "replyTo", mentions, "senderId", "senderName")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          id, tid, type || 'text', text || '', lat ?? null, lng ?? null,
+          replyTo ? JSON.stringify(replyTo) : null,
+          JSON.stringify(mentions || []),
+          senderId || null, senderName || '',
+        ]
+      );
+      const { rows } = await pool.query('SELECT * FROM chat_messages WHERE id = $1', [id]);
+      const saved = rows[0] || { ...msg };
+      io.to(roomOf(tid)).emit('chat:new', saved);
+      if (ack) ack({ ok: true, message: saved });
+    } catch (e) {
+      console.error('chat:send error:', e.message);
+      if (ack) ack({ error: e.message });
+    }
+  });
+
+  // Read receipt: stored, broadcast count so "Seen" ticks live
+  socket.on('chat:read', async ({ tripId: tid, messageId, uid: u }) => {
+    try {
+      if (!tid || !messageId || !u) return;
+      await pool.query(
+        `INSERT INTO message_reads ("messageId", "tripId", uid, at) VALUES ($1,$2,$3,$4)
+         ON CONFLICT ("messageId", uid) DO UPDATE SET at = EXCLUDED.at`,
+        [messageId, tid, u, Date.now()]
+      );
+      const { rows } = await pool.query('SELECT COUNT(*)::int AS c FROM message_reads WHERE "messageId" = $1', [messageId]);
+      io.to(roomOf(tid)).emit('chat:read', { tripId: tid, messageId, count: rows[0]?.c || 0 });
+    } catch (e) {
+      console.error('chat:read error:', e.message);
+    }
+  });
+
+  // Pin / unpin a message (one pinned highlight per room is enforced client-side)
+  socket.on('chat:pin', async ({ tripId: tid, messageId, pinned }, ack) => {
+    try {
+      if (!tid || !messageId) {
+        if (ack) ack({ error: 'tripId and messageId required' });
+        return;
+      }
+      if (pinned) {
+        await pool.query('UPDATE chat_messages SET pinned = false WHERE "tripId" = $1', [tid]);
+      }
+      await pool.query('UPDATE chat_messages SET pinned = $1 WHERE id = $2', [!!pinned, messageId]);
+      const { rows } = await pool.query('SELECT * FROM chat_messages WHERE id = $1', [messageId]);
+      io.to(roomOf(tid)).emit('chat:pin', rows[0] || { id: messageId, tripId: tid, pinned: !!pinned });
+      if (ack) ack({ ok: true });
+    } catch (e) {
+      console.error('chat:pin error:', e.message);
+      if (ack) ack({ error: e.message });
+    }
+  });
+
+  // Delete own message (tombstone — vanishes everywhere)
+  socket.on('chat:delete', async ({ tripId: tid, messageId }, ack) => {
+    try {
+      if (!tid || !messageId) {
+        if (ack) ack({ error: 'tripId and messageId required' });
+        return;
+      }
+      await pool.query('UPDATE chat_messages SET "_deleted" = true WHERE id = $1', [messageId]);
+      io.to(roomOf(tid)).emit('chat:delete', { tripId: tid, messageId });
+      if (ack) ack({ ok: true });
+    } catch (e) {
+      console.error('chat:delete error:', e.message);
+      if (ack) ack({ error: e.message });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    const tid = socket.data.tripId;
+    if (tid) {
+      const members = roomMembers.get(tid);
+      if (members && members.delete(socket.id)) emitPresence(tid);
+    } else {
+      // Socket joined rooms without room:join tracking — sweep all
+      for (const [id, members] of roomMembers) {
+        if (members.delete(socket.id)) emitPresence(id);
+      }
+    }
+  });
+});
+
+httpServer.listen(PORT, () => {
+  console.log(`WanderSync API + realtime running on http://localhost:${PORT}`);
 });

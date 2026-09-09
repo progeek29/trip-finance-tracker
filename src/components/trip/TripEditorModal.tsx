@@ -140,7 +140,10 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
     if (cover.startsWith('data:')) {
       cover = await putMedia(trip.id, 'image', cover);
     }
-    onSaveTrip({ ...trip, title, description, totalBudget: Number(totalBudget), startDate, endDate, coverImage: cover, cities: cities.filter((c) => c.name.trim()), members });
+    onSaveTrip({ ...trip, title, description, totalBudget: Number(totalBudget), startDate, endDate, coverImage: cover, cities: cities.filter((c) => c.name.trim()), members,
+      // Status always re-derived from dates — never carried stale
+      status: (new Date(startDate) > new Date() ? 'upcoming' : 'inprogress'),
+    });
     onClose();
   };
 
@@ -270,7 +273,9 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
               {members.map((m, i) => (
                 <div key={m.id} className="flex items-center gap-2.5 bg-slate-50 rounded-xl px-3 py-2 border border-slate-100">
                   <MemberAvatar name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="sm" />
-                  <div className="flex-1 min-w-0"><p className="text-xs font-bold truncate">{m.isCurrentUser ? `${m.name.replace(/\(You\)/g, '').trim() || 'You'} (You)` : m.name}</p><p className="text-[11px] text-slate-400 truncate">{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p></div>
+                  <div className="flex-1 min-w-0"><p className="text-xs font-bold truncate">{m.isCurrentUser ? `${m.name.replace(/\(You\)/g, '').trim() || 'You'} (You)` : m.name}{m.uid
+                    ? <span className="ml-1.5 text-[9px] font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5">JOINED</span>
+                    : <span className="ml-1.5 text-[9px] font-extrabold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5" title="No app yet — expenses still split normally">MANUAL</span>}</p><p className="text-[11px] text-slate-400 truncate">{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p></div>
                   <button type="button" onClick={() => shuffleAvatar(m.id)} title="Shuffle emoji" className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer">Shuffle</button>
                   {!m.isCurrentUser && (
                     <>

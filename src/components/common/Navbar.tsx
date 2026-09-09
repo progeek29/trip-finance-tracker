@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Compass, Wallet, ListChecks, FolderOpen, Plus, ArrowLeft, MessageCircle, Bell } from 'lucide-react';
 import { Logo } from './Logo';
 
@@ -14,6 +14,8 @@ interface NavbarProps {
   onBackToTrips?: () => void;
   unreadCount?: number;
   onBellClick?: () => void;
+  /** Bumps on every new notification → bell jiggles red + vibrates (same size). */
+  bellPulse?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -26,6 +28,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onBackToTrips,
   unreadCount,
   onBellClick,
+  bellPulse = 0,
 }) => {
   const tabs = [
     { id: 'trip' as CleanTab, label: 'Trip', icon: Compass },
@@ -36,6 +39,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   ];
 
   const spentPct = totalBudget > 0 ? Math.min(100, Math.round((totalSpent / totalBudget) * 100)) : 0;
+
+  // New notification → bell jiggles red ~2s + vibrates (size never changes)
+  const [ringing, setRinging] = useState(false);
+  useEffect(() => {
+    if (!bellPulse) return;
+    setRinging(true);
+    try {
+      navigator.vibrate?.([70, 50, 70]);
+    } catch { /* vibrate unsupported */ }
+    const t = window.setTimeout(() => setRinging(false), 2000);
+    return () => window.clearTimeout(t);
+  }, [bellPulse]);
 
   return (
     <>
@@ -90,7 +105,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="relative p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
               title="Notifications"
             >
-              <Bell size={19} />
+              <span className={`inline-flex ${ringing ? 'bell-jiggle' : ''}`}>
+                <Bell size={19} />
+              </span>
               {(unreadCount || 0) > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-0.5 rounded-full bg-rose-600 text-white text-[9px] font-extrabold flex items-center justify-center">
                   {(unreadCount || 0) > 99 ? '99+' : unreadCount}

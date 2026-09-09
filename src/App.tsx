@@ -7,6 +7,8 @@ import {
   PlaceRecommendation,
   TripTodo,
   ChatMessage,
+  Settlement,
+  ExpenseEvent,
 } from './types';
 import { Receipt } from 'lucide-react';
 import {
@@ -28,16 +30,21 @@ import {
   saveRecommendationsData,
   loadTodosData,
   saveTodosData,
+  loadSettlementsData,
+  saveSettlementsData,
+  loadExpenseEventsData,
+  saveExpenseEventsData,
 } from './utils/storage';
 
 import { Navbar, CleanTab } from './components/common/Navbar';
+import { AtSign, MapPin, MessageCircle } from 'lucide-react';
 import { WelcomeScreen } from './components/trip/WelcomeScreen';
 import { ChatView } from './components/chat/ChatView';
 import { TodoView } from './components/todo/TodoView';
 import { publishTripInvite, lookupInvite, joinTripById, shareMessage } from './utils/invites';
-import { ensureCloudUser, authGetUser, authSignOut } from './utils/supabaseClient';
+import { ensureCloudUser, authGetUser, authSignOut, supabase } from './utils/supabaseClient';
 import { pushTripShared, subscribeTripShared, pushTombstone, deleteTripFromFirestore, deleteInviteByCode, type RemoteSnapshot } from './utils/sync';
-import { subscribeChat } from './utils/chat';
+import { joinTripRoom } from './utils/socket';
 import { registerPushToken } from './utils/push';
 import { playVoiceLoud, deleteVoiceFile, ringLocalSiren } from './utils/voice';
 import { PushNotifications } from '@capacitor/push-notifications';
@@ -57,6 +64,12 @@ import { ProfilePage } from './components/common/ProfilePage';
 type AppView = 'landing' | 'trip_dashboard' | 'admin_activity' | 'profile';
 
 import { migrateDataUrl, deleteMediaRefs, collectRefs } from './utils/mediaStore';
+import { viewerBudget } from './utils/budget';
+import {
+  parseActivity,
+  parseChatMessage,
+  type FeedItem,
+} from './utils/notifications';
 import { isNativeApp, NativeSms } from './utils/nativeBridge';
 import { systemShare } from './utils/share';
 import { parseBankSMS, isDateWithinTrip, isRecurringDebit } from './utils/smsParser';
@@ -145,6 +158,8 @@ export function App() {
   const [photos, setPhotos] = useState<SharedPhoto[]>(loadPhotosData);
   const [recommendations, setRecommendations] = useState<PlaceRecommendation[]>(loadRecommendationsData);
   const [todos, setTodos] = useState<TripTodo[]>(loadTodosData);
+  const [settlements, setSettlements] = useState<Settlement[]>(loadSettlementsData);
+  const [expenseEvents, setExpenseEvents] = useState<ExpenseEvent[]>(loadExpenseEventsData);
 
   const [activeTab, setActiveTab] = useState<CleanTab>(loadSessionTab);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
@@ -152,6 +167,8 @@ export function App() {
   const [isTripEditorOpen, setIsTripEditorOpen] = useState(false);
   const [isTripCreateOpen, setIsTripCreateOpen] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
+  // NOTE: myUid yahin upar — neeche ke selectors render pe ise use karte hain (TDZ crash se bachne ke liye)
+  const [myUid, setMyUid] = useState<string | null>(null);
 
   const activeTrip = trips.find((t) => t.id === activeTripId) ?? trips[0];
 
@@ -168,6 +185,8 @@ export function App() {
   useEffect(() => { savePhotosData(photos); }, [photos]);
   useEffect(() => { saveRecommendationsData(recommendations); }, [recommendations]);
   useEffect(() => { saveTodosData(todos); }, [todos]);
+  useEffect(() => { saveSettlementsData(settlements); }, [settlements]);
+  useEffect(() => { saveExpenseEventsData(expenseEvents); }, [expenseEvents]);
 
   // One-time: purane data: URLs ko bade godown (IndexedDB) me shift karo — UI same
   useEffect(() => {
@@ -241,6 +260,20 @@ export function App() {
   const tripDocuments = activeTrip ? documents.filter((d) => d.tripId === activeTrip.id) : documents;
   const tripPhotos = activeTrip ? photos.filter((p) => p.tripId === activeTrip.id) : photos;
   const tripTodos = activeTrip ? todos.filter((t) => t.tripId === activeTrip.id) : [];
+  // Har user ka TODO separate: sirf apne todos dikhte hain.
+  // (ownerUid/updatedBy dono check — purane unattributed todos sabko dikhenge, transitional)
+  const myTripTodos = activeTrip
+    ? tripTodos.filter((t) => {
+        if (!myUid) return true;
+        if (t.ownerUid) return t.ownerUid === myUid;
+        if (t.updatedBy && t.updatedBy !== 'local') return t.updatedBy === myUid;
+        return true;
+      })
+    : [];
+  const tripSettlements = activeTrip ? settlements.filter((s) => s.tripId === activeTrip.id) : [];
+  const tripExpenseEvents = activeTrip
+    ? expenseEvents.filter((e) => e.tripId === activeTrip.id).sort((a, b) => b.at - a.at)
+    : [];
 
   const totalSpent = tripExpenses.reduce((a, b) => a + b.amount, 0);
 
@@ -263,11 +296,12 @@ export function App() {
     setActiveTripId(trip.id);
     setAppView('trip_dashboard');
     setActiveTab('trip');
-    // Auto-publish to Supabase so invite code works for others
+    // Auto-publish so the invite code works for others (fixes "no trip found")
     publishTripInvite(trip).then(({ trip: updated }) => {
       setTrips((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
     }).catch((e) => {
       console.error('publishTripInvite failed:', e);
+      showNotifFlash('Trip saved on this phone, but share-code upload failed. Check internet — reopen the app to retry.');
     });
   };
 
@@ -277,21 +311,8 @@ export function App() {
 
   const handleDeleteTrip = (tripId: string) => {
     const doomed = trips.find((t) => t.id === tripId);
-    const tripPhotos = photos.filter((p) => p.tripId === tripId);
-    const tripDocs = documents.filter((d) => d.tripId === tripId);
-    if (doomed) deleteMediaRefs(collectRefs([doomed, ...tripPhotos, ...tripDocs]));
-    deleteManyFromPhoneFolder([
-      ...tripPhotos.map((p) => p.phonePath),
-      ...tripDocs.flatMap((d) => [d.phonePath, ...(d.phonePaths || [])]),
-    ]);
-    setPhotos((prev) => prev.filter((p) => p.tripId !== tripId));
-    setDocuments((prev) => prev.filter((d) => d.tripId !== tripId));
-    setTrips((prev) => prev.filter((t) => t.id !== tripId));
-    if (activeTripId === tripId) {
-      setActiveTripId(null);
-      setAppView('landing');
-    }
-    // Delete from Firestore so all members lose access
+    purgeTripLocal(tripId);
+    // Server se delete — refresh ke time sab members ke phone se trip hategi
     if (doomed?.inviteCode) deleteInviteByCode(doomed.inviteCode).catch(() => undefined);
     deleteTripFromFirestore(tripId).catch(() => undefined);
   };
@@ -304,14 +325,35 @@ export function App() {
   const handleSaveExpense = (newOrUpdated: Expense) => {
     const stamped: Expense = {
       ...newOrUpdated,
+      // Amounts hamesha number (string aaya to "013244" concat bug aata hai)
+      amount: Number(newOrUpdated.amount) || 0,
+      splits: Array.isArray(newOrUpdated.splits)
+        ? newOrUpdated.splits.map((s) => ({ ...s, amount: Number(s.amount) || 0 }))
+        : newOrUpdated.splits,
       updatedAt: Date.now(),
       updatedBy: myUid || 'local',
     };
+    const isUpdate = expenses.some((e) => e.id === stamped.id);
     setExpenses((prev) => {
       const exists = prev.some((e) => e.id === stamped.id);
       if (exists) return prev.map((e) => (e.id === stamped.id ? stamped : e));
       return [stamped, ...prev];
     });
+    // Transparent history log (timestamped, synced, visible in Expense tab)
+    if (activeTrip) {
+      const evt: ExpenseEvent = {
+        id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        tripId: activeTrip.id,
+        expenseId: stamped.id,
+        action: isUpdate ? 'updated' : 'created',
+        title: stamped.title,
+        amount: stamped.amount,
+        byUid: myUid || undefined,
+        byName: profile?.name || activeTrip.members.find((m) => m.isCurrentUser)?.name?.replace(/\(You\)/g, '').trim() || 'Someone',
+        at: Date.now(),
+      };
+      setExpenseEvents((prev) => [evt, ...prev].slice(0, 300));
+    }
     setEditingExpense(null);
     if (!activeTrip) return;
     const nowD2 = new Date();
@@ -345,10 +387,51 @@ export function App() {
   };
 
   const handleDeleteExpense = (id: string) => {
+    const doomed = expenses.find((e) => e.id === id);
     if (activeTrip?.inviteCode) {
       pushTombstone(activeTrip.id, 'expenses', id).catch(() => undefined);
     }
+    if (doomed && activeTrip) {
+      const evt: ExpenseEvent = {
+        id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        tripId: activeTrip.id,
+        expenseId: id,
+        action: 'deleted',
+        title: doomed.title,
+        amount: doomed.amount,
+        byUid: myUid || undefined,
+        byName: profile?.name || activeTrip.members.find((m) => m.isCurrentUser)?.name?.replace(/\(You\)/g, '').trim() || 'Someone',
+        at: Date.now(),
+      };
+      setExpenseEvents((prev) => [evt, ...prev].slice(0, 300));
+    }
     setExpenses((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  // Settle Up: recorded pay-back — balance ledger se debt clear, spend untouched
+  const handleSettle = (fromMemberId: string, toMemberId: string, amount: number) => {
+    if (!activeTrip || !amount || amount <= 0) return;
+    const now = Date.now();
+    const s: Settlement = {
+      id: `stl_${now}_${Math.random().toString(36).slice(2, 8)}`,
+      tripId: activeTrip.id,
+      fromMemberId,
+      toMemberId,
+      amount: Math.round(amount * 100) / 100,
+      date: new Date().toISOString().split('T')[0],
+      updatedAt: now,
+      updatedBy: myUid || 'local',
+    };
+    setSettlements((prev) => [s, ...prev]);
+    const from = activeTrip.members.find((m) => m.id === fromMemberId)?.name?.replace(/\(You\)/g, '').trim() || 'Someone';
+    const to = activeTrip.members.find((m) => m.id === toMemberId)?.name?.replace(/\(You\)/g, '').trim() || 'Someone';
+    pushActivity({ id: s.id, title: `${from} settled Rs.${s.amount.toLocaleString('en-IN')} with ${to}`, sub: fmtWhen(), at: now });
+  };
+  const handleUndoSettlement = (id: string) => {
+    if (activeTrip?.inviteCode) {
+      pushTombstone(activeTrip.id, 'settlements', id).catch(() => undefined);
+    }
+    setSettlements((prev) => prev.filter((s) => s.id !== id));
   };
 
   // Vault documents — a ticket can carry its own optional reminder (scheduled natively)
@@ -388,11 +471,11 @@ export function App() {
     setPhotos((prev) => prev.filter((p) => p.id !== id));
   };
 
-  // Trip checklist — chhota sa todo (buy this, meet them)
+  // Trip checklist — har user ka apna (medicine, bakery, itinerary...)
   const handleAddTodo = (text: string) => {
     if (!activeTrip || !text.trim()) return;
     setTodos((prev) => [
-      { id: `todo_${Date.now()}`, tripId: activeTrip.id, text: text.trim().slice(0, 120), done: false, createdAt: new Date().toISOString(), updatedAt: Date.now(), updatedBy: myUid || 'local' },
+      { id: `todo_${Date.now()}`, tripId: activeTrip.id, text: text.trim().slice(0, 120), done: false, createdAt: new Date().toISOString(), ownerUid: myUid || undefined, updatedAt: Date.now(), updatedBy: myUid || 'local' },
       ...prev,
     ]);
   };
@@ -423,11 +506,13 @@ export function App() {
     setProfile(withDate);
     saveUserProfile(withDate);
     // Profile name/phone = dynamic everywhere: every trip's "you" member updates
+    // (matched by uid first — isCurrentUser flag can go stale after a remote merge)
+    const uid = myUidRef.current;
     setTrips((prev) =>
       prev.map((t) => ({
         ...t,
         members: t.members.map((m) =>
-          m.isCurrentUser ? { ...m, name: p.name, phone: p.phone } : m
+          m.isCurrentUser || (uid && m.uid === uid) ? { ...m, name: p.name, phone: p.phone } : m
         ),
       }))
     );
@@ -439,30 +524,55 @@ export function App() {
     if (inviteCode) {
       try {
         const ids = await lookupInvite(inviteCode);
-        if (ids.length > 0) {
-          handleJoinTripById(await joinTripById(ids[0]));
-        }
-      } catch {
-        showNotifFlash('Could not find trip for this code. Check the code and try again.');
+        handleJoinTripById(await joinTripById(ids[0]));
+      } catch (err) {
+        showNotifFlash(
+          err instanceof Error && err.message === 'NOT_FOUND'
+            ? 'No trip found with this code. Check the letters and try again.'
+            : 'Could not join right now. Check internet and retry.'
+        );
       }
     }
   };
-  const [myUid, setMyUid] = useState<string | null>(null);
   const isAdmin = profile?.role === 'admin' || (!!(profile?.name && profile?.phone) && getAdminStatus(profile.name, profile.phone));
   const [ownerFilter, setOwnerFilter] = useState<'all' | 'owned' | 'joined'>('all');
   const [pushFlash, setPushFlash] = useState<{ text: string; name?: string } | null>(null);
   const pushFlashTimer = useRef<number | null>(null);
+  // Bell pulse — har naye notification pe jiggle + red + vibrate (Navbar)
+  const [bellPulse, setBellPulse] = useState(0);
+  // Panel khulne ka time — isse naye items unread, purane read
+  const [notifSeenAt, setNotifSeenAt] = useState<number>(() => {
+    try {
+      return Number(localStorage.getItem('ws_notif_seen_v1')) || 0;
+    } catch {
+      return 0;
+    }
+  });
   const showNotifFlash = (msg: string, name?: string) => {
     setPushFlash({ text: msg, name });
+    setBellPulse((p) => p + 1);
     if (pushFlashTimer.current) window.clearTimeout(pushFlashTimer.current);
     pushFlashTimer.current = window.setTimeout(() => setPushFlash(null), 5000);
   };
 
-  // Check auth on mount
+  // Check auth on mount — and restore name/phone from server so login
+  // never asks for them again on a new device / cleared storage.
   useEffect(() => {
     authGetUser().then((u) => {
       setAuthed(!!u);
-      if (u) setMyUid(u.uid);
+      if (u) {
+        setMyUid(u.uid);
+        if (u.name?.trim() && !loadUserProfile()?.name) {
+          const restored: UserProfile = {
+            name: u.name.trim(),
+            phone: u.phone || '',
+            role: (u.role as UserProfile['role']) || (u.isAdmin ? 'admin' : undefined),
+            joinedAt: new Date().toISOString(),
+          };
+          setProfile(restored);
+          saveUserProfile(restored);
+        }
+      }
     }).catch(() => setAuthed(false));
   }, []);
 
@@ -482,13 +592,15 @@ export function App() {
           (async () => {
             try {
               const ids = await lookupInvite(joinCode.trim().toUpperCase());
-              if (ids.length > 0) {
-                const joined = await joinTripById(ids[0]);
-                handleJoinTripById(joined);
-                showNotifFlash(`Joined "${joined.title}"!`);
-              }
-            } catch {
-              showNotifFlash(`Could not find trip for code: ${joinCode}`);
+              const joined = await joinTripById(ids[0]);
+              handleJoinTripById(joined);
+              showNotifFlash(`Joined "${joined.title}"!`);
+            } catch (err) {
+              showNotifFlash(
+                err instanceof Error && (err.message === 'NOT_FOUND')
+                  ? `No trip found for code: ${joinCode.trim().toUpperCase()}`
+                  : 'Could not join right now. Check internet and retry.'
+              );
             }
           })();
         }
@@ -496,19 +608,158 @@ export function App() {
     } catch { /* ignore */ }
   }, []);
 
-  // Trip isolation: once we know myUid, remove trips where I'm not a member
+  // Trip isolation: keep my own trips + trips where I'm a member.
+  // (Unpublished local trips have no uid yet — never drop those.)
+  const myUidRef = useRef<string | null>(null);
+  useEffect(() => {
+    myUidRef.current = myUid;
+  }, [myUid]);
   useEffect(() => {
     if (!myUid) return;
     setTrips((prev) => {
       const filtered = prev.filter((t) =>
-        t.members.some((m) => m.uid === myUid)
+        t.members.some((m) => m.uid === myUid) ||
+        t.ownerUid === myUid ||
+        !t.ownerUid
       );
       return filtered.length === prev.length ? prev : filtered;
     });
   }, [myUid]);
 
+  // Remove one trip + all its local data (used for owner-delete propagation too)
+  const purgeTripLocal = (tripId: string) => {
+    const doomedPhotos = photos.filter((p) => p.tripId === tripId);
+    const doomedDocs = documents.filter((d) => d.tripId === tripId);
+    const doomedTrip = trips.find((t) => t.id === tripId);
+    if (doomedTrip) deleteMediaRefs(collectRefs([doomedTrip, ...doomedPhotos, ...doomedDocs]));
+    deleteManyFromPhoneFolder([
+      ...doomedPhotos.map((p) => p.phonePath),
+      ...doomedDocs.flatMap((d) => [d.phonePath, ...(d.phonePaths || [])]),
+    ]);
+    setPhotos((prev) => prev.filter((p) => p.tripId !== tripId));
+    setDocuments((prev) => prev.filter((d) => d.tripId !== tripId));
+    setExpenses((prev) => prev.filter((e) => e.tripId !== tripId));
+    setTodos((prev) => prev.filter((t) => t.tripId !== tripId));
+    setSettlements((prev) => prev.filter((s) => s.tripId !== tripId));
+    setExpenseEvents((prev) => prev.filter((e) => e.tripId !== tripId));
+    setTrips((prev) => prev.filter((t) => t.id !== tripId));
+    if (activeTripId === tripId) {
+      setActiveTripId(null);
+      setAppView('landing');
+    }
+  };
+
+  // Shared-trip refresh (landing): name/date/budget/members — koi bhi change
+  // sab members ko dikhe. Owner ne delete kiya ho to sabke phone se trip hate.
+  const refreshSharedTrips = async () => {
+    const uid = myUidRef.current;
+    let locals: Trip[];
+    try {
+      locals = JSON.parse(localStorage.getItem('ws_trips_v2') || '[]');
+    } catch {
+      return;
+    }
+    const shared = locals.filter((t) => t.inviteCode);
+    if (shared.length === 0) return;
+    const deletedIds: string[] = [];
+    const updates: Record<string, Partial<Trip>> = {};
+    await Promise.all(
+      shared.map(async (local) => {
+        try {
+          const { data } = await supabase.from('trips').select('*').eq('id', local.id).maybeSingle();
+          if (!data) {
+            // Owner deleted → sabke pass se delete
+            deletedIds.push(local.id);
+            return;
+          }
+          const remote = data as unknown as Trip & { updatedAt?: number };
+          // Mujhe squad se nikala gaya (aur main owner nahi) → trip hatao
+          if (uid && remote.ownerUid !== uid && !remote.members?.some((m) => m.uid === uid)) {
+            deletedIds.push(local.id);
+            return;
+          }
+          const remoteAt = Number(remote.updatedAt) || 0;
+          if (remoteAt > (tripSyncAt.current[local.id] || 0)) {
+            tripSyncAt.current[local.id] = remoteAt;
+            const remoteBudget = Number((remote as { totalBudget?: unknown }).totalBudget);
+            updates[local.id] = {
+              title: typeof remote.title === 'string' ? remote.title : local.title,
+              description: typeof remote.description === 'string' ? remote.description : local.description,
+              coverImage: typeof remote.coverImage === 'string' ? remote.coverImage : local.coverImage,
+              startDate: typeof remote.startDate === 'string' ? remote.startDate : local.startDate,
+              endDate: typeof remote.endDate === 'string' ? remote.endDate : local.endDate,
+              totalBudget: Number.isFinite(remoteBudget) ? remoteBudget : local.totalBudget,
+              members:
+                Array.isArray(remote.members) && remote.members.length > 0
+                  ? remote.members.map((m) => ({
+                      ...m,
+                      budget: m.budget === undefined || m.budget === null || (m.budget as unknown) === '' ? undefined : Number(m.budget) || 0,
+                      isCurrentUser: uid ? m.uid === uid : m.isCurrentUser,
+                    }))
+                  : local.members,
+              cities: Array.isArray(remote.cities) ? remote.cities : local.cities,
+            };
+          }
+        } catch { /* offline — local data stands */ }
+      })
+    );
+    if (deletedIds.length === 0 && Object.keys(updates).length === 0) return;
+    setTrips((prev) =>
+      prev
+        .filter((t) => !deletedIds.includes(t.id))
+        .map((t) => (updates[t.id] ? { ...t, ...updates[t.id] } : t))
+    );
+    if (deletedIds.length > 0) {
+      if (activeTripId && deletedIds.includes(activeTripId)) {
+        setActiveTripId(null);
+        setAppView('landing');
+      }
+      setExpenses((prev) => prev.filter((e) => !deletedIds.includes(e.tripId)));
+      setTodos((prev) => prev.filter((t) => !deletedIds.includes(t.tripId)));
+      setDocuments((prev) => prev.filter((d) => !deletedIds.includes(d.tripId)));
+      setPhotos((prev) => prev.filter((p) => !deletedIds.includes(p.tripId)));
+      setSettlements((prev) => prev.filter((s) => !deletedIds.includes(s.tripId)));
+      setExpenseEvents((prev) => prev.filter((e) => !deletedIds.includes(e.tripId)));
+      showNotifFlash(
+        deletedIds.length === 1 ? 'A trip was deleted by its owner.' : `${deletedIds.length} trips were deleted by their owners.`
+      );
+    }
+  };
+
+  // Landing refresh triggers: open landing, focus window, periodic poll
+  const appViewRef = useRef(appView);
+  useEffect(() => {
+    appViewRef.current = appView;
+    if (appView === 'landing') refreshSharedTrips();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appView]);
+  useEffect(() => {
+    const onFocus = () => {
+      if (appViewRef.current === 'landing') refreshSharedTrips();
+    };
+    window.addEventListener('focus', onFocus);
+    const timer = window.setInterval(() => {
+      if (appViewRef.current === 'landing' && navigator.onLine) refreshSharedTrips();
+    }, 20000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Notifications: unread count + @mention watch + panel feed
   const [notifOpen, setNotifOpen] = useState(false);
+  // Panel khula → sab seen (badge + dots clear)
+  useEffect(() => {
+    if (notifOpen) {
+      const now = Date.now();
+      setNotifSeenAt(now);
+      try {
+        localStorage.setItem('ws_notif_seen_v1', String(now));
+      } catch { /* private mode */ }
+    }
+  }, [notifOpen]);
   const [chatFeed, setChatFeed] = useState<ChatMessage[]>([]);
   const [lastSeen, setLastSeen] = useState<number>(() => Date.now());
   const notifiedRef = useRef<Set<string>>(new Set());
@@ -534,8 +785,32 @@ export function App() {
 
   useEffect(() => {
     if (!activeTrip || appView !== 'trip_dashboard') return;
-    const off = subscribeChat(activeTrip.id, setChatFeed);
-    return () => off();
+    const tripId = activeTrip.id;
+    let cancelled = false;
+    // History (REST) + live socket — bell/mentions stay live without opening chat
+    (async () => {
+      try {
+        const { data } = await supabase.from('chat_messages').select('*').eq('tripId', tripId).order('createdAt', { ascending: true }).limit(200);
+        if (!cancelled) setChatFeed(((data || []) as (ChatMessage & { _deleted?: boolean })[]).filter((m) => !m._deleted));
+      } catch {
+        if (!cancelled) setChatFeed([]);
+      }
+    })();
+    const leave = joinTripRoom(tripId, { uid: myUid, name: profile?.name }, {
+      onMessage: (m) => {
+        const r = m as ChatMessage & { _deleted?: boolean };
+        setChatFeed((prev) =>
+          r._deleted
+            ? prev.filter((x) => x.id !== r.id)
+            : prev.some((x) => x.id === r.id) ? prev : [...prev, r]
+        );
+      },
+    });
+    return () => {
+      cancelled = true;
+      leave();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrip?.id, appView]);
 
   // Mark read while chat is open
@@ -592,7 +867,6 @@ export function App() {
       localStorage.setItem('ws_activity_v1', JSON.stringify(activity.slice(0, 30)));
     } catch { /* quota */ }
   }, [activity]);
-  const knownExpenseIds = useRef<Set<string>>(new Set());
   const tripSyncAt = useRef<Record<string, number>>({});
   const pushTimer = useRef<number | null>(null);
 
@@ -610,13 +884,13 @@ export function App() {
     pushTimer.current = window.setTimeout(() => {
       const now = Date.now();
       tripSyncAt.current[activeTrip.id] = now;
-      pushTripShared(activeTrip, expenses, todos, documents).catch(() => undefined);
+      pushTripShared(activeTrip, expenses, todos, documents, settlements, expenseEvents).catch(() => undefined);
     }, 1500);
     return () => {
       if (pushTimer.current) window.clearTimeout(pushTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTrip?.id, activeTrip?.inviteCode, appView, expenses, todos, documents, trips]);
+  }, [activeTrip?.id, activeTrip?.inviteCode, appView, expenses, todos, documents, trips, settlements, expenseEvents]);
 
   // Pull remote changes, merge last-write-wins, notify on newcomers
   useEffect(() => {
@@ -627,10 +901,19 @@ export function App() {
       const remoteAt = (snap.trip as { updatedAt?: number }).updatedAt || 0;
       if (remoteAt > (tripSyncAt.current[tripId] || 0)) {
         tripSyncAt.current[tripId] = remoteAt;
+        const uid = myUidRef.current;
         setTrips((prev) =>
           prev.map((t) => {
             if (t.id !== tripId) return t;
             const r = snap.trip;
+            const remoteMembers = Array.isArray(r.members) && r.members.length > 0
+              ? (r.members as Trip['members']).map((m) => ({
+                  ...m,
+                  budget: m.budget === undefined || m.budget === null || (m.budget as unknown) === '' ? undefined : Number(m.budget) || 0,
+                  isCurrentUser: uid ? m.uid === uid : m.isCurrentUser,
+                }))
+              : t.members;
+            const remoteBudget = Number((r as { totalBudget?: unknown }).totalBudget);
             return {
               ...t,
               title: typeof r.title === 'string' ? r.title : t.title,
@@ -638,21 +921,41 @@ export function App() {
               coverImage: typeof r.coverImage === 'string' ? r.coverImage : t.coverImage,
               startDate: typeof r.startDate === 'string' ? r.startDate : t.startDate,
               endDate: typeof r.endDate === 'string' ? r.endDate : t.endDate,
-              totalBudget: typeof r.totalBudget === 'number' ? r.totalBudget : t.totalBudget,
-              members: Array.isArray(r.members) && r.members.length > 0 ? (r.members as Trip['members']) : t.members,
+              totalBudget: Number.isFinite(remoteBudget) ? remoteBudget : t.totalBudget,
+              members: remoteMembers,
               cities: Array.isArray(r.cities) ? (r.cities as Trip['cities']) : t.cities,
             };
           })
         );
       }
       // Expenses: tombstones + LWW + newcomer alerts
+      const normExp = (r: Expense): Expense => ({
+        ...r,
+        amount: Number(r.amount) || 0,
+        splits: Array.isArray(r.splits)
+          ? r.splits.map((s) => ({ ...s, amount: Number(s.amount) || 0 }))
+          : r.splits,
+      });
       setExpenses((prev) => {
         let next = [...prev];
         let changed = false;
-        for (const r of snap.expenses) {
+        for (const raw of snap.expenses) {
+          const r = normExp(raw);
           const idx = next.findIndex((e) => e.id === r.id);
           if ((r as { _deleted?: boolean })._deleted) {
             if (idx >= 0) {
+              // Transparency: remember who deleted what for the watcher below
+              const gone = next[idx];
+              const by = (r as Expense).updatedBy || (gone.updatedBy as string | undefined);
+              if (!deletedExpQueue.current.some((q) => q.id === r.id)) {
+                deletedExpQueue.current.push({
+                  id: r.id,
+                  title: gone.title,
+                  amount: gone.amount,
+                  by,
+                  splitIds: gone.splits.map((s) => s.memberId),
+                });
+              }
               next = next.filter((e) => e.id !== r.id);
               changed = true;
             }
@@ -713,37 +1016,113 @@ export function App() {
         }
         return changed ? next : prev;
       });
+      // Settlements: tombstones + LWW (balance ledger)
+      setSettlements((prev) => {
+        let next = [...prev];
+        let changed = false;
+        for (const raw of snap.settlements) {
+          const r = { ...raw, amount: Number(raw.amount) || 0 };
+          const idx = next.findIndex((s) => s.id === r.id);
+          if ((r as { _deleted?: boolean })._deleted) {
+            if (idx >= 0) {
+              next = next.filter((s) => s.id !== r.id);
+              changed = true;
+            }
+            continue;
+          }
+          if (idx < 0) {
+            next = [r, ...next];
+            changed = true;
+          } else if ((r.updatedAt || 0) > (next[idx].updatedAt || 0)) {
+            next[idx] = r;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      // Expense events: immutable — union by id
+      setExpenseEvents((prev) => {
+        const ids = new Set(prev.map((e) => e.id));
+        const fresh = snap.expenseEvents.filter((e) => !ids.has(e.id));
+        return fresh.length > 0 ? [...fresh, ...prev].slice(0, 300) : prev;
+      });
     });
     return () => off();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrip?.id, activeTrip?.inviteCode, appView]);
 
-  // Newcomer expense alerts (split → involved members, with payer name highlighted)
+  // Expense alerts: add/update/delete → SIRF us split ke members ko
+  // (spec §3.4). Apne changes pe khud ko notify nahi.
   const seenExpTripRef = useRef<string | null>(null);
+  const expSeenAt = useRef<Map<string, number>>(new Map());
+  const deletedExpQueue = useRef<{ id: string; title: string; amount: number; by?: string; splitIds: string[] }[]>([]);
+  const membersRef = useRef<Trip['members']>([]);
+  membersRef.current = activeTrip?.members ?? [];
+
+  const actorName = (uid?: string): string => {
+    if (!uid) return 'Someone';
+    const m = membersRef.current.find((x) => x.uid === uid);
+    return m ? m.name.replace(/\(You\)/g, '').trim() || 'Someone' : 'Someone';
+  };
+  const fmtWhen = (): string => {
+    const nd = new Date();
+    return `${nd.getDate()} ${nd.toLocaleDateString([], { month: 'short' })}, ${nd.getHours() % 12 || 12}:${String(nd.getMinutes()).padStart(2, '0')} ${nd.getHours() >= 12 ? 'pm' : 'am'}`;
+  };
+
   useEffect(() => {
     if (!activeTrip) return;
     if (seenExpTripRef.current !== activeTrip.id) {
+      // Pehli load seed — purani entries pe shor nahi
       seenExpTripRef.current = activeTrip.id;
-      expenses.forEach((e) => knownExpenseIds.current.add(e.id));
+      expSeenAt.current = new Map(expenses.filter((e) => e.tripId === activeTrip.id).map((e) => [e.id, e.updatedAt || 0]));
+      deletedExpQueue.current = [];
       return;
     }
-    const me = activeTrip.members.find((m) => m.isCurrentUser);
+    const uid = myUidRef.current;
+    const myMemberId =
+      (uid && activeTrip.members.find((m) => m.uid === uid)?.id) ||
+      activeTrip.members.find((m) => m.isCurrentUser)?.id;
+    // Deletes (tombstones from server) — sirf split walon ko
+    for (const q of deletedExpQueue.current) {
+      if (q.by && uid && q.by === uid) continue;
+      if (myMemberId && !q.splitIds.includes(myMemberId)) continue;
+      const who = actorName(q.by);
+      const when = fmtWhen();
+      const title = `${who} deleted "${q.title}" (Rs.${Number(q.amount).toLocaleString('en-IN')})`;
+      pushActivity({ id: `expdel_${q.id}_${Date.now()}`, title, sub: when, at: Date.now() });
+      showNotifFlash(`${title} • ${when}`, who);
+      loudNotify(title, when, Date.now() % 2147483647);
+    }
+    deletedExpQueue.current = [];
+    // Adds + updates — sirf us split ke members ko
     for (const e of expenses) {
-      if (e.tripId !== activeTrip.id || knownExpenseIds.current.has(e.id)) continue;
-      knownExpenseIds.current.add(e.id);
-      if (!e.updatedBy || (myUid && e.updatedBy === myUid)) continue;
+      if (e.tripId !== activeTrip.id) continue;
+      if (e.updatedBy && uid && e.updatedBy === uid) {
+        expSeenAt.current.set(e.id, e.updatedAt || 0);
+        continue;
+      }
+      if (myMemberId && !e.splits.some((s) => s.memberId === myMemberId)) {
+        expSeenAt.current.set(e.id, e.updatedAt || 0);
+        continue;
+      }
+      const prevAt = expSeenAt.current.get(e.id);
       const payer = activeTrip.members.find((m) => m.id === e.paidByMemberId);
-      const payerName = payer ? payer.name.replace(/\(You\)/g, '').trim() : 'Someone';
-      const nd = new Date();
-      const when = `${nd.getDate()} ${nd.toLocaleDateString([], { month: 'short' })}, ${nd.getHours() % 12 || 12}:${String(nd.getMinutes()).padStart(2, '0')} ${nd.getHours() >= 12 ? 'pm' : 'am'}`;
-      const iInSplit = me && e.splits.some((s) => s.memberId === me.id);
-      if (e.isGroupExpense && iInSplit) {
+      const payerName = payer ? payer.name.replace(/\(You\)/g, '').trim() : actorName(e.updatedBy);
+      const when = fmtWhen();
+      if (prevAt === undefined) {
+        expSeenAt.current.set(e.id, e.updatedAt || 0);
         const withList = e.splits
           .map((s) => activeTrip.members.find((mm) => mm.id === s.memberId)?.name?.replace(/\(You\)/g, '').trim() || '')
           .filter((n) => n && n !== payerName);
         const withStr = withList.length > 0 ? ` with @${withList.join(', @')}` : '';
-        const title = `${payerName} just logged Rs.${e.amount.toLocaleString('en-IN')} for ${e.title}${withStr}`;
+        const title = `${payerName} added Rs.${Number(e.amount).toLocaleString('en-IN')} for ${e.title}${withStr}`;
         pushActivity({ id: `exp_${e.id}`, title, sub: when, at: Date.now() });
+        showNotifFlash(`${title} • ${when}`, payerName);
+        loudNotify(title, when, Date.now() % 2147483647);
+      } else if ((e.updatedAt || 0) > prevAt) {
+        expSeenAt.current.set(e.id, e.updatedAt || 0);
+        const title = `${payerName} updated Rs.${Number(e.amount).toLocaleString('en-IN')} for ${e.title}`;
+        pushActivity({ id: `expupd_${e.id}_${e.updatedAt}`, title, sub: when, at: Date.now() });
         showNotifFlash(`${title} • ${when}`, payerName);
         loudNotify(title, when, Date.now() % 2147483647);
       }
@@ -941,9 +1320,26 @@ export function App() {
             // Handle invite code join after render
             if (signupProfile.inviteCode) {
               lookupInvite(signupProfile.inviteCode).then((ids) => {
-                if (ids.length > 0) joinTripById(ids[0]).then(handleJoinTripById);
+                return joinTripById(ids[0]).then(handleJoinTripById);
               }).catch(() => {});
             }
+          } else {
+            // Login: pull name/phone from server so WelcomeScreen is skipped
+            authGetUser().then((u) => {
+              if (u) {
+                setMyUid(u.uid);
+                if (u.name?.trim()) {
+                  const restored: UserProfile = {
+                    name: u.name.trim(),
+                    phone: u.phone || '',
+                    role: (u.role as UserProfile['role']) || (u.isAdmin ? 'admin' : undefined),
+                    joinedAt: profile?.joinedAt || new Date().toISOString(),
+                  };
+                  setProfile(restored);
+                  saveUserProfile(restored);
+                }
+              }
+            }).catch(() => {});
           }
         }}
       />
@@ -1045,52 +1441,69 @@ export function App() {
           setNotifOpen(false);
         }}
         onOpenQuickAdd={() => { setEditingExpense(null); setIsQuickAddOpen(true); }}
-        totalSpent={totalSpent}
-        totalBudget={activeTrip.totalBudget}
+        totalSpent={viewerBudget(activeTrip, tripExpenses, myUid, isAdmin).spent}
+        totalBudget={viewerBudget(activeTrip, tripExpenses, myUid, isAdmin).budget}
         tripTitle={activeTrip.title}
         onBackToTrips={() => setAppView('landing')}
         unreadCount={chatFeed.filter((m) => msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system').length}
         onBellClick={() => setNotifOpen((v) => !v)}
+        bellPulse={bellPulse}
       />
       {notifOpen && (() => {
-        const me = activeTrip?.members.find((m) => m.isCurrentUser);
-        const isUnread = (m: (typeof chatFeed)[number]) =>
-          msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system';
-        const unreadList = chatFeed.filter(isUnread);
-        const mentionList = [...chatFeed]
-          .reverse()
-          .filter(
-            (m) =>
-              m.senderId !== myUid &&
-              (m.mentions || []).some(
-                (x) => (me && x.id === me.id) || (me && me.name ? x.name === me.name : false)
-              )
-          )
-          .slice(0, 5);
         const openChat = () => {
           setNotifOpen(false);
           setActiveTab('chat');
         };
-        const row = (m: (typeof chatFeed)[number], unread: boolean) => (
-          <button
-            key={m.id}
-            onClick={openChat}
-            className={`w-full text-left px-4 py-2.5 border-b border-slate-50 hover:bg-indigo-50/50 cursor-pointer flex items-start gap-2 ${unread ? 'bg-indigo-50/40' : ''}`}
-          >
-            {unread && <span className="w-2 h-2 rounded-full bg-rose-500 mt-1 flex-shrink-0" />}
-            <span className="min-w-0 flex-1">
-              <span className="block text-xs font-extrabold text-slate-900 truncate">
-                {m.type === 'siren' || m.type === 'system' ? m.text : m.senderName}
-              </span>
-              {m.type !== 'siren' && m.type !== 'system' && (
-                <span className="block text-[11px] text-slate-500 truncate">
-                  {(m.text || (m.type === 'location' ? 'Shared location' : '')).slice(0, 40)}
-                </span>
-              )}
-              <span className="block text-[10px] text-slate-400 font-medium">{notifDate(m.createdAt)}</span>
-            </span>
-          </button>
-        );
+        // Unified smart feed: latest first, cap 30 — splitwise top pe chipka nahi rehta
+        const feed: FeedItem[] = [
+          ...activity.map((a) => parseActivity(a, a.at > notifSeenAt)),
+          ...chatFeed.flatMap((m) => {
+            const it = parseChatMessage(
+              m,
+              myUid,
+              msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system'
+            );
+            return it ? [it] : [];
+          }),
+        ]
+          .sort((a, b) => b.at - a.at)
+          .slice(0, 30);
+        const unreadCount = feed.filter((f) => f.isUnread).length;
+        const META: Record<FeedItem['category'], { icon: React.ReactNode; box: string }> = {
+          transaction: {
+            icon: <Receipt size={12} />,
+            box: 'bg-emerald-50 border-emerald-200 text-emerald-600',
+          },
+          mention: {
+            icon: <AtSign size={12} />,
+            box: 'bg-indigo-50 border-indigo-200 text-indigo-600',
+          },
+          message: {
+            icon: <MessageCircle size={12} />,
+            box: 'bg-slate-100 border-slate-200 text-slate-500',
+          },
+          location: {
+            icon: <MapPin size={12} />,
+            box: 'bg-teal-50 border-teal-200 text-teal-600',
+          },
+        };
+        const renderBody = (f: FeedItem) => {
+          // Sirf asli handles highlight ho (@squad / @Member Name) — baad ka text plain.
+          const names = [
+            'squad',
+            ...activeTrip.members.map((m) => m.name.replace(/\(You\)/g, '').trim()).filter(Boolean),
+          ].sort((a, b) => b.length - a.length);
+          if (names.length === 0) return <span>{f.messageBody}</span>;
+          const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const parts = f.messageBody.split(new RegExp(`(@(?:${names.map(esc).join('|')}))(?!\\w)`, 'gi'));
+          return parts.map((seg, i) =>
+            i % 2 === 1 ? (
+              <span key={i} className="text-indigo-600 font-bold">{seg}</span>
+            ) : (
+              <span key={i}>{seg}</span>
+            )
+          );
+        };
         return (
           <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col">
             <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white">
@@ -1098,88 +1511,61 @@ export function App() {
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
               </button>
               <h4 className="text-sm font-extrabold text-slate-900">
-                Notifications{unreadList.length > 0 ? ` — You have ${unreadList.length} unread` : ''}
+                Notifications{unreadCount > 0 ? ` — ${unreadCount} unread` : ''}
               </h4>
             </div>
-            <div className="flex-1 overflow-y-auto bg-white">
-              {(() => {
-                const fmtNow = () => {
-                  const d = new Date();
-                  let h = d.getHours();
-                  const suf = h >= 12 ? 'pm' : 'am';
-                  h = h % 12 || 12;
-                  return `${d.getDate()} ${d.toLocaleDateString([], { month: 'short' })}, ${h}:${String(d.getMinutes()).padStart(2, '0')} ${suf}`;
-                };
-                void fmtNow;
-                const renderTitle = (title: string) => {
-                  const segs = title.split(/(@[\w ]+)/g);
-                  return segs.map((seg, i) =>
-                    seg.startsWith('@') ? (
-                      <span key={i} className="text-indigo-600 font-bold">{seg}</span>
-                    ) : (
-                      <span key={i}>{seg}</span>
-                    )
-                  );
-                };
-                const recentAll: { id: string; at: number; node: React.ReactNode }[] = [
-                  ...activity.map((a) => ({
-                    id: a.id,
-                    at: a.at,
-                    node: (
-                      <div
-                        key={a.id}
-                        className="w-full text-left px-4 py-2.5 border-b border-slate-50 flex items-center gap-2"
-                      >
-                        <span className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center flex-shrink-0">
-                          <Receipt size={12} />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-xs font-medium text-slate-600 truncate">{renderTitle(a.title)}</span>
-                          <span className="block text-[10px] text-slate-400 truncate">{a.sub}</span>
-                        </span>
-                      </div>
-                    ),
-                  })),
-                  ...mentionList.map((m) => ({
-                    id: `men-${m.id}`,
-                    at: msgTimeMs(m.createdAt) || 0,
-                    node: (
-                      <button
-                        key={`men-${m.id}`}
-                        onClick={openChat}
-                        className="w-full text-left px-4 py-2.5 border-b border-slate-50 hover:bg-indigo-50/50 cursor-pointer flex items-start gap-2"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-xs font-extrabold text-slate-900 truncate">
-                            {m.senderName} mentioned you
-                          </span>
-                          <span className="block text-[10px] text-slate-400 font-medium">{notifDate(m.createdAt)}</span>
-                        </span>
-                      </button>
-                    ),
-                  })),
-                  ...[...chatFeed]
-                    .filter((m) => m.type !== 'system' && !isUnread(m))
-                    .slice(-8)
-                    .reverse()
-                    .map((m) => ({
-                      id: m.id,
-                      at: msgTimeMs(m.createdAt) || 0,
-                      node: row(m, false),
-                    })),
-                ];
-                recentAll.sort((a, b) => b.at - a.at);
-                const unreadRows = [...chatFeed].filter(isUnread).reverse().map((m) => ({ id: m.id, at: msgTimeMs(m.createdAt) || 0, node: row(m, true) }));
-                const all = [...unreadRows, ...recentAll].slice(0, 20);
-                return (
+            <div className="flex-1 min-h-0 overflow-y-auto bg-white overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
+              {unreadCount > 0 && (
+                <p className="px-4 pt-2 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-rose-600 sticky top-0 bg-white">
+                  Unread — {unreadCount}
+                </p>
+              )}
+              {feed.map((f) => {
+                const meta = META[f.category];
+                const inner = (
                   <>
-                    {unreadRows.length > 0 && <p className="px-4 pt-2 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-rose-600">Unread — {unreadList.length}</p>}
-                    {all.map((x) => x.node)}
+                    {f.isUnread && <span className="w-2 h-2 rounded-full bg-rose-500 mt-1.5 flex-shrink-0" />}
+                    <span className={`w-7 h-7 rounded-lg border flex items-center justify-center flex-shrink-0 ${meta.box}`}>
+                      {meta.icon}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs text-slate-600 truncate">
+                        <strong className="font-extrabold text-slate-900">{f.actor}</strong>{' '}{renderBody(f)}{' '}
+                        {f.highlightData && (
+                          <span className={`inline-block px-1.5 py-px rounded-md text-[10px] font-extrabold ${f.category === 'transaction' ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                            {f.highlightData}
+                          </span>
+                        )}
+                      </span>
+                      {f.previewText && f.category !== 'transaction' && (
+                        <span className="block text-[11px] text-slate-500 truncate">"{f.previewText}"</span>
+                      )}
+                      <span className="block text-[10px] text-slate-400 font-medium">{f.relativeTime}</span>
+                    </span>
                   </>
                 );
-              })()}
-              {chatFeed.length === 0 && (
+                return f.opensChat ? (
+                  <button
+                    key={f.id}
+                    onClick={openChat}
+                    className={`w-full text-left px-4 py-2.5 border-b border-slate-50 hover:bg-indigo-50/50 cursor-pointer flex items-start gap-2 ${f.isUnread ? 'bg-indigo-50/40' : ''}`}
+                  >
+                    {inner}
+                  </button>
+                ) : (
+                  <div
+                    key={f.id}
+                    className={`w-full text-left px-4 py-2.5 border-b border-slate-50 flex items-start gap-2 ${f.isUnread ? 'bg-indigo-50/40' : ''}`}
+                  >
+                    {inner}
+                  </div>
+                );
+              })}
+              {feed.length === 0 && (
                 <p className="text-[11px] text-slate-400 text-center py-6">No notifications yet.</p>
+              )}
+              {feed.length >= 30 && (
+                <p className="text-[10px] text-slate-400 text-center py-3 font-medium">Showing latest 30 — scroll up for more</p>
               )}
             </div>
           </div>
@@ -1204,7 +1590,7 @@ export function App() {
         )}
         {activeTab === 'todo' && (
           <TodoView
-            todos={tripTodos}
+            todos={myTripTodos}
             onAddTodo={handleAddTodo}
             onToggleTodo={handleToggleTodo}
             onDeleteTodo={handleDeleteTodo}
@@ -1214,19 +1600,28 @@ export function App() {
           <CleanExpensesView
             trip={activeTrip}
             expenses={tripExpenses}
+            settlements={tripSettlements}
+            expenseEvents={tripExpenseEvents}
             onEditExpense={handleEditExpense}
             onDeleteExpense={handleDeleteExpense}
             onGoSplit={() => setActiveTab('split')}
+            onLogSpend={() => { setEditingExpense(null); setIsQuickAddOpen(true); }}
+            onSettle={handleSettle}
+            myUid={myUid}
           />
         )}
         {activeTab === 'split' && (
           <CleanSplitView
             trip={activeTrip}
             expenses={tripExpenses}
+            settlements={tripSettlements}
             onOpenQuickAdd={() => { setEditingExpense(null); setIsQuickAddOpen(true); }}
             onEditExpense={handleEditExpense}
             onDeleteExpense={handleDeleteExpense}
             onBackToExpenses={() => setActiveTab('expenses')}
+            onSettle={handleSettle}
+            onUndoSettlement={handleUndoSettlement}
+            myUid={myUid}
           />
         )}
         {activeTab === 'chat' && (

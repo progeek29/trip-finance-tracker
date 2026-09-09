@@ -9,7 +9,7 @@ export const INITIAL_TRIP: Trip = {
   endDate: '2026-09-25',
   totalBudget: 60000,
   currency: 'INR',
-  status: 'ongoing',
+  status: 'inprogress',
   isActive: true,
   members: [
     {

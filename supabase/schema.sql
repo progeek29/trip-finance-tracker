@@ -46,6 +46,7 @@ create table if not exists expenses (
   "originalSMS" text,
   "_deleted" boolean default false,
   "updatedAt" bigint,
+  "updatedBy" text,
   "createdAt" timestamptz default now()
 );
 
@@ -54,9 +55,13 @@ create table if not exists todos (
   id text primary key,
   "tripId" text references trips(id) on delete cascade,
   title text not null default '',
+  text text default '',
   "assignedTo" text,
   done boolean default false,
+  "_deleted" boolean default false,
+  "ownerUid" text,
   "updatedAt" bigint,
+  "updatedBy" text,
   "createdAt" timestamptz default now()
 );
 
@@ -75,8 +80,10 @@ create table if not exists documents (
   "uploadedByMemberId" text,
   tags jsonb default '[]',
   notes text default '',
+  "remoteUrl" text,
   "_deleted" boolean default false,
   "updatedAt" bigint,
+  "updatedBy" text,
   "createdAt" timestamptz default now()
 );
 
@@ -92,6 +99,8 @@ create table if not exists chat_messages (
   mentions jsonb default '[]',
   "senderId" text,
   "senderName" text default '',
+  pinned boolean default false,
+  "_deleted" boolean default false,
   "createdAt" timestamptz default now()
 );
 
@@ -135,6 +144,44 @@ create table if not exists invites (
   "createdAt" timestamptz default now()
 );
 
+-- ─── SETTLEMENTS (balance ledger only — never touches spend) ──
+create table if not exists settlements (
+  id text primary key,
+  "tripId" text references trips(id) on delete cascade,
+  "fromMemberId" text,
+  "toMemberId" text,
+  amount numeric default 0,
+  date text default '',
+  note text default '',
+  "_deleted" boolean default false,
+  "updatedAt" bigint,
+  "updatedBy" text,
+  "createdAt" timestamptz default now()
+);
+
+-- ─── EXPENSE EVENTS (transparent edit history, immutable) ───
+create table if not exists expense_events (
+  id text primary key,
+  "tripId" text references trips(id) on delete cascade,
+  "expenseId" text,
+  action text default 'created',
+  title text default '',
+  amount numeric default 0,
+  "byUid" text,
+  "byName" text default '',
+  at bigint,
+  "createdAt" timestamptz default now()
+);
+
+-- ─── MESSAGE READS (per-message read receipts) ────────────
+create table if not exists message_reads (
+  "messageId" text,
+  "tripId" text references trips(id) on delete cascade,
+  uid text,
+  at bigint,
+  primary key ("messageId", uid)
+);
+
 -- ─── INDEXES ────────────────────────────────────────────────
 create index if not exists idx_expenses_trip on expenses("tripId");
 create index if not exists idx_todos_trip on todos("tripId");
@@ -145,6 +192,9 @@ create index if not exists idx_signals_trip on signals("tripId");
 create index if not exists idx_presence_trip on presence("tripId");
 create index if not exists idx_tokens_trip on push_tokens("tripId");
 create index if not exists idx_invites_code on invites(code);
+create index if not exists idx_settlements_trip on settlements("tripId");
+create index if not exists idx_expense_events_trip on expense_events("tripId");
+create index if not exists idx_reads_trip on message_reads("tripId");
 
 -- ─── REALTIME (Supabase-only, skip for local PostgreSQL) ─────
 -- alter publication supabase_realtime add table chat_messages;
@@ -176,6 +226,9 @@ DO $$ BEGIN
   ALTER TABLE members_joined DISABLE ROW LEVEL SECURITY;
   ALTER TABLE push_tokens DISABLE ROW LEVEL SECURITY;
   ALTER TABLE invites DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE settlements DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE expense_events DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE message_reads DISABLE ROW LEVEL SECURITY;
   ALTER TABLE users DISABLE ROW LEVEL SECURITY;
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;

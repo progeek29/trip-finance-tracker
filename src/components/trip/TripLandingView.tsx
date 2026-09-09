@@ -4,6 +4,7 @@ import { MemberAvatar } from '../common/MemberAvatar';
 import { Logo } from '../common/Logo';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { BUILD_TAG } from '../../utils/version';
+import { viewerBudget } from '../../utils/budget';
 import { MediaImg } from '../common/MediaImg';
 import {
   MapPin, Calendar, Users, Wallet, ChevronRight,
@@ -27,9 +28,15 @@ interface TripLandingViewProps {
 }
 
 const STATUS_META = {
-  ongoing: { label: 'Ongoing', bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500', icon: Zap },
+  inprogress: { label: 'In Progress', bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500', icon: Zap },
   upcoming: { label: 'Upcoming', bg: 'bg-sky-100', text: 'text-sky-700', dot: 'bg-sky-500', icon: Clock },
   completed: { label: 'Completed', bg: 'bg-slate-100', text: 'text-slate-500', dot: 'bg-slate-400', icon: CheckCircle2 },
+};
+
+const STATUS_LABEL: Record<'inprogress' | 'upcoming' | 'completed', string> = {
+  inprogress: 'In Progress',
+  upcoming: 'Upcoming',
+  completed: 'Completed',
 };
 
 function formatDateRange(start: string, end: string) {
@@ -42,26 +49,35 @@ function formatDateRange(start: string, end: string) {
   return `${s.getDate()} ${months[s.getMonth()]} – ${e.getDate()} ${months[e.getMonth()]} ${e.getFullYear()}`;
 }
 
-function getDaysLeft(startDate: string, status: string) {
+function getDaysLeft(trip: Trip): string | null {
+  const status = liveTripStatus(trip);
   if (status === 'completed') return null;
-  if (status === 'ongoing') return 'In Progress';
   const now = new Date();
-  const start = new Date(startDate + 'T00:00:00');
-  const diff = Math.ceil((start.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  if (diff === 1) return '1 day to go!';
-  if (diff > 1) return `${diff} days to go`;
-  return null;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const start = new Date(trip.startDate + 'T00:00:00').getTime();
+  const end = new Date(trip.endDate + 'T00:00:00').getTime();
+  if (status === 'inprogress') {
+    if (isNaN(start) || isNaN(end) || end < start) return 'In Progress';
+    const total = Math.ceil((end - start) / 86400000) + 1;
+    const day = Math.min(total, Math.max(1, Math.floor((today - start) / 86400000) + 1));
+    return `Day ${day} of ${total}`;
+  }
+  if (isNaN(start)) return null;
+  const diff = Math.round((start - today) / 86400000);
+  if (diff <= 0) return 'Starts today';
+  if (diff === 1) return 'Starts tomorrow';
+  return `${diff} days to go`;
 }
 
-/** Live status from dates (stored status goes stale) — trip live hai toh Ongoing. */
-export function liveTripStatus(trip: Trip): 'upcoming' | 'ongoing' | 'completed' {
+/** Live status from dates — always computed, never a stored fixed value. */
+export function liveTripStatus(trip: Trip): 'upcoming' | 'inprogress' | 'completed' {
   const now = Date.now();
   const s = new Date(trip.startDate + 'T00:00:00').getTime();
   const e = new Date(trip.endDate + 'T00:00:00').getTime();
-  if (isNaN(s)) return trip.status;
+  if (isNaN(s)) return 'upcoming';
   if (now < s) return 'upcoming';
-  if (!isNaN(e) && now <= e + 86400000) return 'ongoing';
-  if (isNaN(e)) return 'ongoing';
+  if (!isNaN(e) && now <= e + 86400000) return 'inprogress';
+  if (isNaN(e)) return 'inprogress';
   return 'completed';
 }
 
@@ -97,10 +113,13 @@ function TripCard({
   const live = liveTripStatus(trip);
   const meta = STATUS_META[live];
   const StatusIcon = meta.icon;
-  // REAL spent from the ledger (same number as inside the trip)
-  const spent = expenses.filter((e) => e.tripId === trip.id).reduce((a, b) => a + b.amount, 0);
-  const spentPct = Math.min(100, Math.round((spent / trip.totalBudget) * 100));
-  const daysLeft = getDaysLeft(trip.startDate, live);
+  // Viewer rule: owner → trip total + full spend · member → own budget + own share
+  const tripExps = expenses.filter((e) => e.tripId === trip.id);
+  const vb = viewerBudget(trip, tripExps, myUid);
+  const barSpent = vb.personal ? vb.spent : tripExps.reduce((a, b) => a + (Number(b.amount) || 0), 0);
+  const barTotal = vb.personal ? vb.budget : trip.totalBudget;
+  const barPct = barTotal > 0 ? Math.min(100, Math.round((barSpent / barTotal) * 100)) : 0;
+  const daysLeft = getDaysLeft(trip);
   const nights = Math.ceil((new Date(trip.endDate).getTime() - new Date(trip.startDate).getTime()) / (1000 * 60 * 60 * 24));
 
   return (
@@ -130,7 +149,8 @@ function TripCard({
           </div>
         )}
 
-        {/* Menu */}
+        {/* Menu (owner only — joiners can neither edit nor delete) */}
+        {isOwner && (
         <div ref={menuRef} className="absolute top-2.5 right-2.5">
           <button
             className="p-1.5 rounded-full bg-black/30 hover:bg-black/50 text-white transition-colors"
@@ -140,25 +160,22 @@ function TripCard({
           </button>
           {menuOpen && (
             <div className="absolute right-0 top-8 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-30 min-w-[120px]">
-              {isOwner && (
                 <button
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
                   onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onEdit(); }}
                 >
                   <Edit2 size={13} /> Edit
                 </button>
-              )}
-              {isOwner && (
                 <button
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
                   onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(); }}
                 >
                   <Trash2 size={13} /> Delete
                 </button>
-              )}
             </div>
           )}
         </div>
+        )}
 
         {/* Trip title overlay */}
         <div className="absolute bottom-0 left-0 right-0 px-3 pb-2.5">
@@ -190,16 +207,19 @@ function TripCard({
           <div className="mb-3">
             <div className="flex justify-between text-xs mb-1">
               <span className="text-slate-500">
-                {live === 'completed' ? 'Total Spent' : 'Spent so far'}
+                {vb.personal ? 'Your share' : live === 'completed' ? 'Total Spent' : 'Spent so far'}
               </span>
-              <span className={`font-semibold ${spentPct > 85 ? 'text-red-500' : 'text-emerald-600'}`}>
-                ₹{spent.toLocaleString('en-IN')} / ₹{trip.totalBudget.toLocaleString('en-IN')}
+              <span className={`font-semibold ${barPct > 85 ? 'text-red-500' : 'text-emerald-600'}`}>
+                ₹{barSpent.toLocaleString('en-IN')} / ₹{barTotal.toLocaleString('en-IN')}
               </span>
             </div>
+            {vb.personal && barTotal === 0 && (
+              <p className="text-[10px] text-slate-400 font-medium mb-1">Budget not set — set it from the trip's Squad list</p>
+            )}
             <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all ${spentPct > 85 ? 'bg-red-400' : spentPct > 65 ? 'bg-amber-400' : 'bg-emerald-400'}`}
-                style={{ width: `${spentPct}%` }}
+                className={`h-full rounded-full transition-all ${barPct > 85 ? 'bg-red-400' : barPct > 65 ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                style={{ width: `${barPct}%` }}
               />
             </div>
           </div>
@@ -207,7 +227,15 @@ function TripCard({
         {live === 'upcoming' && (
           <div className="mb-3 flex items-center gap-1.5">
             <Wallet size={12} className="text-indigo-500" />
-            <span className="text-xs text-slate-600">Budget: <strong>₹{trip.totalBudget.toLocaleString('en-IN')}</strong></span>
+            {vb.personal ? (
+              barTotal > 0 ? (
+                <span className="text-xs text-slate-600">Your Budget: <strong>₹{barTotal.toLocaleString('en-IN')}</strong></span>
+              ) : (
+                <span className="text-xs text-slate-500">Your budget not set · Trip total <strong>₹{Number(trip.totalBudget).toLocaleString('en-IN')}</strong></span>
+              )
+            ) : (
+              <span className="text-xs text-slate-600">Budget: <strong>₹{Number(trip.totalBudget).toLocaleString('en-IN')}</strong></span>
+            )}
           </div>
         )}
 
@@ -256,20 +284,26 @@ function TripCard({
 }
 
 export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange }: TripLandingViewProps) {
-  const [filter, setFilter] = useState<'all' | 'ongoing' | 'upcoming' | 'completed'>('all');
+  const [filter, setFilter] = useState<'all' | 'inprogress' | 'upcoming' | 'completed'>('all');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'owned' | 'joined'>(ownerFilterProp || 'all');
   const [confirmTrip, setConfirmTrip] = useState<Trip | null>(null);
 
-  const ongoing = trips.filter(t => liveTripStatus(t) === 'ongoing');
+  const inProgress = trips.filter(t => liveTripStatus(t) === 'inprogress');
   const upcoming = trips.filter(t => liveTripStatus(t) === 'upcoming');
   const completed = trips.filter(t => liveTripStatus(t) === 'completed');
 
-  const rank: Record<string, number> = { ongoing: 0, upcoming: 1, completed: 2 };
+  const rank: Record<string, number> = { inprogress: 0, upcoming: 1, completed: 2 };
+  const endMs = (t: Trip) => new Date(t.endDate + 'T00:00:00').getTime();
+  const startMs = (t: Trip) => new Date(t.startDate + 'T00:00:00').getTime();
   const sortTrips = (list: Trip[]) =>
     [...list].sort((a, b) => {
       const r = (rank[liveTripStatus(a)] ?? 3) - (rank[liveTripStatus(b)] ?? 3);
       if (r !== 0) return r;
-      return new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
+      const sa = liveTripStatus(a);
+      // In Progress: soonest-ending first · Upcoming: soonest-starting · Completed: most-recently-ended
+      if (sa === 'inprogress') return endMs(a) - endMs(b);
+      if (sa === 'completed') return endMs(b) - endMs(a);
+      return startMs(a) - startMs(b);
     });
   const ownershipFiltered = sortTrips(
     ownershipFilter === 'all'
@@ -318,7 +352,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
           {/* Stats row */}
           <div className="grid grid-cols-3 gap-3 mt-6">
             {[
-              { label: 'Ongoing', count: ongoing.length, icon: Zap, color: 'text-emerald-300', filterVal: 'ongoing' as const },
+              { label: 'In Progress', count: inProgress.length, icon: Zap, color: 'text-emerald-300', filterVal: 'inprogress' as const },
               { label: 'Upcoming', count: upcoming.length, icon: Plane, color: 'text-sky-300', filterVal: 'upcoming' as const },
               { label: 'Completed', count: completed.length, icon: Star, color: 'text-amber-300', filterVal: 'completed' as const },
             ].map(({ label, count, icon: Icon, color, filterVal }) => (
@@ -353,13 +387,13 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
                   : 'bg-white text-slate-500 border border-slate-200 hover:border-slate-300'
               }`}
             >
-              {f === 'all' ? 'All Trips' : f === 'owned' ? 'My Trips' : 'Joined'}
+              {f === 'all' ? 'All Trips' : f === 'owned' ? 'Owned by Me' : 'Joined'}
             </button>
           ))}
         </div>
         {/* Status filter chips */}
         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-          {(['all', 'ongoing', 'upcoming', 'completed'] as const).map((f) => (
+          {(['all', 'inprogress', 'upcoming', 'completed'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -369,7 +403,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
                   : 'bg-white text-slate-500 border border-slate-200 hover:border-indigo-200'
               }`}
             >
-              {f === 'all' ? `All (${trips.length})` : `${f.charAt(0).toUpperCase() + f.slice(1)} (${trips.filter(t => liveTripStatus(t) === f).length})`}
+              {f === 'all' ? `All (${trips.length})` : `${STATUS_LABEL[f]} (${trips.filter(t => liveTripStatus(t) === f).length})`}
             </button>
           ))}
         </div>
