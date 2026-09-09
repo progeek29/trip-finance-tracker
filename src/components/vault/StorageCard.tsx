@@ -16,7 +16,7 @@ interface StorageCardProps {
   onArchiveTrip: (tripId: string) => void;
 }
 
-/** Trip godown meter: kitna bhara, archive karke khaali karo. */
+/** Trip storage meter: how full it is, free space by archiving. */
 export const StorageCard: React.FC<StorageCardProps> = ({ trip, documents, photos, onArchiveTrip }) => {
   const [showArchive, setShowArchive] = useState(false);
   const [exported, setExported] = useState(false);
@@ -27,7 +27,7 @@ export const StorageCard: React.FC<StorageCardProps> = ({ trip, documents, photo
   const photoCount = photos.filter((p) => p.tripId === trip.id).length;
   const docCount = documents.filter((d) => d.tripId === trip.id).length;
 
-  // Real bytes from the big godown (IndexedDB)
+  // Real bytes from the large store (IndexedDB)
   useEffect(() => {
     let live = true;
     getTripMediaUsage(trip.id).then((u) => {

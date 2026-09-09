@@ -150,16 +150,17 @@ export async function joinTripById(tripId: string): Promise<Trip> {
   const nowIso = new Date().toISOString();
 
   // Match by uid first; else adopt the pre-added row with my phone number
-  // (owner ne pehle se naam+number dala ho to duplicate member na bane —
-  // uska budget/split history joiner ko hi mile). Phone match only when
-  // both sides have a real number, taaki khaali number galat row na pakde.
+  // (if the owner already entered this name+number, adopt that row instead of
+  // creating a duplicate member — the joiner inherits its budget/split history).
+  // Phone match only when both sides have a real number, so an empty number
+  // never matches the wrong row.
   const digits = (p?: string) => (p || '').replace(/\D/g, '').slice(-10);
   const myDigits = digits(myPhone);
   let existingIdx = members.findIndex((m) => m.uid === user.uid);
   if (existingIdx < 0 && myDigits.length === 10) {
     existingIdx = members.findIndex((m) => !m.uid && digits(m.phone) === myDigits && myDigits !== '');
   }
-  // First-time join? (uid pehle se linked nahi tha) — sirf tabhi chat me join message
+  // First-time join? (uid was not linked before) — post the join message only then
   const hadUid = existingIdx >= 0 && !!members[existingIdx].uid;
   if (existingIdx >= 0) {
     const prev = members[existingIdx];
@@ -167,7 +168,8 @@ export async function joinTripById(tripId: string): Promise<Trip> {
       ...prev,
       uid: user.uid,
       isCurrentUser: true,
-      // Apna real naam ho to wahi; warna owner ka dala naam rehne do (Friend se overwrite nahi)
+      // Keep your real name if you have one; otherwise keep the name the owner
+      // entered (never overwrite it with "Friend")
       name: profile?.name?.trim() || prev.name,
       phone: myPhone || prev.phone,
       joinedAt: prev.joinedAt || nowIso,
@@ -202,20 +204,22 @@ export async function joinTripById(tripId: string): Promise<Trip> {
     await supabase.from('members_joined').insert({ id: `${tripId}_${user.uid}`, tripId, uid: user.uid });
   } catch { /* best effort */ }
 
-  // First join only: "@Name joined the chat" system message (dobara join pe nahi)
+  // First join only: "@Name joined the Goa trip squad" (dynamic trip title)
   if (!hadUid) {
     const joinName = (profile?.name?.trim() || members[existingIdx]?.name?.replace(/\(You\)/g, '').trim() || 'Friend');
+    const tripName = (remote.title || 'the trip').trim().slice(0, 40);
+    const joinText = `@${joinName} joined the ${tripName} trip squad`;
     const payload = {
       id: `msg_join_${tripId}_${user.uid}`,
       tripId,
       type: 'system',
-      text: `@${joinName} joined the chat`,
+      text: joinText,
       senderId: user.uid,
       senderName: joinName,
     };
-    // Socket (live) → fallback REST — kahin na kahin pahunchna chahiye
+    // Socket (live) → fallback REST — it should arrive one way or another
     sendChatViaSocket(payload).catch(() => {
-      sendChatMessage(tripId, joinName, { type: 'system', text: payload.text }).catch(() => {});
+      sendChatMessage(tripId, joinName, { type: 'system', text: joinText }).catch(() => {});
     });
   }
 

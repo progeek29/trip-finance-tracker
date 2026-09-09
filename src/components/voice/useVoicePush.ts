@@ -49,7 +49,7 @@ export function useVoicePush(tripId: string, byName: string) {
         setStatus('Sending voice…');
         try {
           await sendVoiceBurst(tripId, byName, blob);
-          setStatus('Voice sent — plays loud, then vanishes.');
+          setStatus('Voice played live on squad phones.');
         } catch {
           setStatus('Could not send voice. Check internet.');
         }

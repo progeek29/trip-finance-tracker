@@ -39,6 +39,23 @@ export interface ViewerBudget {
   spent: number;
 }
 
+/**
+ * Exactly ONE status per member per trip — OWNER ya JOINED ya MANUAL.
+ * Never two tags together (an owner never shows JOINED).
+ */
+export type MemberStatus = 'OWNER' | 'JOINED' | 'MANUAL';
+
+export function memberStatus(
+  trip: Trip,
+  m: { uid?: string; isCurrentUser?: boolean }
+): MemberStatus {
+  const isOwnerRow = trip.ownerUid
+    ? !!m.uid && m.uid === trip.ownerUid
+    : !!m.isCurrentUser;
+  if (isOwnerRow) return 'OWNER';
+  return m.uid ? 'JOINED' : 'MANUAL';
+}
+
 export function viewerBudget(
   trip: Trip,
   tripExpenses: Expense[],

@@ -6,7 +6,7 @@ interface ProfileSetupProps {
   onSave: (profile: UserProfile) => void;
 }
 
-/** Pehli baar app kholo → naam + mobile. Poori app me "you" yahi se aayega. */
+/** First launch: name + mobile. The whole app's "you" comes from here. */
 export const ProfileSetup: React.FC<ProfileSetupProps> = ({ onSave }) => {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -14,7 +14,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({ onSave }) => {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      alert('Apna naam likho');
+      alert('Please enter your name');
       return;
     }
     onSave({ name: name.trim(), phone: phone.trim() });
@@ -26,7 +26,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({ onSave }) => {
         <div className="flex flex-col items-center gap-2 text-center">
           <Logo size={52} />
           <h1 className="text-xl font-extrabold text-slate-900 font-display">Welcome to WanderSync</h1>
-          <p className="text-xs text-slate-500 font-medium">Shuru karne se pehle — tum kaun ho?</p>
+          <p className="text-xs text-slate-500 font-medium">Before we start — who are you?</p>
         </div>
         <div>
           <label className="block text-[11px] font-bold text-slate-700 mb-1">What can we call you? *</label>

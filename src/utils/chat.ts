@@ -197,7 +197,7 @@ export function subscribePresence(tripId: string, cb: (count: number) => void): 
 }
 
 /** Announce join once per session (system message + presence). */
-export async function announceJoinOnce(tripId: string, myUid: string, myName: string): Promise<boolean> {
+export async function announceJoinOnce(tripId: string, myUid: string, myName: string, tripTitle?: string): Promise<boolean> {
   try {
     const { data: existing } = await supabase
       .from('members_joined')
@@ -213,9 +213,10 @@ export async function announceJoinOnce(tripId: string, myUid: string, myName: st
       uid: myUid,
     });
     await updatePresence(tripId, myUid, myName);
+    const squad = (tripTitle || 'the trip').trim().slice(0, 40);
     await sendChatMessage(tripId, 'system', {
       type: 'system',
-      text: `${myName} joined the trip`,
+      text: `${myName} joined the ${squad} trip squad`,
     });
     return true;
   } catch (e) {

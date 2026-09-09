@@ -3,7 +3,7 @@ import { isNativeApp } from './nativeBridge';
 
 /**
  * Phone folder mirror: Documents/WanderSync/<trip>/ — visible in the
- * Files app, deletable from there. Web pe kuch nahi hota (silent no-op).
+ * Files app, deletable from there. No-op on web (silent).
  */
 
 const ROOT = 'WanderSync';

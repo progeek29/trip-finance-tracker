@@ -11,6 +11,7 @@ import { fetchDeviceContacts, type DeviceContact } from '../../utils/deviceConta
 import { useMediaUrl } from '../common/MediaImg';
 import { getRandomEmoji } from '../../utils/avatar';
 import { TalkButton } from '../voice/TalkButton';
+import { memberStatus } from '../../utils/budget';
 
 interface CleanTripViewProps {
   trip: Trip;
@@ -438,10 +439,16 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold truncate">
                     {m.isCurrentUser ? `${m.name.replace(/\(You\)/g, '').trim() || 'You'} (You)` : m.name}
-                    {trip.ownerUid && m.uid === trip.ownerUid && <span className="ml-1.5 text-[9px] font-extrabold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">OWNER</span>}
-                    {m.uid
-                      ? <span className="ml-1.5 text-[9px] font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5">JOINED</span>
-                      : <span className="ml-1.5 text-[9px] font-extrabold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5" title="No app yet — expenses still split normally">MANUAL</span>}
+                    {(() => {
+                      const st = memberStatus(trip, m);
+                      return st === 'OWNER' ? (
+                        <span className="ml-1.5 text-[9px] font-extrabold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">OWNER</span>
+                      ) : st === 'JOINED' ? (
+                        <span className="ml-1.5 text-[9px] font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5">JOINED</span>
+                      ) : (
+                        <span className="ml-1.5 text-[9px] font-extrabold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5" title="No app yet — expenses still split normally">MANUAL</span>
+                      );
+                    })()}
                   </p>
                   <p className="text-[11px] text-slate-400 truncate">{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p>
                 </div>
@@ -453,8 +460,10 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                   </>
                 )}
               </div>
+              {/* Budget: ONLY on your own row. Owner → trip total (no input).
+                  Member → your own input. Nobody sees anyone else's budget. */}
               {m.isCurrentUser ? (
-                isOwner ? (
+                memberStatus(trip, m) === 'OWNER' ? (
                   <div className="flex items-center gap-1.5 pl-[38px]">
                     <span className="text-[10px] text-slate-400 font-medium">Trip budget:</span>
                     <span className="text-[11px] font-bold text-slate-600">₹{Number(trip.totalBudget).toLocaleString('en-IN')}</span>
@@ -477,18 +486,7 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                     <span className="text-[10px] text-slate-400">/trip</span>
                   </div>
                 )
-              ) : m.budget ? (
-                <div className="flex items-center gap-1.5 pl-[38px]">
-                  <span className="text-[10px] text-slate-400 font-medium">Budget:</span>
-                  <span className="text-[11px] font-bold text-slate-600">₹{m.budget.toLocaleString('en-IN')}</span>
-                  <span className="text-[10px] text-slate-400">/trip</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 pl-[38px]">
-                  <span className="text-[10px] text-slate-400 font-medium">Budget:</span>
-                  <span className="text-[11px] font-bold text-slate-400">Not set</span>
-                </div>
-              )}
+              ) : null}
             </div>
           ))}
         </div>

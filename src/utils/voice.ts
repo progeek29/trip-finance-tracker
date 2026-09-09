@@ -1,12 +1,37 @@
 import { supabase, ensureCloudUser } from './supabaseClient';
-import { sendPush } from './push';
+import { emitVoiceBurst } from './socket';
 
 /**
- * Walkie-talkie voice bursts: record → Storage → push → auto-play LOUD
- * on every squad phone → file deleted. Heard = vanished. Nothing retained.
+ * Walkie-talkie voice bursts: record → live socket relay → auto-play LOUD
+ * on every squad phone. Heard = vanished. Nothing stored anywhere.
  */
 
 export const VOICE_MAX_MS = 15000;
+/** 250ms slices — the encoder emits data immediately (less start clipping), and blobs stay small. */
+const RECORDER_SLICE_MS = 250;
+/** 64kbps is plenty for voice — smaller blob = faster socket transfer = lower latency. */
+const VOICE_BITRATE = 64000;
+
+// Ek baar user interact kare → audio policy unlock (receiver playback block na ho)
+let audioUnlocked = false;
+function unlockPlayback(): void {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  const warm = () => {
+    try {
+      const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AC) return;
+      const ctx = new AC();
+      void ctx.resume?.();
+      window.setTimeout(() => void ctx.close().catch(() => undefined), 1000);
+    } catch { /* ignore */ }
+  };
+  try {
+    window.addEventListener('pointerdown', warm, { once: true });
+    window.addEventListener('keydown', warm, { once: true });
+  } catch { /* ignore */ }
+}
+if (typeof window !== 'undefined') unlockPlayback();
 
 export function startVoiceRecorder(
   onStop: (blob: Blob) => void,
@@ -18,14 +43,29 @@ export function startVoiceRecorder(
   const chunks: BlobPart[] = [];
 
   navigator.mediaDevices
-    .getUserMedia({ audio: true })
+    .getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    })
     .then((stream) => {
       if (stopped) {
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
-      const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
-      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : '';
+      const opts: MediaRecorderOptions = {};
+      if (mime) opts.mimeType = mime;
+      opts.audioBitsPerSecond = VOICE_BITRATE;
+      recorder = mime || opts.audioBitsPerSecond
+        ? new MediaRecorder(stream, opts)
+        : new MediaRecorder(stream);
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
       };
@@ -33,7 +73,7 @@ export function startVoiceRecorder(
         stream.getTracks().forEach((t) => t.stop());
         onStop(new Blob(chunks, { type: recorder?.mimeType || 'audio/webm' }));
       };
-      recorder.start();
+      recorder.start(RECORDER_SLICE_MS);
       onStart?.();
       setTimeout(() => {
         if (recorder && recorder.state !== 'inactive') recorder.stop();
@@ -49,32 +89,40 @@ export function startVoiceRecorder(
   };
 }
 
+/** Live send: blob → data URL → socket room (receivers auto-play). */
+export async function sendVoiceViaSocket(
+  tripId: string,
+  byName: string,
+  blob: Blob
+): Promise<void> {
+  // Reject empty/too-short recordings immediately — avoids "sent but heard nothing" confusion
+  if (!blob || blob.size < 1500) throw new Error('Recording too short — hold and speak, then tap send');
+  const user = await ensureCloudUser();
+  const voiceUrl: string = await new Promise((resolve, reject) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('audio read failed'));
+      reader.readAsDataURL(blob);
+    } catch {
+      reject(new Error('audio read failed'));
+    }
+  });
+  if (!voiceUrl.startsWith('data:audio')) throw new Error('empty recording — speak closer to the mic');
+  await emitVoiceBurst(tripId, {
+    voiceUrl,
+    senderId: user.uid,
+    senderName: byName,
+  });
+}
+
 export async function sendVoiceBurst(
   tripId: string,
   byName: string,
   blob: Blob
 ): Promise<void> {
-  const user = await ensureCloudUser();
-  const id = `v_${Date.now().toString(36)}`;
-  const path = `voice/${tripId}/${id}.webm`;
-
-  const { error } = await supabase.storage
-    .from('voice')
-    .upload(path, blob, { contentType: blob.type || 'audio/webm', upsert: false });
-
-  if (error) throw error;
-
-  const { data: urlData } = supabase.storage.from('voice').getPublicUrl(path);
-
-  await sendPush({
-    tripId,
-    kind: 'voice',
-    title: `${byName} is talking`,
-    body: 'Tap to listen — vanishes after playing',
-    voiceUrl: urlData.publicUrl,
-    voicePath: path,
-    senderUid: user.uid,
-  });
+  // Legacy storage path is stubbed in this build — live socket relay instead.
+  return sendVoiceViaSocket(tripId, byName, blob);
 }
 
 /** Play at full volume + vibrate. Resolves when finished. */
@@ -83,10 +131,12 @@ export function playVoiceLoud(url: string): Promise<void> {
     try {
       const audio = new Audio(url);
       audio.volume = 1;
+      audio.preload = 'auto';
       audio.onended = () => resolve();
       audio.onerror = () => resolve();
       setTimeout(resolve, 30000);
-      void audio.play().catch(() => resolve());
+      const p = audio.play();
+      if (p && typeof p.catch === 'function') p.catch(() => resolve());
     } catch {
       resolve();
     }

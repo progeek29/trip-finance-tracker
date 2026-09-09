@@ -50,7 +50,7 @@ export function displayMemberName(m: TripMember): string {
   return m.isCurrentUser ? `${clean || 'You'} (You)` : clean || 'Friend';
 }
 
-/** Contact picker blocked message (typo-free, ek jagah). */
+/** Contact picker blocked message (typo-free, single source). */
 export const CONTACT_BLOCKED_MSG =
   'Could not open phone contacts (permission denied or unavailable). Please add manually below.';
 
@@ -179,7 +179,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
       return;
     }
     const tripId = editingTrip?.id || `trip_${Date.now()}`;
-    // Custom uploaded cover → big godown (pointer), defaults stay as URL
+    // Custom uploaded cover → large store (pointer), defaults stay as URL
     let cover = coverImage;
     if (cover.startsWith('data:')) {
       cover = await putMedia(tripId, 'image', cover);
@@ -187,9 +187,10 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
     const finalMembers = members.map((m) =>
       m.isCurrentUser ? { ...m, name: m.name.trim() || 'You', uid: m.uid || ownerUid || undefined } : m
     );
+    const cleanTitle = title.trim();
     const trip: Trip = {
       id: tripId,
-      title: title.trim(),
+      title: cleanTitle.charAt(0).toUpperCase() + cleanTitle.slice(1),
       description: description.trim(),
       coverImage: cover,
       startDate,

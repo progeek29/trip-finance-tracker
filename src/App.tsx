@@ -37,7 +37,7 @@ import {
 } from './utils/storage';
 
 import { Navbar, CleanTab } from './components/common/Navbar';
-import { AtSign, Bell, Check, MapPin, MessageCircle } from 'lucide-react';
+import { AtSign, Bell, Check, MapPin, MessageCircle, Radio } from 'lucide-react';
 import { WelcomeScreen } from './components/trip/WelcomeScreen';
 import { ChatView } from './components/chat/ChatView';
 import { TodoView } from './components/todo/TodoView';
@@ -168,7 +168,7 @@ export function App() {
   const [isTripEditorOpen, setIsTripEditorOpen] = useState(false);
   const [isTripCreateOpen, setIsTripCreateOpen] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
-  // NOTE: myUid yahin upar — neeche ke selectors render pe ise use karte hain (TDZ crash se bachne ke liye)
+  // NOTE: myUid lives up here — selectors below use it during render (avoids TDZ crash)
   const [myUid, setMyUid] = useState<string | null>(null);
 
   const activeTrip = trips.find((t) => t.id === activeTripId) ?? trips[0];
@@ -189,7 +189,7 @@ export function App() {
   useEffect(() => { saveSettlementsData(settlements); }, [settlements]);
   useEffect(() => { saveExpenseEventsData(expenseEvents); }, [expenseEvents]);
 
-  // One-time: purane data: URLs ko bade godown (IndexedDB) me shift karo — UI same
+  // One-time: move legacy data: URLs into the large store (IndexedDB) — UI unchanged
   useEffect(() => {
     if (mediaMigrated) return;
     mediaMigrated = true;
@@ -261,8 +261,8 @@ export function App() {
   const tripDocuments = activeTrip ? documents.filter((d) => d.tripId === activeTrip.id) : documents;
   const tripPhotos = activeTrip ? photos.filter((p) => p.tripId === activeTrip.id) : photos;
   const tripTodos = activeTrip ? todos.filter((t) => t.tripId === activeTrip.id) : [];
-  // Har user ka TODO separate: sirf apne todos dikhte hain.
-  // (ownerUid/updatedBy dono check — purane unattributed todos sabko dikhenge, transitional)
+  // Each user's TODOs are separate: only your own todos are shown.
+  // (checks both ownerUid and updatedBy — legacy unattributed todos stay visible to all, transitional)
   const myTripTodos = activeTrip
     ? tripTodos.filter((t) => {
         if (!myUid) return true;
@@ -326,7 +326,7 @@ export function App() {
   const handleSaveExpense = (newOrUpdated: Expense) => {
     const stamped: Expense = {
       ...newOrUpdated,
-      // Amounts hamesha number (string aaya to "013244" concat bug aata hai)
+      // Amounts are always numbers (a string amount causes the "013244" concat bug)
       amount: Number(newOrUpdated.amount) || 0,
       splits: Array.isArray(newOrUpdated.splits)
         ? newOrUpdated.splits.map((s) => ({ ...s, amount: Number(s.amount) || 0 }))
@@ -472,7 +472,7 @@ export function App() {
     setPhotos((prev) => prev.filter((p) => p.id !== id));
   };
 
-  // Trip checklist — har user ka apna (medicine, bakery, itinerary...)
+  // Trip checklist — one per user (medicine, bakery, itinerary...)
   const handleAddTodo = (text: string) => {
     if (!activeTrip || !text.trim()) return;
     setTodos((prev) => [
@@ -541,7 +541,7 @@ export function App() {
   const pushFlashTimer = useRef<number | null>(null);
   // Bell pulse — har naye notification pe jiggle + red + vibrate (Navbar)
   const [bellPulse, setBellPulse] = useState(0);
-  // Panel khulne ka time — isse naye items unread, purane read
+  // Panel open time — newer items are unread, older ones are read
   const [notifSeenAt, setNotifSeenAt] = useState<number>(() => {
     try {
       return Number(localStorage.getItem('ws_notif_seen_v1')) || 0;
@@ -652,8 +652,8 @@ export function App() {
     }
   };
 
-  // Shared-trip refresh (landing): name/date/budget/members — koi bhi change
-  // sab members ko dikhe. Owner ne delete kiya ho to sabke phone se trip hate.
+  // Shared-trip refresh (landing): any name/date/budget/members change reaches
+  // all members. A trip deleted by its owner is removed from every phone.
   const refreshSharedTrips = async () => {
     const uid = myUidRef.current;
     let locals: Trip[];
@@ -676,7 +676,7 @@ export function App() {
             return;
           }
           const remote = data as unknown as Trip & { updatedAt?: number };
-          // Mujhe squad se nikala gaya (aur main owner nahi) → trip hatao
+          // Removed from the squad (and not the owner) → drop the trip
           if (uid && remote.ownerUid !== uid && !remote.members?.some((m) => m.uid === uid)) {
             deletedIds.push(local.id);
             return;
@@ -729,9 +729,9 @@ export function App() {
     }
   };
 
-  // Squad-wide emergency siren: har shared trip ka room join rakho (landing pe bhi).
-  // Kahin bhi siren baje → is phone pe alarm + flash + bell. Chat tab khula ho
-  // to ChatView handle karta hai (double-sound se bachne ke liye skip).
+  // Squad-wide emergency siren: keep a room joined for every shared trip (landing too).
+  // A siren anywhere → alarm + flash + bell on this phone. An open chat tab is
+  // handled by ChatView instead (skipped here to avoid double sound).
   const activeTabRef = useRef(activeTab);
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -755,6 +755,14 @@ export function App() {
     for (const id of want) {
       if (joinedSirenRooms.current.has(id)) continue;
       const leave = joinTripRoom(id, { uid, name }, {
+        onVoiceBurst: (v) => {
+          if (uid && v.senderId === uid) return; // own voice — already heard it live
+          const who = v.senderName || 'Someone';
+          const when = fmtWhen();
+          pushActivity({ id: `voice_${id}_${Date.now()}`, title: `${who} is talking on walkie-talkie`, sub: when, at: Date.now() });
+          showNotifFlash(`${who} is talking`, who);
+          playVoiceLoud(v.voiceUrl).catch(() => undefined);
+        },
         onBellRing: (b) => {
           if (uid && b.uid === uid) return; // own ping — already chimed locally
           playChimeSoft();
@@ -1139,8 +1147,8 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrip?.id, activeTrip?.inviteCode, appView]);
 
-  // Expense alerts: add/update/delete → SIRF us split ke members ko
-  // (spec §3.4). Apne changes pe khud ko notify nahi.
+  // Expense alerts: add/update/delete → ONLY that split's members
+  // (spec §3.4). Never notify yourself for your own changes.
   const seenExpTripRef = useRef<string | null>(null);
   const expSeenAt = useRef<Map<string, number>>(new Map());
   const deletedExpQueue = useRef<{ id: string; title: string; amount: number; by?: string; splitIds: string[] }[]>([]);
@@ -1160,7 +1168,7 @@ export function App() {
   useEffect(() => {
     if (!activeTrip) return;
     if (seenExpTripRef.current !== activeTrip.id) {
-      // Pehli load seed — purani entries pe shor nahi
+      // First load seeds silently — no noise for old entries
       seenExpTripRef.current = activeTrip.id;
       expSeenAt.current = new Map(expenses.filter((e) => e.tripId === activeTrip.id).map((e) => [e.id, e.updatedAt || 0]));
       deletedExpQueue.current = [];
@@ -1170,7 +1178,7 @@ export function App() {
     const myMemberId =
       (uid && activeTrip.members.find((m) => m.uid === uid)?.id) ||
       activeTrip.members.find((m) => m.isCurrentUser)?.id;
-    // Deletes (tombstones from server) — sirf split walon ko
+    // Deletes (tombstones from server) — split members only
     for (const q of deletedExpQueue.current) {
       if (q.by && uid && q.by === uid) continue;
       if (myMemberId && !q.splitIds.includes(myMemberId)) continue;
@@ -1182,7 +1190,7 @@ export function App() {
       loudNotify(title, when, Date.now() % 2147483647);
     }
     deletedExpQueue.current = [];
-    // Adds + updates — sirf us split ke members ko
+    // Adds + updates — only that split's members
     for (const e of expenses) {
       if (e.tripId !== activeTrip.id) continue;
       if (e.updatedBy && uid && e.updatedBy === uid) {
@@ -1550,7 +1558,7 @@ export function App() {
           setNotifOpen(false);
           setActiveTab('chat');
         };
-        // Unified smart feed: latest first, cap 30 — splitwise top pe chipka nahi rehta
+        // Unified smart feed: latest first, cap 30 — splitwise no longer sticks to the top
         const feed: FeedItem[] = [
           ...activity.flatMap((a) => {
             const it = parseActivity(a, a.at > notifSeenAt, profile?.name);
@@ -1589,16 +1597,21 @@ export function App() {
             icon: <Bell size={12} />,
             box: 'bg-violet-50 border-violet-200 text-violet-600',
           },
+          voice: {
+            icon: <Radio size={12} />,
+            box: 'bg-indigo-50 border-indigo-200 text-indigo-600',
+          },
         };
         const renderBody = (f: FeedItem) => {
-          // Sirf asli handles highlight ho (@squad / @Member Name) — baad ka text plain.
-          const names = [
+          // Handles (@squad / @Member) + trip name (join lines) blue — baaki plain.
+          const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const handles = [
             'squad',
             ...activeTrip.members.map((m) => m.name.replace(/\(You\)/g, '').trim()).filter(Boolean),
-          ].sort((a, b) => b.length - a.length);
-          if (names.length === 0) return <span>{f.messageBody}</span>;
-          const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const parts = f.messageBody.split(new RegExp(`(@(?:${names.map(esc).join('|')}))(?!\\w)`, 'gi'));
+          ].sort((a, b) => b.length - a.length).map((n) => `@${esc(n)}`);
+          if (f.tripHighlight) handles.push(esc(f.tripHighlight));
+          if (handles.length === 0) return <span>{f.messageBody}</span>;
+          const parts = f.messageBody.split(new RegExp(`(${handles.join('|')})(?!\\w)`, 'gi'));
           return parts.map((seg, i) =>
             i % 2 === 1 ? (
               <span key={i} className="text-indigo-600 font-bold">{seg}</span>

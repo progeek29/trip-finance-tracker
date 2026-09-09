@@ -450,7 +450,7 @@ function DocumentFormModal({ trip, editing, onClose, onSave }: { trip: Trip; edi
 
   const pickFile = async (f: File | undefined) => {
     if (!f) return;
-    // Big godown, but not infinite — stop absurd files early with a clear message
+    // Large store, but not infinite — stop absurd files early with a clear message
     if (!f.type.startsWith('image/') && f.size > 60 * 1024 * 1024) {
       alert(`"${f.name}" is ${(f.size / 1048576).toFixed(0)}MB — too big even for the big store (max 60MB).`);
       return;

@@ -276,7 +276,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
             )}
           </div>
 
-          {/* Printable full-history statement (screen pe hidden, PDF me aata hai) */}
+          {/* Printable full-history statement (hidden on screen, included in PDF) */}
           <div id="expense-statement" className="hidden print:block">
             <h1 style={{ fontSize: 20, fontWeight: 800 }}>{trip.title} — Expense History</h1>
             <p style={{ fontSize: 12, color: '#475569' }}>

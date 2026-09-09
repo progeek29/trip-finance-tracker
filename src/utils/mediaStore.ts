@@ -1,9 +1,9 @@
 import { openDB, type IDBPDatabase } from 'idb';
 
 /**
- * Phone ka bada godown (IndexedDB) — same offline, bas jeb badi.
- * localStorage (~5MB) me sirf text/metadata; photos/files ke bytes yahan.
- * URL fields me ya to normal URL hota hai ya `idb:<kind>:<id>` pointer.
+ * The phone's large store (IndexedDB) — same offline data, much bigger pocket.
+ * localStorage (~5MB) holds only text/metadata; photo/file bytes live here.
+ * URL fields hold either a normal URL or an `idb:<kind>:<id>` pointer.
  */
 
 export type MediaKind = 'image' | 'file';
@@ -109,13 +109,13 @@ export async function deleteMediaRefs(refs: string[]): Promise<void> {
   await Promise.all(refs.map(deleteMedia));
 }
 
-/** Total bytes + counts for one trip (meter ke liye). */
+/** Total bytes + counts for one trip (for the meter). */
 export async function getTripMediaUsage(tripId: string): Promise<{ bytes: number; files: number }> {
   const all = (await (await db()).getAllFromIndex(STORE, 'trip', tripId)) as MediaRecord[];
   return { bytes: all.reduce((a, r) => a + (r.size || 0), 0), files: all.length };
 }
 
-/** Plain read, NO resize — full quality for the big godown. */
+/** Plain read, NO resize — full quality for the large store. */
 export function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -147,7 +147,7 @@ export async function storePickedFile(
   return { ref, fileName: file.name };
 }
 
-/** Collect every media pointer inside docs/photos/places/trips (cleanup ke liye). */
+/** Collect every media pointer inside docs/photos/places/trips (for cleanup). */
 export function collectRefs(value: unknown, out: string[] = []): string[] {
   if (typeof value === 'string') {
     if (isMediaRef(value)) out.push(value);

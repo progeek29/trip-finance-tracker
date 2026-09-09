@@ -5,7 +5,7 @@ import type { ChatMessage } from '../types';
  * One unified feed: latest first, capped, category-badged.
  */
 
-export type NotifCategory = 'transaction' | 'mention' | 'message' | 'location' | 'siren';
+export type NotifCategory = 'transaction' | 'mention' | 'message' | 'location' | 'siren' | 'voice';
 
 export interface FeedItem {
   id: string;
@@ -16,6 +16,8 @@ export interface FeedItem {
   previewText: string | null;
   relativeTime: string;
   isUnread: boolean;
+  /** Trip name inside join lines — rendered blue + capitalized. */
+  tripHighlight?: string | null;
   /** ms epoch — internal sort key (not part of the UI payload spec). */
   at: number;
   /** 'activity' rows are info-only; chat rows open the chat on tap. */
@@ -34,6 +36,7 @@ const MENTION_RE = /@([\w ]+?)(?=\s|$|,)/g;
 const MONEY_WORD_RE = /(splitwise|settl|expense|bill|budget|payment)/i;
 const LOCATION_WORD_RE = /(shared location|open in maps|maps\.google)/i;
 const SIREN_RE = /(rang the (bell|siren)|triggered the emergency siren)/i;
+const VOICE_RE = /is talking on walkie-talkie/i;
 const ACTOR_VERB_RE = /^(.+?)\s(added|updated|deleted|settled|mentioned|paid|logged|joined|triggered|rang|auto-logged|just logged)/i;
 
 /** "9 Sep, 8:37 am" style absolute → human relative ("Today, 8:37 AM"). */
@@ -61,6 +64,7 @@ export function relativeTime(at: number): string {
 
 function pickCategory(text: string, hasMentions: boolean): NotifCategory {
   if (SIREN_RE.test(text)) return 'siren';
+  if (VOICE_RE.test(text)) return 'voice';
   if (MONEY_RE.test(text) || MONEY_WORD_RE.test(text)) return 'transaction';
   if (hasMentions || MENTION_RE.test(text)) {
     MENTION_RE.lastIndex = 0;
@@ -81,6 +85,25 @@ export function parseActivity(a: RawActivity, isUnread: boolean, meName?: string
   const title = (a.title || '').trim();
   // Old bell pings: never in the feed (no log spam)
   if (/rang the bell/i.test(title)) return null;
+  // Walkie-talkie: "Krey is talking…" → actor Krey (never "Someone"), voice icon
+  const voiceHit = VOICE_RE.exec(title);
+  if (voiceHit) {
+    const rawActor = title.slice(0, voiceHit.index).trim().replace(/^@/, '') || 'Someone';
+    const cleanMe = (meName || '').replace(/\(You\)/g, '').trim();
+    const mine = !!cleanMe && rawActor === cleanMe;
+    return {
+      id: a.id,
+      category: 'voice',
+      actor: mine ? 'You' : rawActor,
+      messageBody: 'is talking on walkie-talkie',
+      highlightData: null,
+      previewText: null,
+      relativeTime: relativeTime(a.at),
+      isUnread,
+      at: a.at,
+      opensChat: false,
+    };
+  }
   const cleanMe = (meName || '').replace(/\(You\)/g, '').trim();
   const mine = !!cleanMe && title.startsWith(cleanMe);
 
@@ -113,8 +136,18 @@ export function parseActivity(a: RawActivity, isUnread: boolean, meName?: string
   const category = pickCategory(title, mentions.length > 0);
   let actor = actorFromTitle(title, 'Someone');
 
-  let body = title.replace(ACTOR_VERB_RE, '').trim();
-  // Sender view: apna naam hatao → "You added…" (no "You Krey…" duplication)
+  // Keep the verb, drop the actor: "You added Rs.5k for cruise" → body "paid for cruise with @Zon"
+  // (dropping the verb reads broken: "You for cruise")
+  let body: string;
+  const av = ACTOR_VERB_RE.exec(title.trim());
+  if (av) {
+    let verb: string = av[2].toLowerCase();
+    if (verb === 'added' || verb === 'just logged') verb = 'paid';
+    body = `${verb} ${title.trim().slice(av[0].length).trim()}`.trim();
+  } else {
+    body = title;
+  }
+  // Sender view: strip your own name → "You added…" (no "You Krey…" duplication)
   if (mine) {
     actor = 'You';
     body = body.replace(new RegExp(`^@?${actorEscape(cleanMe)}\\s+`), '').trim() || body;
@@ -122,7 +155,7 @@ export function parseActivity(a: RawActivity, isUnread: boolean, meName?: string
   let highlight: string | null = null;
   if (money) {
     highlight = `Rs. ${money[2]}`;
-    body = body.replace(money[0], '').replace(/\s{2,}/g, ' ').trim();
+    body = body.replace(money[0], '').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
   } else if (mentions.length > 0) {
     highlight = mentions[0] ?? null;
   }
@@ -176,12 +209,22 @@ export function parseChatMessage(
     const cleanName = (m.senderName || '').replace(/\(You\)/g, '').trim();
     const mine = myUid ? m.senderId === myUid : false;
     const body = text.replace(/^@?[\w ]+?\s+(joined\b)/i, '$1').trim() || text;
+    // Trip name blue + first letter capitalized
+    let tripHighlight: string | null = null;
+    let bodyOut = body;
+    const jm = /joined the (.+?) trip squad/i.exec(body);
+    if (jm) {
+      const cap = jm[1].charAt(0).toUpperCase() + jm[1].slice(1);
+      tripHighlight = cap;
+      bodyOut = body.replace(jm[1], cap);
+    }
     return {
       id: `chat-${m.id}`,
       category: 'message',
       actor: mine ? 'You' : text.startsWith('@') ? `@${cleanName || 'Someone'}` : cleanName || 'Someone',
-      messageBody: body,
+      messageBody: bodyOut,
       highlightData: null,
+      tripHighlight,
       previewText: null,
       relativeTime: relativeTime(at),
       isUnread,

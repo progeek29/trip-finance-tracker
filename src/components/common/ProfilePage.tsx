@@ -49,7 +49,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     setPhone(profile?.phone || '');
   }, [profile]);
 
-  // Current login email (DB se) — change yahin se, DB me update hoga
+  // Current login email (from DB) — change it here, updates the database
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const u = data?.user as { id?: string; email?: string } | null;

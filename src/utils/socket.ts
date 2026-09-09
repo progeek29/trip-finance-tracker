@@ -68,6 +68,7 @@ export function joinTripRoom(
     onPin?: (p: { id: string; tripId: string; pinned: boolean }) => void;
     onDelete?: (d: { tripId: string; messageId: string }) => void;
     onBellRing?: (b: { tripId: string; uid?: string; name?: string }) => void;
+    onVoiceBurst?: (v: { tripId: string; voiceUrl: string; senderId?: string; senderName?: string }) => void;
   }
 ): () => void {
   const s = ensureSocket();
@@ -83,6 +84,7 @@ export function joinTripRoom(
   const pinFn = handlers.onPin ? (p: { id: string; tripId: string; pinned: boolean }) => handlers.onPin!(p) : undefined;
   const delFn = handlers.onDelete ? (d: { tripId: string; messageId: string }) => handlers.onDelete!(d) : undefined;
   const bellFn = handlers.onBellRing ? (b: { tripId: string; uid?: string; name?: string }) => handlers.onBellRing!(b) : undefined;
+  const voiceFn = handlers.onVoiceBurst ? (v: { tripId: string; voiceUrl: string; senderId?: string; senderName?: string }) => handlers.onVoiceBurst!(v) : undefined;
 
   if (msgFn) s.on('chat:new', msgFn);
   if (typeFn) s.on('chat:typing', typeFn);
@@ -91,6 +93,7 @@ export function joinTripRoom(
   if (pinFn) s.on('chat:pin', pinFn);
   if (delFn) s.on('chat:delete', delFn);
   if (bellFn) s.on('bell:ring', bellFn);
+  if (voiceFn) s.on('voice:burst', voiceFn);
 
   let left = false;
   return () => {
@@ -103,6 +106,7 @@ export function joinTripRoom(
     if (pinFn) s.off('chat:pin', pinFn);
     if (delFn) s.off('chat:delete', delFn);
     if (bellFn) s.off('bell:ring', bellFn);
+    if (voiceFn) s.off('voice:burst', voiceFn);
     s.emit('room:leave', { tripId });
     refCount = Math.max(0, refCount - 1);
     const entry = joinedRooms.get(tripId);
@@ -158,6 +162,24 @@ export function emitBellRing(tripId: string, me: { uid?: string | null; name?: s
   try {
     ensureSocket().emit('bell:ring', { tripId, uid: me.uid || undefined, name: me.name || 'Someone' });
   } catch { /* offline */ }
+}
+
+/** Walkie-talkie burst — audio rides the socket live, nothing stored. */
+export function emitVoiceBurst(
+  tripId: string,
+  payload: { voiceUrl: string; senderId?: string; senderName?: string }
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      ensureSocket().emit('voice:burst', { tripId, ...payload }, (res: { ok?: boolean; error?: string }) => {
+        if (res?.ok) resolve();
+        else reject(new Error(res?.error || 'voice send failed'));
+      });
+      window.setTimeout(() => reject(new Error('voice send timeout')), 15000);
+    } catch (e) {
+      reject(e instanceof Error ? e : new Error('voice send failed'));
+    }
+  });
 }
 
 export function sendReadReceipt(tripId: string, messageId: string, uid: string): void {

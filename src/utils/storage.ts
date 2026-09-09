@@ -36,7 +36,7 @@ export function loadTripsData(): Trip[] {
     try {
       const raw = JSON.parse(saved);
       if (Array.isArray(raw)) {
-        // Heal: server pg-numeric kabhi string me aata tha — number me normalize
+        // Heal: server pg-numeric used to arrive as string — normalize to number
         return raw.map((t) => ({
           ...t,
           totalBudget: Number(t.totalBudget) || 0,

@@ -331,7 +331,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
       try {
         const user = await ensureCloudUser();
         if (stop) return;
-        await announceJoinOnce(trip.id, user.uid, myName || 'Someone');
+        await announceJoinOnce(trip.id, user.uid, myName || 'Someone', trip.title);
         await updatePresence(trip.id, user.uid, myName || 'Someone');
         timer = window.setInterval(() => {
           updatePresence(trip.id, user.uid, myName || 'Someone');
@@ -615,7 +615,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
     if (tapTimes.current.length >= 3) {
       tapTimes.current = [];
       setSirenActive(true);
-      // Sender stays SILENT (group sunega) — sirf red bell + rings dikhenge
+      // Sender stays SILENT (the group listens) — only red bell + rings are shown
       armAutoOff();
       try {
         // Signal row (record) + socket broadcast (live — REST alone never reaches rooms)

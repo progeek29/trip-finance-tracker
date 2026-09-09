@@ -76,7 +76,7 @@ export function downloadTextFile(filename: string, content: string, mime = 'appl
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
-/** Local browser budget (~5MB). IndexedDB godown budget is device-sized (GBs). */
+/** Local browser budget (~5MB). IndexedDB store budget is device-sized (GBs). */
 export const LOCAL_BUDGET_BYTES = 5 * 1024 * 1024;
 /** Godown budget shown on the meter (device store — grows with free space). */
 export const GODOWN_BUDGET_BYTES = 1024 * 1024 * 1024;

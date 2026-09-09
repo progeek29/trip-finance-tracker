@@ -216,6 +216,8 @@ const PORT = 3001;
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
+  // Voice bursts (~15s audio) ride the socket — allow them through
+  maxHttpBufferSize: 1e7,
 });
 
 // ─── Realtime: one room per trip ───────────────────────────
@@ -265,6 +267,29 @@ io.on('connection', (socket) => {
   socket.on('bell:ring', ({ tripId: tid, uid: u, name: n }) => {
     if (!tid) return;
     io.to(roomOf(tid)).emit('bell:ring', { tripId: tid, uid: u, name: n || 'Someone' });
+  });
+
+  // Walkie-talkie voice burst — relay to room (sender excluded, they just spoke).
+  // Audio rides as data URL; nothing stored, heard = vanished.
+  socket.on('voice:burst', (burst, ack) => {
+    try {
+      const tid = burst && burst.tripId;
+      if (!tid || !burst.voiceUrl) {
+        if (ack) ack({ error: 'tripId and voiceUrl required' });
+        return;
+      }
+      socket.to(roomOf(tid)).emit('voice:burst', {
+        tripId: tid,
+        voiceUrl: String(burst.voiceUrl).slice(0, 8 * 1024 * 1024),
+        senderId: burst.senderId || null,
+        senderName: burst.senderName || 'Someone',
+        at: Date.now(),
+      });
+      if (ack) ack({ ok: true });
+    } catch (e) {
+      console.error('voice:burst error:', e.message);
+      if (ack) ack({ error: e.message });
+    }
   });
 
   // Typing indicator (ephemeral — never stored)
