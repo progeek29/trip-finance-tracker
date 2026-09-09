@@ -1,0 +1,5 @@
+# Reverse proxy + automatic Let's Encrypt HTTPS.
+# DOMAIN comes from the .env file (e.g. wandersync.duckdns.org).
+{$DOMAIN} {
+	reverse_proxy api:3001
+}
