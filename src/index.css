@@ -169,7 +169,7 @@
   transform-origin: top center;
 }
 
-/* Emergency siren — violent shake loop + expanding radar ripples */
+/* Emergency siren — bell shake only (radar rings deleted per design review) */
 @keyframes violent-shake {
   0%, 100% { transform: translate(0, 0) rotate(0deg); }
   20% { transform: translate(-3px, 2px) rotate(-4deg); }
@@ -180,13 +180,6 @@
 .siren-shake {
   animation: violent-shake 0.3s linear infinite;
   color: #dc2626 !important;
-}
-@keyframes siren-pulse {
-  0% { transform: translate(50%, -50%) scale(0); opacity: 1; }
-  100% { transform: translate(50%, -50%) scale(12); opacity: 0; }
-}
-.siren-ripple {
-  animation: siren-pulse 1.5s linear infinite;
 }
 
 /* Siren banner — drops from the header, auto-fades with the sound */

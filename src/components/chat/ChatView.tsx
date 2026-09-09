@@ -22,7 +22,7 @@ import {
 import { supabase } from '../../utils/supabaseClient';
 import { sendPush } from '../../utils/push';
 import { ringLocalSiren } from '../../utils/voice';
-import { playChime, startSirenLoop, stopSirenLoop, unlockAudio, playReceiverSiren } from '../../utils/chime';
+import { playChime, stopSirenLoop, unlockAudio, playReceiverSiren } from '../../utils/chime';
 import { ensureCloudUser } from '../../utils/supabaseClient';
 import { MemberAvatar } from '../common/MemberAvatar';
 
@@ -261,10 +261,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
           if (rich.type === 'bell' && rich.senderId !== myUid) {
             playChime();
           }
-          // Incoming emergency siren → audible alarm on this device too + rings
+          // Incoming emergency siren → audible alarm on this device too
           if (rich.type === 'siren' && rich.senderId !== myUid) {
             playReceiverSiren();
-            showPeerRings();
             setRingFlash(`${rich.senderName || 'Someone'} triggered the emergency siren`);
             window.setTimeout(() => setRingFlash(null), 4000);
           }
@@ -307,7 +306,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
       leave();
       stopSirenLoop();
       if (autoOffTimer.current) window.clearTimeout(autoOffTimer.current);
-      if (peerRingsTimer.current) window.clearTimeout(peerRingsTimer.current);
       window.removeEventListener('focus', onFocus);
       if (typingIdleTimer.current) window.clearTimeout(typingIdleTimer.current);
       Object.values(typingTimers.current).forEach((t) => window.clearTimeout(t));
@@ -595,16 +593,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
   // (receivers chime + flash — NO timeline log, NO banner for anyone).
   // 3+ taps within 1s = EMERGENCY: broadcast + visuals auto-terminate with audio (~5s).
   // Early tap-to-stop stays for responsiveness.
-  // Radar rings live strictly inside the chat viewport, top-right corner origin.
-  // Sender: while sirenActive. Receiver: 5s burst per siren event.
-  const [peerRings, setPeerRings] = useState(false);
-  const peerRingsTimer = useRef<number | null>(null);
   const autoOffTimer = useRef<number | null>(null);
-  const showPeerRings = () => {
-    setPeerRings(true);
-    if (peerRingsTimer.current) window.clearTimeout(peerRingsTimer.current);
-    peerRingsTimer.current = window.setTimeout(() => setPeerRings(false), 5000);
-  };
   const armAutoOff = () => {
     if (autoOffTimer.current) window.clearTimeout(autoOffTimer.current);
     autoOffTimer.current = window.setTimeout(() => {
@@ -626,7 +615,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
     if (tapTimes.current.length >= 3) {
       tapTimes.current = [];
       setSirenActive(true);
-      startSirenLoop();
+      // Sender stays SILENT (group sunega) — sirf red bell + rings dikhenge
       armAutoOff();
       try {
         // Signal row (record) + socket broadcast (live — REST alone never reaches rooms)
@@ -868,18 +857,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
         className="relative flex-1 min-h-0 overflow-y-auto space-y-2 pr-0.5 bg-[#f8fafc] rounded-2xl px-1 py-1"
         style={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }}
       >
-        {/* Restricted radar layer — top-right corner origin (bell zone), clicks pass through */}
-        {(sirenActive || peerRings) && (
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                className="siren-ripple absolute top-0 right-0 w-20 h-20 rounded-full border-4 border-rose-500/35"
-                style={{ animationDelay: `${i * 0.5}s` }}
-              />
-            ))}
-          </div>
-        )}
         {(() => {
           const allMsgs = [...pending.filter((p) => !msgs.some((m) => m.id === p.id)), ...msgs];
           return allMsgs.map((m, idx) => {

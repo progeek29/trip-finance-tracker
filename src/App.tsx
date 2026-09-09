@@ -37,7 +37,7 @@ import {
 } from './utils/storage';
 
 import { Navbar, CleanTab } from './components/common/Navbar';
-import { AtSign, Bell, MapPin, MessageCircle } from 'lucide-react';
+import { AtSign, Bell, Check, MapPin, MessageCircle } from 'lucide-react';
 import { WelcomeScreen } from './components/trip/WelcomeScreen';
 import { ChatView } from './components/chat/ChatView';
 import { TodoView } from './components/todo/TodoView';
@@ -804,14 +804,14 @@ export function App() {
     </div>
   ) : null;
 
-  // Flash toast — har notification ka visible banner (top, auto-hide 5s)
+  // Flash toast — premium success style: white card, short text, no datetime
   const FlashToast = pushFlash ? (
     <div className="fixed top-16 left-0 right-0 z-[70] flex justify-center px-4 pointer-events-none">
-      <div className="max-w-md w-full bg-slate-900/95 text-white rounded-2xl pl-3 pr-4 py-2.5 shadow-xl flex items-center gap-2.5">
-        <span className="w-7 h-7 rounded-full bg-rose-500/20 flex items-center justify-center flex-shrink-0">
-          <Bell size={13} className="text-rose-300" />
+      <div className="siren-toast-drop max-w-md w-fit bg-white border border-slate-200 rounded-2xl pl-2.5 pr-4 py-2 shadow-xl shadow-slate-900/10 flex items-center gap-2.5">
+        <span className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${/siren|emergency/i.test(pushFlash.text) ? 'bg-rose-50 text-rose-500' : 'bg-emerald-50 text-emerald-500'}`}>
+          {/siren|emergency/i.test(pushFlash.text) ? <Bell size={13} /> : <Check size={14} strokeWidth={3} />}
         </span>
-        <p className="text-xs font-bold truncate">{pushFlash.text}</p>
+        <p className="text-xs font-bold text-slate-800 truncate">{pushFlash.text.split(' • ')[0].slice(0, 80)}</p>
       </div>
     </div>
   ) : null;
@@ -1552,7 +1552,10 @@ export function App() {
         };
         // Unified smart feed: latest first, cap 30 — splitwise top pe chipka nahi rehta
         const feed: FeedItem[] = [
-          ...activity.map((a) => parseActivity(a, a.at > notifSeenAt)),
+          ...activity.flatMap((a) => {
+            const it = parseActivity(a, a.at > notifSeenAt, profile?.name);
+            return it ? [it] : [];
+          }),
           ...chatFeed.flatMap((m) => {
             const it = parseChatMessage(
               m,
@@ -1581,6 +1584,10 @@ export function App() {
           location: {
             icon: <MapPin size={12} />,
             box: 'bg-teal-50 border-teal-200 text-teal-600',
+          },
+          siren: {
+            icon: <Bell size={12} />,
+            box: 'bg-violet-50 border-violet-200 text-violet-600',
           },
         };
         const renderBody = (f: FeedItem) => {
@@ -1633,7 +1640,7 @@ export function App() {
                           </span>
                         )}
                       </span>
-                      {f.previewText && f.category !== 'transaction' && (
+                      {f.previewText && (f.category === 'message' || f.category === 'mention') && (
                         <span className="block text-[11px] text-slate-500 truncate">"{f.previewText}"</span>
                       )}
                       <span className="block text-[10px] text-slate-400 font-medium">{f.relativeTime}</span>
