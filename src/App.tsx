@@ -539,7 +539,7 @@ export function App() {
   const [ownerFilter, setOwnerFilter] = useState<'all' | 'owned' | 'joined'>('all');
   const [pushFlash, setPushFlash] = useState<{ text: string; name?: string } | null>(null);
   const pushFlashTimer = useRef<number | null>(null);
-  // Bell pulse — har naye notification pe jiggle + red + vibrate (Navbar)
+  // Bell pulse — jiggle + red + vibrate on every new notification (Navbar)
   const [bellPulse, setBellPulse] = useState(0);
   // Panel open time — newer items are unread, older ones are read
   const [notifSeenAt, setNotifSeenAt] = useState<number>(() => {

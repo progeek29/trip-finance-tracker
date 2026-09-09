@@ -167,7 +167,7 @@ export function saveRecommendationsData(recs: PlaceRecommendation[]): void {
   safeSet(STORAGE_KEYS.RECOMMENDATIONS, JSON.stringify(recs));
 }
 
-// ─── User profile (login: naam + mobile, poori app me "you") ───────────────
+// ─── User profile (login: name + mobile, the app-wide "you") ───────────────
 
 export type UserRole = 'admin' | 'owner' | 'user';
 
