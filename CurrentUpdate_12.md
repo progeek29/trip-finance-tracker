@@ -8,7 +8,7 @@
 
 ## ⏱️ Session Context
 - **Branch:** `dev/working-copy` → fast-forward merged into `main`
-- **Tags created:** `prod-v1`, `prod-v2`, `prod-v3`
+- **Tags created:** `prod-v1`, `prod-v2`, `prod-v3`, `prod-v4`
 - **VM:** Oracle Always-Free Ampere A1.Flex (2 OCPU/12GB, Mumbai region), public IP `140.238.254.90`
 - **Frontend:** Vercel `https://trip-finance-tracker.vercel.app`
 - **Backend:** Docker on VM + Caddy HTTPS via DuckDNS `wandersync-app.duckdns.org`
@@ -28,7 +28,7 @@
 - URL: `https://trip-finance-tracker.vercel.app` (HTTP 200, verified)
 - Env vars: `VITE_API_URL=https://wandersync-app.duckdns.org/api`, `VITE_SOCKET_URL=https://wandersync-app.duckdns.org`
 - Critical fix: Production Branch → `dev/working-copy` (was stuck on stale GitHub default `feature/2026-09-09`)
-- `README.md` now includes Live URLs table
+- `README.md` now includes simple live web, Android, and iPhone Safari instructions
 
 ### 3. **Code & Security (prod-v3 tag)**
 | Feature | Status |
@@ -38,6 +38,15 @@
 | **Admin user mgmt** via new endpoints: `GET /api/users` (no hash leak), `POST /api/admin/create-user` (server-side hash), `POST /api/admin/reset-password`, `POST /api/admin/delete-user` (refuses self-delete) | Done |
 | **Generic `PUT`/`POST /api/:table`** now strips `password_hash` if ever sent | Done |
 | **17/17 local backend tests** passed (signup → forgot OK → wrong phone → admin create/signin → non-admin refused → admin reset/signin → no hash leak → self-delete refused → cleanup) | PASS |
+
+### 4. **Release `prod-v4` — 10 September 2026**
+- Main branch updated to release commit `a8321ef` and tagged `prod-v4`.
+- Forgot password is now the minimal Email + New password flow and returns users to Login after success.
+- My Trips ownership control is now a smooth `All / Owner / Joined` sliding selector with indigo active styling.
+- My Trips spacing was cleaned up without changing the existing color theme.
+- Web PWA metadata and manifest were added for Safari Add to Home Screen.
+- Android version is `1.2` / version code `3`; live-backend debug APK built at `android/app/build/outputs/apk/debug/app-debug.apk`.
+- Next MVP now includes featured packages such as Ladakh `10D / 9N`, package details, booking, payments, and admin inventory.
 
 ### 3. **Git State**
 - `main` branch: fast-forward merged from `dev/working-copy`, pushed to remote
