@@ -1,3 +1,213 @@
+# WanderSync MVP Product Plan
+
+## Product vision
+
+WanderSync is a travel companion that combines two connected experiences:
+
+1. **Trip tracking for people who already have a trip**: plan the itinerary, manage the squad, track shared expenses, split bills, chat, store trip documents, and keep everyone in sync.
+2. **Trip discovery and booking for people who are looking for a trip**: browse attractive, ready-made travel packages, understand the itinerary and price, book a package, and pay securely.
+
+The product should feel like one coherent travel app. A user can discover a package, book it, and then use the same trip-tracking tools for that journey.
+
+## Current release foundation
+
+The current release is focused on a stable, simple core experience:
+
+- Email and password sign-up and login.
+- Login lands directly on **My Trips**.
+- My Trips supports **All**, **Owner**, and **Joined** views.
+- Ownership filtering uses a smooth sliding control and keeps the existing visual theme.
+- Users can create trips, add members, manage itineraries, and view trip status.
+- Shared expenses, budgets, balances, Splitwise-style settlement, and expense history are supported.
+- Trip chat supports realtime messages, presence, typing, mentions, read receipts, links, and notifications.
+- The backend runs on the live HTTPS API and data is stored in PostgreSQL.
+- Android debug APK builds are connected to the live backend.
+- The web app works on desktop, Android browsers, and iPhone Safari.
+- iPhone users can use Safari **Add to Home Screen** for an app-like experience.
+
+## Authentication and account decisions
+
+- The current forgot-password flow intentionally remains minimal: **Email + New password**.
+- On success, the password is updated in the database and the user is returned to Login with a success message.
+- The next MVP must add OTP or email verification before allowing sensitive account recovery and public booking actions.
+- Passwords must always be hashed server-side and must never be returned by an API.
+- Add rate limits, abuse protection, duplicate-account checks, and clear error messages before public launch.
+- Profile name, mobile number, and email should remain editable with proper validation.
+
+## Next MVP: discover, book, and pay
+
+The next MVP must add a travel marketplace layer without breaking the existing trip tracker.
+
+### 1. Featured package cards
+
+Add a package/discovery section using the same clean card language as the current trip cards. The cards should be visually attractive enough to make users want to explore and book a trip.
+
+The first sample package can be:
+
+- **Ladakh — 10D / 9N**
+
+Each package card should show, at a glance:
+
+- Destination and package title.
+- Duration, such as `10D / 9N`.
+- Cover image.
+- Starting price or total price.
+- Travel dates or date flexibility.
+- Short highlights.
+- Availability status.
+- A clear action such as **View Package** or **Book Now**.
+
+The cards should reuse the existing trip-card visual style so the marketplace feels native to WanderSync rather than like a separate website.
+
+### 2. Package details
+
+The package details screen must include:
+
+- Photo gallery and destination overview.
+- Day-by-day itinerary.
+- Inclusions and exclusions.
+- Hotel, transport, meal, and activity details where applicable.
+- Price breakdown and taxes or fees.
+- Available dates, capacity, and remaining seats.
+- Cancellation and refund policy.
+- Organiser/contact information.
+- Share package action.
+- Enquiry and booking actions.
+
+### 3. Booking flow
+
+The booking flow should be simple and trustworthy:
+
+1. User selects a package and date.
+2. User enters traveller details and number of people.
+3. The app shows the full price before payment.
+4. User confirms the booking information.
+5. User completes payment.
+6. The app verifies the payment on the server.
+7. The booking becomes confirmed only after verified payment.
+8. The booking creates or opens a trackable trip in WanderSync.
+
+Booking states must include:
+
+- Enquiry
+- Payment pending
+- Confirmed
+- Cancelled
+- Refund pending
+- Refunded
+
+### 4. Payments
+
+Payment integration is part of the next MVP. It must include:
+
+- A trusted payment provider with server-side verification.
+- No client-only payment success state.
+- Idempotent payment and booking creation.
+- Order/payment/booking IDs stored separately.
+- Webhook handling for success, failure, cancellation, and refund events.
+- Clear payment failure and retry states.
+- Booking confirmation after verified payment only.
+- Admin visibility into payment and refund status.
+- Secure handling of customer and transaction data.
+
+Do not collect live payments until the complete booking, verification, cancellation, and refund flow has been tested end to end.
+
+### 5. Admin marketplace controls
+
+Admin users must be able to:
+
+- View users with safe, non-sensitive metadata.
+- Create, edit, publish, unpublish, and delete packages.
+- Manage package images, itinerary, price, dates, capacity, inclusions, and policies.
+- View enquiries, bookings, payment state, cancellations, and refunds.
+- Update availability without corrupting existing bookings.
+- Reset user passwords without seeing existing passwords.
+- Keep an audit trail for important booking and payment changes.
+
+## Existing trip-tracking scope to preserve
+
+The marketplace must not replace the reason users return to WanderSync. The following features remain part of the product:
+
+- My Trips with All, Owner, and Joined filters.
+- Trip creation, editing, deletion, ownership, and member joining.
+- Itinerary and transit management.
+- Squad/member management and contact-picker support.
+- Personal budgets, shared budgets, expense logging, balances, and settlement.
+- Expense history and member-scoped notifications.
+- Realtime trip chat, mentions, presence, read receipts, and shared context alerts.
+- Trip reminders and date-based status/countdown.
+- Ticket, pass, hotel, and document vault with safer upload handling.
+- Shared photos and travel memories when that section is ready.
+- Offline-friendly local storage and future cloud sync.
+- Live Android testing and iPhone Safari/PWA testing.
+
+## Vault and document policy
+
+Vault functionality should remain controlled until the storage and security policy is ready:
+
+- Restore or confirm the Vault entry only with a clear upload policy.
+- Keep file-size limits and image resizing.
+- Preserve local/offline behavior while cloud storage is designed.
+- Add secure access rules before sensitive documents are stored remotely.
+- Do not expose private ticket, passport, identity, or insurance files to other trip members by default.
+
+## Platform plan
+
+### Web
+
+- Production URL: `https://trip-finance-tracker.vercel.app`
+- Must work on desktop, Android Chrome, and iPhone Safari.
+- Keep the login and My Trips journey fast and clear.
+- Maintain PWA metadata and the Safari **Add to Home Screen** experience.
+
+### Android
+
+- Continue live-backend APK testing before Play Store submission.
+- Test login, password reset, trip creation, expenses, chat, permissions, offline behavior, and SMS features on real devices.
+- Prepare a signed release build and Play Store listing after QA.
+- Google Play release is planned; the app is not listed yet.
+
+### iPhone / iOS
+
+- Use the production web app through Safari for immediate testing.
+- Support **Share → Add to Home Screen** as the current app-like path.
+- A signed native iOS build requires macOS, Xcode, Apple Developer setup, and TestFlight/App Store review.
+- Validate Safari layout, login, PWA launch, uploads, notifications limitations, and payment checkout before native iOS work.
+
+## Release gates for the next MVP
+
+Before public booking is enabled:
+
+- Android real-device QA is complete.
+- iPhone Safari/PWA QA is complete.
+- Login and password recovery are verified against the database.
+- OTP/email verification is enabled for sensitive actions.
+- Package availability cannot oversell inventory.
+- Payment success is server-verified.
+- Cancellation and refund states are tested.
+- Admin booking and payment views are working.
+- No sensitive password or payment data appears in logs or API responses.
+- Production backups, monitoring, and error reporting are configured.
+
+## Explicit non-goals for the current release
+
+- Live payment capture before the booking flow is verified.
+- Public package booking before inventory and payment reconciliation are ready.
+- Native signed iOS release from Windows alone.
+- Uncontrolled vault uploads or insecure document sharing.
+- Magic login or account recovery without identity verification.
+- Adding filler features before the core trip, package, booking, and payment journey is stable.
+
+## Product principle
+
+Every future feature should answer one of these questions:
+
+- Does it help a traveller discover a good trip?
+- Does it help them book it safely?
+- Does it help the group plan and track the trip?
+- Does it help the organiser operate the trip reliably?
+
+Features that do not support one of these four outcomes should remain outside the MVP until the core experience is stable.
 # WanderSync MVP Plan
 
 ## Current focus
