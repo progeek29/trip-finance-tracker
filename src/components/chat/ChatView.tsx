@@ -362,13 +362,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
     }
   }, [msgs, entryUnread]);
 
-  // Gentle auto-scroll only for live messages while near bottom
+  // Gentle auto-scroll for live messages + typing pill while near bottom
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
     if (nearBottom) el.scrollTop = el.scrollHeight;
-  }, [msgs.length]);
+  }, [msgs.length, typingNames.length]);
 
   // Reset textarea height when text is cleared (after send)
   useEffect(() => {
@@ -857,24 +857,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
         </button>
       )}
 
-      {/* Typing indicator — floating bubble above the input */}
-      {typingNames.length > 0 && (
-        <div className="flex-shrink-0 mb-1 ml-1 inline-flex self-start items-center gap-2 bg-white border border-[#e2e8f0] rounded-full pl-3 pr-3.5 py-1.5 shadow-sm">
-          <span className="text-[11px] text-slate-600 font-bold">
-            {typingNames.join(', ')} {typingNames.length === 1 ? 'is' : 'are'} typing
-          </span>
-          <span className="flex items-center gap-1">
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                className="typing-dot w-1.5 h-1.5 rounded-full bg-indigo-500"
-                style={{ animationDelay: `${i * 0.2}s` }}
-              />
-            ))}
-          </span>
-        </div>
-      )}
-
       {/* Messages — soft off-white canvas, the ONLY scroller on this page */}
       <div
         ref={listRef}
@@ -994,7 +976,26 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
           );
         });
         })()}
-        {msgs.length === 0 && (
+        {/* Typing pill — inline at timeline end, right after the latest message */}
+        {typingNames.length > 0 && (
+          <div className="flex justify-start">
+            <div className="typing-pill-container bg-white border border-[#e2e8f0] rounded-2xl rounded-bl-md px-3.5 py-2 shadow-sm">
+              <span className="status-pill-text font-bold">
+                {typingNames.join(', ')}
+              </span>
+              <span className="dot-wave-matrix">
+                {[0, 1, 2].map((i) => (
+                  <span
+                    key={i}
+                    className="matrix-dot"
+                    style={{ animationDelay: `${i * 0.15}s` }}
+                  />
+                ))}
+              </span>
+            </div>
+          </div>
+        )}
+        {msgs.length === 0 && typingNames.length === 0 && (
           <p className="text-[11px] text-slate-400 text-center py-8">No messages yet — say hi to the squad.</p>
         )}
       </div>
