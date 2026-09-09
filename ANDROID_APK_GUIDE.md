@@ -1,7 +1,7 @@
 # WanderSync — Mobile Phone Testing & Android APK Guide
 
 This guide explains:
-1. **How to test live on your phone right now via Wi-Fi**
+1. **How to use the live web app on Android and iPhone**
 2. **How the Android `.apk` automatically reads debited SMS in the background**
 3. **Step-by-step commands to build the native Android `.apk`**
 
@@ -9,13 +9,18 @@ This guide explains:
 
 ## 📱 1. How to Test Live on Your Phone Right Now
 
-Your dev server is currently configured to broadcast on your local Wi-Fi network.
+For production testing, use the public app URL:
+
+👉 **`https://trip-finance-tracker.vercel.app`**
+
+The older LAN URL below is only for local development:
 
 1. Ensure your mobile phone is connected to the **same Wi-Fi network** as this computer.
-2. Open your phone's browser (Chrome / Safari) and navigate to:
-   👉 **`http://192.168.1.12:5173`**
-3. **Or scan the QR code**:
-   - In the web app header, click **"Test on Phone"** to display the camera-scannable QR code!
+2. Open this URL in Chrome or Safari and log in.
+3. On iPhone Safari, tap **Share → Add to Home Screen** to get an app-like icon.
+4. On Android Chrome, use the browser menu and choose **Install app** or **Add to Home screen** when offered.
+
+The Google Play listing is not live yet. Until then, use the debug APK described below.
 
 ---
 
@@ -60,10 +65,12 @@ npm install @capacitor/core @capacitor/cli @capacitor/android
 npx cap init WanderSync com.wandersync.tripapp --web-dir dist
 ```
 
-### Step 3: Build the Web Assets & Add Android Platform
+### Step 3: Build the Web Assets for the live backend
 ```bash
+$env:VITE_API_URL = "https://wandersync-app.duckdns.org/api"
+$env:VITE_SOCKET_URL = "https://wandersync-app.duckdns.org"
 npm run build
-npx cap add android
+npx cap sync android
 ```
 
 ### Step 4: Add SMS Permissions in `AndroidManifest.xml`
@@ -80,3 +87,9 @@ npx cap open android
 ```
 - In Android Studio, click **Build $\rightarrow$ Build Bundle(s) / APK(s) $\rightarrow$ Build APK(s)**.
 - Transfer `app-debug.apk` directly to your phone via USB or WhatsApp/Drive to install!
+
+The current debug artifact is generated at:
+
+`android/app/build/outputs/apk/debug/app-debug.apk`
+
+The current release build uses Android version `1.2` and version code `3`.

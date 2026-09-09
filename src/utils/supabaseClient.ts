@@ -80,10 +80,14 @@ export async function authSignIn(email: string, password: string): Promise<{ uid
   return { uid: data.user.id, isAdmin: cachedIsAdmin };
 }
 
-export async function authForgotPassword(email: string, phone: string, newPassword: string): Promise<void> {
+export async function authForgotPassword(email: string, newPassword: string): Promise<void> {
   const { error } = await api('/auth/forgot-password', {
     method: 'POST',
-    body: JSON.stringify({ email, phone, newPassword }),
+    body: JSON.stringify({
+      email: String(email || '').trim(),
+      newPassword,
+      password: newPassword,
+    }),
   });
   if (error) throw new Error(error);
 }

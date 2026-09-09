@@ -1,7 +1,7 @@
 # WanderSync — Development & Deployment Log
 
 > Step-by-step record of everything from Oracle VM creation to production deploy.
-> Status: VM is created, SSH works, on-VM Docker deploy is in progress (Section 7).
+> Status: BACKEND (prod-v4) + FRONTEND LIVE — app: `https://trip-finance-tracker.vercel.app`, API: `https://wandersync-app.duckdns.org/api` (both verified 200/ok).
 > Convention: commands are copy-pasteable. Nothing here is committed automatically.
 
 ---
@@ -117,44 +117,124 @@ First time: type `yes` at the fingerprint prompt. Success looks like: `[opc@wand
 
 ---
 
-## 7. On-VM deploy (IN PROGRESS — last completed step: SSH login)
+## 7. On-VM deploy (DONE — executed by agent over non-interactive SSH on user's behalf)
 
-Inside the `[opc@…]$` SSH window, serially:
+All commands below ran from the laptop via `ssh -i ~/.ssh/wandersync.key -o BatchMode=yes opc@140.238.254.90` (same user, key already fixed in Section 4). No manual VM typing needed.
 
 ```bash
-# tools + Docker
-sudo dnf install -y git nano
-curl -fsSL https://get.docker.com | sh
+# tools (git/nano via dnf; Docker CANNOT come from get.docker.com on Oracle Linux —
+# it aborts with "ERROR: Unsupported distribution 'ol'". Use Docker's CentOS repo:)
+sudo dnf install -y git nano dnf-plugins-core
+sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo systemctl enable --now docker
+docker --version  # 29.8.0, compose v5.5.1
 
 # firewall: Oracle Linux blocks 80/443 by default
 sudo firewall-cmd --permanent --add-service=http --add-service=https
-sudo firewall-cmd --reload
+sudo firewall-cmd --reload  # services now: dhcpv6-client http https ssh
 
-# code (prod release) + env
+# code (prod release) + env — password is generated ON the VM and never leaves it:
 git clone --branch prod-v1 https://github.com/progeek29/trip-finance-tracker.git
 cd trip-finance-tracker/deploy
-cp .env.example .env
-openssl rand -hex 24
-```
+PW=$(openssl rand -hex 24)
+echo "DOMAIN=wandersync-app.duckdns.org" > .env
+echo "POSTGRES_PASSWORD=$PW" >> .env
+# .env now has exactly 2 lines. It is NOT in git (only .env.example is tracked;
+# .gitignore also has a .env rule) and was never displayed unmasked anywhere.
 
-Put the generated password into `.env` as `POSTGRES_PASSWORD=` and set `DOMAIN=wandersync-app.duckdns.org` (`nano .env`, save with `Ctrl+O`, Enter, `Ctrl+X`):
-
-```bash
 # deploy
 sudo docker compose up -d --build
 sleep 20
-sudo docker compose ps
-curl -s http://localhost:3001/api/health
+sudo docker compose ps  # api + postgres + caddy, all Up
 ```
 
-Success = `{"ok":true,…}` on the last line. Containers restart automatically (`restart: unless-stopped`), so a VM reboot self-heals.
+Health check that works (read this before debugging): the `api` service publishes NO host port,
+so `curl http://localhost:3001` from the VM host correctly FAILS (connection refused).
+Check from inside the container or via the public URL instead:
+
+```bash
+sudo docker compose exec -T api wget -q -O - http://localhost:3001/api/health
+# → {"ok":true,…}
+```
+
+Containers restart automatically (`restart: unless-stopped`), so a VM reboot self-heals.
+First boot also auto-creates all 14 tables from `supabase/schema.sql` (verified in Section 9).
 
 ---
 
-## 8. Remaining work (not started)
+## 8. prod-v2: the SSL bug (first deploy returned ok:false)
 
-1. **HTTPS check:** `https://wandersync-app.duckdns.org/api/health` in a browser (Caddy mints the Let's Encrypt cert automatically, allow 1–2 min).
-2. **Vercel frontend:** import repo, root `.`, env vars `VITE_API_URL=https://wandersync-app.duckdns.org/api` and `VITE_SOCKET_URL=https://wandersync-app.duckdns.org`, deploy.
-3. **APK rebuild against live URL** (kills the same-WiFi/laptop-on dependency), then share/install as before.
-4. **Phase 2 hardening:** nightly `pg_dump` cron → object storage/Drive; `prod-v2` release flow rehearsal; PWA check on iPhone.
+Symptom after first `compose up`: `{"ok":false,"error":"The server does not support SSL connections"}`.
+Cause: `server/db.cjs` forced `ssl: { rejectUnauthorized: false }` on EVERY `DATABASE_URL`
+(written for Neon). The on-VM Postgres has no SSL, so every DB query failed and `/api/health` reported down.
+Fix (commit `d4842fc`): SSL only when the URL asks for it —
+
+```js
+const _dbUrl = process.env.DATABASE_URL || '';
+const _needSSL = /sslmode=require/i.test(_dbUrl);
+// …
+ssl: _needSSL ? { rejectUnauthorized: false } : false,
+```
+
+(actual code in `server/db.cjs` — see file). Same commit removed the obsolete `version: "3.9"` line
+from `deploy/docker-compose.yml` (compose v5 warns on it) and added the `.env` gitignore rule.
+Released as `git tag -a prod-v2`, VM moved with `git fetch --tags && git checkout prod-v2 &&
+sudo docker compose up -d --build api` → `{"ok":true}`.
+
+Lesson for all future releases: every server change ships as a new `prod-vN` tag; the VM only
+ever checks out tags, never branches.
+
+---
+
+## 9. Verification (all green, 2026-09-09)
+
+- `sudo docker compose ps` — `deploy-api-1`, `deploy-postgres-1`, `deploy-caddy-1`, all `Up`.
+- Container health — `wget http://localhost:3001/api/health` inside api → `{"ok":true,"time":"…"}`.
+- Public HTTPS — `https://wandersync-app.duckdns.org/api/health` from laptop → `{"ok":true}` (Caddy minted the cert on first request, no waiting needed).
+- Database — 14 app tables present: `chat_messages documents expense_events expenses invites members_joined message_reads presence push_tokens settlements signals todos trips users`.
+
+---
+
+## 10. ⚠️ CRITICAL — read before touching prod again
+
+1. **SSH key is single-copy.** Oracle showed the private key ONCE. It lives at `C:\Imp Work\First Server\ssh-key-2026-09-09.key` (original) and `C:\Users\apurv\.ssh\wandersync.key` (working copy). Back it up to Drive/pen drive — lose both = locked out (key replacement via console is painful).
+2. **DB password lives ONLY in `/home/opc/trip-finance-tracker/deploy/.env` on the VM.** Never in git, never on the laptop, never shown unmasked. Need it? SSH in + `cat ~/trip-finance-tracker/deploy/.env`. Changing it later requires `ALTER USER wandersync …` inside Postgres too (container was initialized with the old one) — not just editing `.env`.
+3. **VM only tracks `prod-vN` tags.** Never `git pull` a branch on the server. New release = new tag → `git fetch --tags && git checkout prod-vN && sudo docker compose up -d --build`.
+4. **Type `0.0.0.0/0` by hand in OCI console.** Pasted text carries an invisible character → "invalid notation".
+5. **Ingress ports go in Destination Port Range**, never Source. Source Type = CIDR, Source = `0.0.0.0/0`.
+6. **Never exceed 2 OCPU / 12 GB** on the shape — the form allows up to 80/512 and anything above free quota bills.
+7. **`stable/system-all-working` + `stable-v1` are frozen.** All work happens on `dev/working-copy`.
+8. **Windows SSH key ACL trap:** `icacls /inheritance:r` + unqualified `$env:USERNAME` grant can map to the wrong principal (Read shows, access denied anyway). Fix = `icacls file /reset`, re-copy, grant by explicit SID (`*S-…-1001:R`).
+
+---
+
+## 11. Remaining work (next up)
+
+1. **Vercel frontend — DONE (verified).** (details in previous version of this section — see git history)
+   Live: `https://trip-finance-tracker.vercel.app` — verified HTTP 200; backend health `ok:true`.
+   URLs also stored in `README.md`.
+2. **`main` is now the live branch.** `dev/working-copy` → fast-forward merged into `main` → pushed
+   (`d4842fc`). Uncommitted work was stashed first, then restored onto `dev/working-copy` — nothing lost.
+   Vercel Production Branch can move back to `main` whenever convenient (currently `dev/working-copy`, same code).
+3. **prod-v3: vault hidden, forgot-password, admin user management (LIVE on VM).**
+   - Vault button hidden (`Navbar` entry removed + `FolderOpen` import dropped; `loadSessionTab` falls back
+     `vault → trip`). Data + views untouched — re-add one line to restore.
+   - Forgot password is NEW (never existed): `POST /api/auth/forgot-password` verifies email + registered
+     mobile (last-10-digits match, format-proof) then bcrypt-hashes the new password. Login screen has
+     "Forgot password?" → reset form → back to login. No email/SMS infra needed.
+   - Admin (`AdminActivity`, role `admin`): user list now comes from `GET /api/users` which EXCLUDES
+     `password_hash` (previously leaked to anyone). Admin create-user now hashes server-side
+     (`POST /api/admin/create-user` — previously created users could never log in). New admin
+     password reset (`POST /api/admin/reset-password`) + server-side user delete with owned-trip purge
+     (`POST /api/admin/delete-user`, refuses self-delete). Generic `PUT`/`POST /api/users` strips
+     `password_hash` so hashes only ever enter via bcrypt paths. UI: password field in Add modal,
+     reset block in Edit modal, self-delete disabled, self-demote blocked (lockout-proof).
+   - Honest note: nobody can SEE a password (bcrypt is one-way) — "show password" is impossible by design;
+     admin reset + user self-reset cover the forgot cases.
+   - Tested 17/17 on local backend (signup → forgot ok/wrong-phone → admin create/signin → non-admin
+     refused → admin reset/signin → no hash leak → self-delete refused → delete + cleanup), then shipped:
+     commit `c7f7aa6`, tag `prod-v3`, VM `checkout prod-v3` + api rebuild → health `ok:true`,
+     `/api/users` → `[]` (no prod users yet). Vercel auto-redeploys the frontend from the push.
+4. **APK rebuild against live URL** (kills the same-WiFi/laptop-on dependency), then share/install as before.
+5. **Phase 2 hardening:** nightly `pg_dump` cron → object storage/Drive; PWA check on iPhone.

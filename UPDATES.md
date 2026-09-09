@@ -1,5 +1,15 @@
 # WanderSync — Updates Log (what was built/fixed)
 
+## 25. Release `0.4.0` / `prod-v4` — live QA preparation
+- My Trips ownership labels are now `All`, `Owner`, and `Joined`.
+- Ownership filtering uses a smooth sliding segmented control instead of hard-switching pills.
+- Active filter color now matches the existing indigo navigation theme.
+- My Trips spacing and tab sizing were cleaned up without changing the existing theme or behavior.
+- Login, My Trips landing, and minimal email + new-password reset flow remain the current auth path.
+- Added PWA metadata and a web manifest for iPhone Safari `Add to Home Screen` support.
+- Android version bumped to `1.2` / version code `3`, ready for a live-backend APK build.
+- Next MVP recorded: featured packages such as `Ladakh — 10D / 9N`, package details, booking, payment, and admin inventory.
+
 > App: Trip Finance & Travel Sync (React 19 + Vite + TS + Tailwind v4)
 > Every entry = live in app, build passing. Server: `npm run dev -- --host 0.0.0.0 --port 5173`
 

@@ -1412,6 +1412,7 @@ export function App() {
       <AuthScreen
         onAuth={(signupProfile) => {
           setAuthed(true);
+          setAppView('landing');
           if (signupProfile) {
             // Signup: save profile immediately so WelcomeScreen is skipped
             handleSaveProfile({ name: signupProfile.name, phone: signupProfile.phone });

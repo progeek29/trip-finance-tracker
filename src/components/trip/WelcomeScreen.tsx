@@ -85,7 +85,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onDone }) => {
         </div>
         <PhoneInput label="Mobile number" value={phone} onChange={setPhone} />
         <div>
-          <label className="block text-[11px] font-bold text-slate-700 mb-1">Invite code <span className="text-slate-400 font-medium">(only if a friend shared one)</span></label>
+          <label className="block text-[11px] font-bold text-slate-700 mb-1">Invite code</label>
           <input
             value={code}
             onChange={(e) => {

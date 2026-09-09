@@ -113,23 +113,24 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// POST /api/auth/forgot-password — self-service reset via the registered
-// mobile number (no email/SMS infra). Email + phone must match the account.
+// POST /api/auth/forgot-password — self-service reset for the current account.
+// MVP flow: email + new password only. OTP/mobile verification is planned later.
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
-    const { email, phone, newPassword } = req.body;
-    if (!email || !phone) return res.json({ data: null, error: 'Email and registered mobile number required' });
-    if (!newPassword || newPassword.length < 6) return res.json({ data: null, error: 'New password must be at least 6 characters' });
+    const rawEmail = String(req.body?.email ?? req.body?.id ?? '').trim();
+    const rawPassword = req.body?.newPassword ?? req.body?.password;
+    const email = rawEmail.toLowerCase();
 
-    const { rows } = await pool.query('SELECT id, phone FROM users WHERE email = $1', [String(email).trim()]);
-    if (rows.length === 0) return res.json({ data: null, error: 'No account found with this email' });
-    const user = rows[0];
-    if (!normPhone(phone) || normPhone(user.phone) !== normPhone(phone)) {
-      return res.json({ data: null, error: 'Mobile number does not match our records' });
+    if (!email) return res.json({ data: null, error: 'Email is required' });
+    if (!rawPassword || String(rawPassword).trim().length < 6) {
+      return res.json({ data: null, error: 'New password must be at least 6 characters' });
     }
 
-    const hash = await bcrypt.hash(newPassword, 10);
-    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, user.id]);
+    const { rows } = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    if (rows.length === 0) return res.json({ data: null, error: 'No account found with this email' });
+
+    const hash = await bcrypt.hash(String(rawPassword), 10);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, rows[0].id]);
     res.json({ data: { ok: true }, error: null });
   } catch (e) {
     res.json({ data: null, error: e.message });

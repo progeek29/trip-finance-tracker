@@ -1,0 +1,17 @@
+{
+  "name": "WanderSync - Trip Finance & Travel Sync",
+  "short_name": "WanderSync",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#4f46e5",
+  "description": "Plan trips, track shared spending, and stay in sync.",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -371,9 +371,14 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
       </div>
 
       {/* Filter chips */}
-      <div className="max-w-2xl mx-auto px-4 -mt-1 pt-4 space-y-2">
+      <div className="max-w-2xl mx-auto px-4 pt-5 pb-1">
         {/* Ownership tabs */}
-        <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+        <div className="relative grid grid-cols-3 gap-2 overflow-hidden rounded-full bg-slate-100 p-1">
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-1 left-1 w-[calc((100%-1rem)/3)] rounded-full bg-indigo-600 shadow-sm shadow-indigo-200 transition-transform duration-300 ease-out"
+            style={{ transform: `translateX(${(['all', 'owned', 'joined'] as const).indexOf(ownershipFilter) * 100}%)` }}
+          />
           {(['all', 'owned', 'joined'] as const).map((f) => (
             <button
               key={f}
@@ -381,36 +386,20 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
                 setOwnershipFilter(f);
                 onOwnerFilterChange?.(f);
               }}
-              className={`flex-shrink-0 px-4 py-1.5 rounded-full text-sm font-medium transition-all ${
+              className={`relative z-10 min-w-0 px-4 py-2 rounded-full text-sm font-semibold transition-colors duration-200 ${
                 ownershipFilter === f
-                  ? 'bg-slate-800 text-white shadow-sm'
-                  : 'bg-white text-slate-500 border border-slate-200 hover:border-slate-300'
+                  ? 'text-white'
+                  : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              {f === 'all' ? 'All Trips' : f === 'owned' ? 'Owned by Me' : 'Joined'}
-            </button>
-          ))}
-        </div>
-        {/* Status filter chips */}
-        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-          {(['all', 'inprogress', 'upcoming', 'completed'] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`flex-shrink-0 px-4 py-1.5 rounded-full text-sm font-medium transition-all ${
-                filter === f
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'bg-white text-slate-500 border border-slate-200 hover:border-indigo-200'
-              }`}
-            >
-              {f === 'all' ? `All (${trips.length})` : `${STATUS_LABEL[f]} (${trips.filter(t => liveTripStatus(t) === f).length})`}
+              {f === 'all' ? 'All' : f === 'owned' ? 'Owner' : 'Joined'}
             </button>
           ))}
         </div>
       </div>
 
       {/* Trips Grid */}
-      <div className="max-w-2xl mx-auto px-4 py-4 pb-32">
+      <div className="max-w-2xl mx-auto px-4 pt-4 pb-32">
         {filtered.length === 0 ? (
           <div className="text-center py-16">
             <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -426,7 +415,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             {filtered.map((trip) => (
               <TripCard
                 key={trip.id}

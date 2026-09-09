@@ -1,32 +1,57 @@
-# React + TypeScript + Vite
+# WanderSync
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+WanderSync helps groups plan trips, track shared spending, split expenses, chat, and keep trip details together.
 
-Currently, two official plugins are available:
+## Open WanderSync
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+**Web app:** https://trip-finance-tracker.vercel.app
 
-## React Compiler
+Open this same link on a laptop, Android phone, or iPhone. Create an account or log in to see **My Trips**.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+**Backend status:** https://wandersync-app.duckdns.org/api/health
 
-## Expanding the Oxlint configuration
+The backend URL returns a technical health response. Users should always open the Web app link above.
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Phone access
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
+### Android
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The Android APK is built against the live HTTPS backend. The app is not on Google Play yet; Play Store release is coming soon. Until then, install the debug APK from:
+
+`android/app/build/outputs/apk/debug/app-debug.apk`
+
+### iPhone / Safari
+
+1. Open https://trip-finance-tracker.vercel.app in Safari.
+2. Log in or create an account.
+3. Tap **Share** in Safari.
+4. Choose **Add to Home Screen** and open WanderSync from the new icon.
+
+This gives the iPhone an app-like shortcut without needing the App Store. A signed iOS build requires macOS/Xcode and will be prepared for a future App Store/TestFlight release.
+
+## Current release
+
+- Release: `0.4.0` / `prod-v4`
+- Login opens directly on My Trips.
+- Forgot password uses the minimal Email + New password flow.
+- My Trips ownership tabs use a smooth sliding control.
+- Production web app and live HTTPS API are configured.
+
+## Next MVP
+
+The next MVP will introduce a discoverable travel marketplace layer while keeping trip tracking intact:
+
+- Featured trip packages, for example **Ladakh — 10D / 9N**.
+- Package cards using the same clean trip-card style.
+- Package details, itinerary, inclusions, price, dates, and availability.
+- Enquiry and booking flow.
+- Payment integration, booking confirmation, and admin controls.
+- OTP/email verification and stronger account security.
+
+## Docs
+
+- `UPDATES.md` — release history and completed work.
+- `MVP.md` — current scope and next MVP decisions.
+- `ANDROID_APK_GUIDE.md` — Android build and install steps.
+- `development.md` — setup and deployment notes.
+- `PROJECT_DOCUMENT.md` — product specification and roadmap.
