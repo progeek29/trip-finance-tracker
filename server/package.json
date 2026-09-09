@@ -1,0 +1,21 @@
+{
+  "name": "wandersync-api",
+  "private": true,
+  "version": "1.0.0",
+  "description": "WanderSync backend — Express REST + Socket.io realtime + PostgreSQL",
+  "main": "index.cjs",
+  "scripts": {
+    "start": "node index.cjs",
+    "migrate": "node migrate.cjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "pg": "^8.23.0",
+    "socket.io": "^4.8.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

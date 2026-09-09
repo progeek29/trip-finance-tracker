@@ -11,6 +11,11 @@ app.use(express.json({ limit: '10mb' }));
 
 // ─── Specific routes FIRST (before generic /:table) ────────
 
+// Root (platform health checks) + API health check
+app.get('/', (req, res) => {
+  res.json({ ok: true, service: 'wandersync-api' });
+});
+
 // Health check
 app.get('/api/health', async (req, res) => {
   try {
@@ -212,7 +217,7 @@ app.delete('/api/:table', async (req, res) => {
   }
 });
 
-const PORT = 3001;
+const PORT = Number(process.env.PORT || 3001);
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },

@@ -3,13 +3,18 @@ import type { ChatMessage } from '../types';
 
 function socketHost(): string {
   try {
+    // Production override (Vercel): VITE_SOCKET_URL=https://<backend>
+    const env = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SOCKET_URL;
+    if (env) return env.replace(/\/$/, '');
+  } catch { /* ignore */ }
+  try {
     const h = typeof window !== 'undefined' ? window.location.hostname : '';
-    if (h && h !== 'localhost' && h !== '127.0.0.1') return h;
+    if (h && h !== 'localhost' && h !== '127.0.0.1') return `http://${h}:3001`;
   } catch { /* SSR */ }
-  return 'localhost';
+  return 'http://localhost:3001';
 }
 
-const SOCKET_URL = `http://${socketHost()}:3001`;
+const SOCKET_URL = socketHost();
 
 let socket: Socket | null = null;
 let refCount = 0;

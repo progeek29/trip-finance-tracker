@@ -1,12 +1,17 @@
 function apiHost(): string {
   try {
+    // Production override (Vercel): VITE_API_URL=https://<backend>/api
+    const env = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL;
+    if (env) return env.replace(/\/api\/?$/, '');
+  } catch { /* ignore */ }
+  try {
     const h = typeof window !== 'undefined' ? window.location.hostname : '';
-    if (h && h !== 'localhost' && h !== '127.0.0.1') return h;
-  } catch { /* SSR/probe */ }
-  return 'localhost';
+    if (h && h !== 'localhost' && h !== '127.0.0.1') return `http://${h}:3001`;
+  } catch { /* SSR */ }
+  return 'http://localhost:3001';
 }
 
-const API = `http://${apiHost()}:3001/api`;
+const API = `${apiHost()}/api`;
 
 async function api(path: string, opts: RequestInit = {}) {
   const res = await fetch(`${API}${path}`, {
