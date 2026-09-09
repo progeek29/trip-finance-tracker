@@ -1,7 +1,15 @@
 import { io, type Socket } from 'socket.io-client';
 import type { ChatMessage } from '../types';
 
-const SOCKET_URL = 'http://localhost:3001';
+function socketHost(): string {
+  try {
+    const h = typeof window !== 'undefined' ? window.location.hostname : '';
+    if (h && h !== 'localhost' && h !== '127.0.0.1') return h;
+  } catch { /* SSR */ }
+  return 'localhost';
+}
+
+const SOCKET_URL = `http://${socketHost()}:3001`;
 
 let socket: Socket | null = null;
 let refCount = 0;

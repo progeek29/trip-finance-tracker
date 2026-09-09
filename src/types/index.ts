@@ -216,7 +216,7 @@ export interface ChatMessage {
   id: string;
   senderId: string;
   senderName: string;
-  type: 'text' | 'location' | 'siren' | 'system';
+  type: 'text' | 'location' | 'siren' | 'system' | 'bell';
   text?: string;
   mentions?: { id: string; name: string }[];
   lat?: number;

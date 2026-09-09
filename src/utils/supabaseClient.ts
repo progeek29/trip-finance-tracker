@@ -1,4 +1,12 @@
-const API = 'http://localhost:3001/api';
+function apiHost(): string {
+  try {
+    const h = typeof window !== 'undefined' ? window.location.hostname : '';
+    if (h && h !== 'localhost' && h !== '127.0.0.1') return h;
+  } catch { /* SSR/probe */ }
+  return 'localhost';
+}
+
+const API = `http://${apiHost()}:3001/api`;
 
 async function api(path: string, opts: RequestInit = {}) {
   const res = await fetch(`${API}${path}`, {

@@ -37,7 +37,7 @@ import {
 } from './utils/storage';
 
 import { Navbar, CleanTab } from './components/common/Navbar';
-import { AtSign, MapPin, MessageCircle } from 'lucide-react';
+import { AtSign, Bell, MapPin, MessageCircle } from 'lucide-react';
 import { WelcomeScreen } from './components/trip/WelcomeScreen';
 import { ChatView } from './components/chat/ChatView';
 import { TodoView } from './components/todo/TodoView';
@@ -45,6 +45,7 @@ import { publishTripInvite, lookupInvite, joinTripById, shareMessage } from './u
 import { ensureCloudUser, authGetUser, authSignOut, supabase } from './utils/supabaseClient';
 import { pushTripShared, subscribeTripShared, pushTombstone, deleteTripFromFirestore, deleteInviteByCode, type RemoteSnapshot } from './utils/sync';
 import { joinTripRoom } from './utils/socket';
+import { playReceiverSiren, playChime as playChimeSoft } from './utils/chime';
 import { registerPushToken } from './utils/push';
 import { playVoiceLoud, deleteVoiceFile, ringLocalSiren } from './utils/voice';
 import { PushNotifications } from '@capacitor/push-notifications';
@@ -726,7 +727,123 @@ export function App() {
     }
   };
 
+  // Squad-wide emergency siren: har shared trip ka room join rakho (landing pe bhi).
+  // Kahin bhi siren baje → is phone pe alarm + flash + bell. Chat tab khula ho
+  // to ChatView handle karta hai (double-sound se bachne ke liye skip).
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+  const joinedSirenRooms = useRef<Map<string, () => void>>(new Map());
+  useEffect(() => {
+    if (!authed) return;
+    const uid = myUidRef.current;
+    const name = profile?.name || 'Friend';
+    const want = new Set(
+      trips.filter((t) => t.inviteCode).map((t) => t.id)
+    );
+    // Leave stale rooms
+    for (const [id, leave] of joinedSirenRooms.current) {
+      if (!want.has(id)) {
+        leave();
+        joinedSirenRooms.current.delete(id);
+      }
+    }
+    // Join new rooms
+    for (const id of want) {
+      if (joinedSirenRooms.current.has(id)) continue;
+      const leave = joinTripRoom(id, { uid, name }, {
+        onMessage: (m) => {
+          const r = m as ChatMessage & { _deleted?: boolean };
+          if (r._deleted) return;
+          if (uid && r.senderId === uid) return;
+          const viewingThisChat =
+            appViewRef.current === 'trip_dashboard' &&
+            activeTabRef.current === 'chat' &&
+            activeTripId === id;
+          // Soft bell → gentle chime + flash + feed entry (no alarm, no rings)
+          if (r.type === 'bell') {
+            if (viewingThisChat) return; // ChatView already chimed
+            playChimeSoft();
+            const who = r.senderName || 'Someone';
+            const when = fmtWhen();
+            pushActivity({ id: `bell_${r.id}`, title: `@${who} rang the bell`, sub: when, at: Date.now() });
+            showNotifFlash(`@${who} rang the bell`, who);
+            return;
+          }
+          if (r.type !== 'siren') return;
+          if (viewingThisChat) return; // ChatView already alarming
+          playReceiverSiren();
+          pokeSirenOverlay(8000);
+          const who = r.senderName || 'Someone';
+          const when = fmtWhen();
+          const title = `${who} triggered the emergency siren`;
+          pushActivity({ id: `siren_${r.id}`, title, sub: when, at: Date.now() });
+          showNotifFlash(`${title} • ${when}`, who);
+        },
+      });
+      joinedSirenRooms.current.set(id, leave);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed, myUid, trips]);
+
+  // Emergency rings overlay — App root pe (landing/dashboard/profile, har screen).
+  // Sender heartbeat (3s) refresh karta hai → loop me kabhi gayab nahi;
+  // receiver pe har siren event 8s dikhta hai.
+  const [sirenUntil, setSirenUntil] = useState(0);
+  const sirenHideTimer = useRef<number | null>(null);
+  const pokeSirenOverlay = (ms: number) => {
+    if (sirenHideTimer.current) window.clearTimeout(sirenHideTimer.current);
+    sirenHideTimer.current = null;
+    if (ms <= 0) {
+      setSirenUntil(0);
+      return;
+    }
+    setSirenUntil(Date.now() + ms);
+    sirenHideTimer.current = window.setTimeout(() => setSirenUntil(0), ms + 300);
+  };
+  useEffect(() => {
+    const onOverlay = (ev: Event) => {
+      const d = (ev as CustomEvent).detail as { until?: number } | undefined;
+      if (!d || !d.until) {
+        pokeSirenOverlay(0);
+        return;
+      }
+      pokeSirenOverlay(Math.max(0, d.until - Date.now()));
+    };
+    window.addEventListener('ws_siren_overlay', onOverlay);
+    return () => window.removeEventListener('ws_siren_overlay', onOverlay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Landing refresh triggers: open landing, focus window, periodic poll
+
+  const SirenOverlay = (
+    <div
+      className="fixed inset-0 z-[60] pointer-events-none items-center justify-center overflow-hidden"
+      style={{ display: sirenUntil && Date.now() <= sirenUntil ? 'flex' : 'none' }}
+    >
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="siren-ripple absolute w-48 h-48 rounded-full border-4 border-rose-500 bg-rose-500/10"
+          style={{ animationDelay: `${i * 0.4}s` }}
+        />
+      ))}
+    </div>
+  );
+
+  // Flash toast — har notification ka visible banner (top, auto-hide 5s)
+  const FlashToast = pushFlash ? (
+    <div className="fixed top-16 left-0 right-0 z-[70] flex justify-center px-4 pointer-events-none">
+      <div className="max-w-md w-full bg-slate-900/95 text-white rounded-2xl pl-3 pr-4 py-2.5 shadow-xl flex items-center gap-2.5">
+        <span className="w-7 h-7 rounded-full bg-rose-500/20 flex items-center justify-center flex-shrink-0">
+          <Bell size={13} className="text-rose-300" />
+        </span>
+        <p className="text-xs font-bold truncate">{pushFlash.text}</p>
+      </div>
+    </div>
+  ) : null;
   const appViewRef = useRef(appView);
   useEffect(() => {
     appViewRef.current = appView;
@@ -1361,26 +1478,32 @@ export function App() {
 
   if (appView === 'profile') {
     return (
-      <ProfilePage
-        profile={profile}
-        onSave={handleSaveProfile}
-        onJoinTrip={handleJoinTripById}
-        onBack={() => setAppView('landing')}
-        onOpenAdmin={() => setAppView('admin_activity')}
-        onLogout={async () => {
-          const { authSignOut } = await import('./utils/supabaseClient');
-          await authSignOut();
-          setAuthed(false);
-          setProfile(null);
-          setMyUid(null);
-        }}
-      />
+      <>
+        <ProfilePage
+          profile={profile}
+          onSave={handleSaveProfile}
+          onJoinTrip={handleJoinTripById}
+          onBack={() => setAppView('landing')}
+          onOpenAdmin={() => setAppView('admin_activity')}
+          onLogout={async () => {
+            const { authSignOut } = await import('./utils/supabaseClient');
+            await authSignOut();
+            setAuthed(false);
+            setProfile(null);
+            setMyUid(null);
+          }}
+        />
+        {SirenOverlay}
+        {FlashToast}
+      </>
     );
   }
 
   if (appView === 'landing') {
     return (
       <>
+        {SirenOverlay}
+        {FlashToast}
         <TripLandingView
           trips={trips}
           expenses={expenses}
@@ -1434,6 +1557,8 @@ export function App() {
           : undefined
       }
     >
+      {SirenOverlay}
+      {FlashToast}
       <Navbar
         activeTab={activeTab}
         onTabChange={(t) => {

@@ -3,7 +3,7 @@ import { Send, MapPin, BellRing, X, Reply, Pin, PinOff, Trash2, Info } from 'luc
 import type { Trip, ChatMessage } from '../../types';
 import {
   sendChatMessage,
-  ringSiren,
+  signalSiren,
   subscribeSiren,
   subscribePresence,
   updatePresence,
@@ -255,9 +255,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
             setMsgs((prev) => prev.filter((x) => x.id !== rich.id));
             return;
           }
-          // Incoming emergency siren → audible alarm on this device too
+          // Soft bell from a mate → gentle chime (no alarm loop)
+          if (rich.type === 'bell' && rich.senderId !== myUid) {
+            playChime();
+          }
+          // Incoming emergency siren → audible alarm on this device too + rings
           if (rich.type === 'siren' && rich.senderId !== myUid) {
             playReceiverSiren();
+            window.dispatchEvent(new CustomEvent('ws_siren_overlay', { detail: { until: Date.now() + 8000 } }));
             setRingFlash(`${rich.senderName || 'Someone'} triggered the emergency siren`);
             window.setTimeout(() => setRingFlash(null), 4000);
           }
@@ -583,15 +588,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
   };
 
   // SINGLE-LAYER MASH-TO-SIREN BELL (no dropdowns, no arm window)
-  // Single tap → local-only soft chime + 0.5s swing (squad hears nothing).
-  // 3+ taps within 1s → EMERGENCY: broadcast CRITICAL_ALERT to the squad
-  // (push + alarm on their devices) + local shake/ripple loop until tapped again.
+  // Single tap → local swing + chime AND soft broadcast (everyone sees "@X rang the bell").
+  // 3+ taps within 1s → EMERGENCY: full alarm broadcast + rings on every screen
+  // until tapped again.
   const handleBellTap = async () => {
     if (sirenActive) {
       // Deactivate: stop the local loop (delivered pushes can't be recalled)
       setSirenActive(false);
       stopSirenLoop();
       tapTimes.current = [];
+      window.dispatchEvent(new CustomEvent('ws_siren_overlay', { detail: { until: 0 } }));
       return;
     }
     const now = Date.now();
@@ -600,8 +606,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
       tapTimes.current = [];
       setSirenActive(true);
       startSirenLoop();
+      window.dispatchEvent(new CustomEvent('ws_siren_overlay', { detail: { until: Date.now() + 4000 } }));
       try {
-        await ringSiren(trip.id, myName || 'Someone');
+        // Signal row (record) + socket broadcast (live — REST alone never reaches rooms)
+        await signalSiren(trip.id, myName || 'Someone');
+        await sendChatViaSocket({
+          id: `msg_siren_${trip.id}_${Date.now()}`,
+          tripId: trip.id,
+          type: 'siren',
+          text: `${myName || 'Someone'} rang the siren`,
+          senderId: myUid || 'local',
+          senderName: myName || 'Someone',
+        });
         await sendPush({
           tripId: trip.id,
           kind: 'siren',
@@ -613,10 +629,30 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
       }
       return;
     }
-    // Standard ring: visual swing (retriggered) + local chime only
+    // Standard ring: visual swing (retriggered) + local chime + soft broadcast
     setSwingKey((k) => k + 1);
     playChime();
+    flashStatus('Bell rang — squad notified');
+    sendChatViaSocket({
+      id: `msg_bell_${trip.id}_${Date.now()}`,
+      tripId: trip.id,
+      type: 'bell',
+      text: `@${myName || 'Someone'} rang the bell`,
+      senderId: myUid || 'local',
+      senderName: myName || 'Someone',
+    }).catch(() => {
+      flashStatus('Bell rang locally — squad offline, will sync on reconnect');
+    });
   };
+
+  // Sender overlay heartbeat — rings stay till deactivation (never vanish mid-loop)
+  useEffect(() => {
+    if (!sirenActive) return;
+    const timer = window.setInterval(() => {
+      window.dispatchEvent(new CustomEvent('ws_siren_overlay', { detail: { until: Date.now() + 4000 } }));
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [sirenActive]);
 
   const jumpTo = (id: string) => {
     const el = document.getElementById(`chatmsg-${id}`);
@@ -848,7 +884,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
         {(() => {
           const allMsgs = [...pending.filter((p) => !msgs.some((m) => m.id === p.id)), ...msgs];
           return allMsgs.map((m, idx) => {
-          if (m.type === 'siren' || m.type === 'system') {
+          if (m.type === 'siren' || m.type === 'system' || m.type === 'bell') {
             return (
               <div key={m.id} className="flex justify-center py-0.5">
                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#64748b]">
@@ -1056,20 +1092,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
           <Send size={16} />
         </button>
       </div>
-
-      {/* Emergency siren radar — rings only (no blockers, chat fully visible).
-          pointer-events-none so bell + input stay clickable. */}
-      {sirenActive && (
-        <div className="absolute inset-0 z-30 pointer-events-none flex items-center justify-center overflow-hidden">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="siren-ripple absolute w-48 h-48 rounded-full border-4 border-rose-500 bg-rose-500/10"
-              style={{ animationDelay: `${i * 0.4}s` }}
-            />
-          ))}
-        </div>
-      )}
+      {/* Emergency rings live at App root (every screen) — nothing local here. */}
     </div>
   );
 };

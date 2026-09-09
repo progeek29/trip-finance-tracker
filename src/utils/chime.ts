@@ -49,16 +49,24 @@ export function playChime(): void {
   } catch { /* audio unavailable */ }
 }
 
-/** Emergency loop — original 650/950 alarm tone, but on ONE shared
- *  gesture-unlocked context (throwaway contexts stay suspended = silent).
- *  Repeats until stopSirenLoop(). */
+/** Emergency loop — original 650/950 alarm tone on ONE shared context.
+ *  ONE loop only (3 blasts ≈ 4.5s), then auto-silent. Visuals stay till stop. */
 export function startSirenLoop(): void {
   stopSirenLoop();
   // Sync call inside the tap gesture → context actually starts running
   ensureCtx();
+  let n = 0;
   sirenBlast();
+  n += 1;
   try {
-    sirenTimer = window.setInterval(sirenBlast, 1500);
+    sirenTimer = window.setInterval(() => {
+      n += 1;
+      if (n >= 3) {
+        stopSirenLoop();
+        return;
+      }
+      sirenBlast();
+    }, 1500);
   } catch { /* ignore */ }
   try {
     navigator.vibrate?.([500, 200, 500, 200, 500]);

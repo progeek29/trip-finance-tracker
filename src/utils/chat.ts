@@ -87,6 +87,18 @@ export function subscribeChat(tripId: string, cb: (msgs: ChatMessage[]) => void)
   };
 }
 
+/** Siren signal row only (history line is broadcast separately via socket). */
+export async function signalSiren(tripId: string, byName: string): Promise<void> {
+  const user = await ensureCloudUser();
+  await supabase.from('signals').upsert({
+    id: `siren_${tripId}`,
+    tripId,
+    byName,
+    at: Date.now(),
+  });
+  void user;
+}
+
 /** Siren: signal + history line in chat. */
 export async function ringSiren(tripId: string, byName: string): Promise<void> {
   try {
