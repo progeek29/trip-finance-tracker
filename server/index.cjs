@@ -228,7 +228,11 @@ async function fanOutVoiceClip(clipId) {
           message: {
             token: t.token,
             notification: { title: `${c.senderName} • voice in ${tripTitle}`, body: 'Tap to open & listen' },
-            android: { priority: 'high', ttl: '300s' },
+            android: {
+              priority: 'high',
+              ttl: '300s',
+              notification: { channel_id: 'wandersync_voice', sound: 'default' },
+            },
           },
         };
         console.log('voice FCM to:', String(t.token).slice(0, 12) + '…');

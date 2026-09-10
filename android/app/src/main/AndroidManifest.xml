@@ -46,6 +46,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- FCM auto-display uses our LOUD voice channel (sound + vibrate). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="wandersync_voice" />
+
         <!-- Closed-app voice: FCM wake → foreground LOUD playback (mediaPlayback, no mic) -->
         <service
             android:name=".VoicePlaybackService"
