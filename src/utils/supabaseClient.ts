@@ -13,6 +13,15 @@ function apiHost(): string {
 
 const API = `${apiHost()}/api`;
 
+/** Public API root for non-table endpoints (voice clips, health). */
+export function apiBaseUrl(): string {
+  return API;
+}
+/** Server root (no /api) — sent with clip uploads so offline phones can download. */
+export function apiHostRoot(): string {
+  return apiHost();
+}
+
 async function api(path: string, opts: RequestInit = {}) {
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem(tokenKey) : null;
   const res = await fetch(`${API}${path}`, {

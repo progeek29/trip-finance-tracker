@@ -4,9 +4,9 @@ WanderSync helps groups plan trips, track shared spending, split expenses, chat,
 
 ## Open WanderSync
 
-**Web app:** https://trip-finance-tracker.vercel.app
+**Login to WanderSync:** https://trip-finance-tracker.vercel.app/
 
-Open this same link on a laptop, Android phone, or iPhone. Create an account or log in to see **My Trips**.
+Open this same login link on a laptop, Android phone, or iPhone. Create an account or log in to see **My Trips**.
 
 **Backend status:** https://wandersync-app.duckdns.org/api/health
 
@@ -50,6 +50,8 @@ The next MVP will introduce a discoverable travel marketplace layer while keepin
 
 ## Docs
 
+- `RUNBOOK.md` — master save-separate file: stack, setup map, daily/DB/Docker commands, release flow, presentation pack.
+- `PLATFORM_LOGINS.md` — app + Oracle Cloud + Vercel + DuckDNS login links in one place.
 - `UPDATES.md` — release history and completed work.
 - `MVP.md` — current scope and next MVP decisions.
 - `ANDROID_APK_GUIDE.md` — Android build and install steps.

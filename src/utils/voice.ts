@@ -1,5 +1,6 @@
 import { supabase, ensureCloudUser } from './supabaseClient';
 import { emitVoiceBurst } from './socket';
+import { uploadVoiceClip } from './voiceWake';
 
 /**
  * Walkie-talkie voice bursts: record → live socket relay → auto-play LOUD
@@ -114,6 +115,8 @@ export async function sendVoiceViaSocket(
     }
   });
   if (!voiceUrl.startsWith('data:audio')) throw new Error('empty recording — speak closer to the mic');
+  // Offline members: store for 5 min so closed apps can fetch + play (never blocks send).
+  uploadVoiceClip(tripId, voiceUrl, user.uid, byName);
   await emitVoiceBurst(tripId, {
     voiceUrl,
     senderId: user.uid,

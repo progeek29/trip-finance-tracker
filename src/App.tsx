@@ -48,6 +48,7 @@ import { joinTripRoom } from './utils/socket';
 import { playReceiverSiren, playChime as playChimeSoft } from './utils/chime';
 import { registerPushToken } from './utils/push';
 import { playVoiceLoud, deleteVoiceFile, ringLocalSiren } from './utils/voice';
+import { consumePendingVoiceTrip, fetchLatestVoiceClip } from './utils/voiceWake';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { ShareDialog } from './components/common/ShareDialog';
 import { TripLandingView } from './components/trip/TripLandingView';
@@ -1319,6 +1320,29 @@ export function App() {
       handle?.remove();
     };
   }, [activeTripId]);
+
+  // Closed-app voice: notification tap → open that trip + play the missed clip
+  useEffect(() => {
+    if (!authed) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const tripId = await consumePendingVoiceTrip();
+        if (cancelled || !tripId) return;
+        setActiveTripId(tripId);
+        setAppView('trip_dashboard');
+        const clip = await fetchLatestVoiceClip(tripId, Date.now() - 6 * 60 * 1000);
+        if (cancelled) return;
+        if (clip) {
+          await playVoiceLoud(clip.voiceUrl);
+          showNotifFlash(`Voice from ${clip.senderName} • played`);
+        }
+      } catch { /* clip expired — trip still opens for reply */ }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authed]);
 
   // Card Share: publish under the trip's stable code and open the Google-style Public Link Share dialog
   const [shareSheet, setShareSheet] = useState<{

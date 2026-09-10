@@ -58,6 +58,164 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// ─── Closed-app voice: short-TTL clip store + offline-only FCM fan-out ──
+// Memory-only by design (zero DB load): clips vanish after 5 min / restart.
+// Online members hear bursts live over socket; FCM goes ONLY to offline ones,
+// so per burst cost = 1 indexed token query + a few small HTTPS calls.
+const voiceClips = new Map(); // clipId -> { tripId, voiceUrl, senderUid, senderName, apiBase, at, expires }
+const VOICE_CLIP_TTL_MS = 5 * 60 * 1000;
+const VOICE_CLIP_MAX = 50;
+function sweepVoiceClips() {
+  const now = Date.now();
+  for (const [id, c] of voiceClips) if (c.expires <= now) voiceClips.delete(id);
+  while (voiceClips.size > VOICE_CLIP_MAX) voiceClips.delete(voiceClips.keys().next().value);
+}
+setInterval(sweepVoiceClips, 60 * 1000).unref();
+
+// POST /api/voice-clips — sender uploads right after the socket burst (fire-and-forget)
+app.post('/api/voice-clips', async (req, res) => {
+  try {
+    const { tripId, voiceUrl, senderUid, senderName, apiBase } = req.body || {};
+    if (!tripId || !voiceUrl) return res.status(400).json({ data: null, error: 'tripId and voiceUrl required' });
+    sweepVoiceClips();
+    const clipId = crypto.randomBytes(12).toString('hex');
+    voiceClips.set(clipId, {
+      tripId: String(tripId),
+      voiceUrl: String(voiceUrl).slice(0, 8 * 1024 * 1024),
+      senderUid: senderUid || null,
+      senderName: senderName || 'Someone',
+      apiBase: typeof apiBase === 'string' && /^https?:\/\//.test(apiBase) ? apiBase.replace(/\/$/, '') : null,
+      at: Date.now(),
+      expires: Date.now() + VOICE_CLIP_TTL_MS,
+    });
+    // Fan-out runs async — never blocks the sender.
+    void fanOutVoiceClip(clipId);
+    res.json({ data: { clipId }, error: null });
+  } catch (e) {
+    res.status(500).json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/voice-clips/:id — native service downloads the clip (410 = expired)
+app.get('/api/voice-clips/:id', (req, res) => {
+  const c = voiceClips.get(req.params.id);
+  if (!c || c.expires <= Date.now()) {
+    if (c) voiceClips.delete(req.params.id);
+    return res.status(410).json({ data: null, error: 'clip expired' });
+  }
+  res.json({ data: { tripId: c.tripId, voiceUrl: c.voiceUrl, senderName: c.senderName, at: c.at }, error: null });
+});
+
+// GET /api/voice-clips/latest?tripId=&since= — tap-to-open fallback play inside the app
+app.get('/api/voice-clips/latest', (req, res) => {
+  const tid = String(req.query.tripId || '');
+  const since = Number(req.query.since || 0);
+  let best = null;
+  for (const [id, c] of voiceClips) {
+    if (c.tripId !== tid || c.expires <= Date.now() || c.at < since) continue;
+    if (!best || c.at > best.at) best = { clipId: id, voiceUrl: c.voiceUrl, senderName: c.senderName, at: c.at };
+  }
+  res.json({ data: best, error: null });
+});
+
+// ─── FCM sender (raw HTTP v1, no new deps) ───
+let fcmCreds = null; // { projectId, clientEmail, privateKey } | false (missing)
+let fcmCredsWarned = false;
+let fcmOAuth = null;
+let fcmOAuthExp = 0;
+function loadFcmCreds() {
+  if (fcmCreds !== null) return fcmCreds || null;
+  try {
+    const raw = process.env.FIREBASE_SERVICE_ACCOUNT
+      || (process.env.FIREBASE_SERVICE_ACCOUNT_FILE
+        ? require('fs').readFileSync(process.env.FIREBASE_SERVICE_ACCOUNT_FILE, 'utf8')
+        : null);
+    if (!raw) { fcmCreds = false; return null; }
+    const sa = JSON.parse(raw);
+    if (!sa.project_id || !sa.client_email || !sa.private_key) { fcmCreds = false; return null; }
+    fcmCreds = { projectId: sa.project_id, clientEmail: sa.client_email, privateKey: sa.private_key };
+    return fcmCreds;
+  } catch {
+    fcmCreds = false;
+    return null;
+  }
+}
+function b64urlJson(obj) {
+  return Buffer.from(JSON.stringify(obj)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function fcmAccessToken() {
+  const creds = loadFcmCreds();
+  if (!creds) return null;
+  if (fcmOAuth && Date.now() < fcmOAuthExp) return fcmOAuth;
+  const now = Math.floor(Date.now() / 1000);
+  const unsigned = b64urlJson({ alg: 'RS256', typ: 'JWT' }) + '.' + b64urlJson({
+    iss: creds.clientEmail,
+    scope: 'https://www.googleapis.com/auth/firebase.messaging',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  });
+  const sig = crypto.sign('RSA-SHA256', Buffer.from(unsigned), crypto.createPrivateKey(creds.privateKey));
+  const jwt = unsigned + '.' + sig.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + jwt,
+  });
+  const j = await r.json();
+  if (!j.access_token) throw new Error('fcm oauth failed');
+  fcmOAuth = j.access_token;
+  fcmOAuthExp = Date.now() + 55 * 60 * 1000;
+  return fcmOAuth;
+}
+
+async function fanOutVoiceClip(clipId) {
+  try {
+    const c = voiceClips.get(clipId);
+    if (!c) return;
+    // Online = live socket members of this trip (they already heard it).
+    const members = typeof roomMembers !== 'undefined' ? roomMembers.get(c.tripId) : null;
+    const online = new Set(members ? [...members.values()].map((m) => m.uid).filter(Boolean) : []);
+    const { rows } = await pool.query('SELECT uid, token FROM push_tokens WHERE "tripId" = $1', [c.tripId]);
+    const targets = rows.filter((r) => r.token && r.uid !== c.senderUid && !online.has(r.uid));
+    if (!targets.length) return;
+    const creds = loadFcmCreds();
+    if (!creds) {
+      if (!fcmCredsWarned) {
+        fcmCredsWarned = true;
+        console.warn('voice FCM skipped: set FIREBASE_SERVICE_ACCOUNT (inline JSON) or FIREBASE_SERVICE_ACCOUNT_FILE');
+      }
+      return;
+    }
+    const access = await fcmAccessToken();
+    if (!access) return;
+    const clipUrl = c.apiBase ? `${c.apiBase}/api/voice-clips/${clipId}` : null;
+    let sent = 0;
+    await Promise.all(targets.map(async (t) => {
+      try {
+        const data = {
+          kind: 'voice',
+          title: `${c.senderName} • voice`,
+          body: 'Tap to open trip & reply',
+          tripId: c.tripId,
+          clipId,
+          senderName: c.senderName,
+        };
+        if (clipUrl) data.clipUrl = clipUrl;
+        const r = await fetch(`https://fcm.googleapis.com/v1/projects/${creds.projectId}/messages:send`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: { token: t.token, data, android: { priority: 'high', ttl: '300s' } } }),
+        });
+        if (r.ok) sent++;
+      } catch { /* per-device fail, skip */ }
+    }));
+    console.log(`voice FCM: ${sent}/${targets.length} offline (trip ${c.tripId})`);
+  } catch (e) {
+    console.error('voice fan-out error:', e.message);
+  }
+}
+
 // Auth: signup
 app.post('/api/auth/signup', async (req, res) => {
   try {
