@@ -484,6 +484,14 @@ app.post('/api/:table', async (req, res) => {
     if (table === 'users') {
       for (const r of rows) delete r.password_hash;
     }
+    // Ghost-trip guard (Luxmi case): a trip without ownerUid is rejected by
+    // NOT NULL and later wiped client-side = total data loss. The session is
+    // authenticated here, so stamp the owner from it — never trust the client.
+    if (table === 'trips') {
+      for (const r of rows) {
+        if (!r.ownerUid && req.user && req.user.id) r.ownerUid = req.user.id;
+      }
+    }
     if (rows.length === 0) return res.json({ data: [], error: null });
 
     const cols = Object.keys(rows[0]);

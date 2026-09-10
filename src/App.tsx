@@ -648,7 +648,8 @@ export function App() {
   }, []);
 
   // Trip isolation: keep my own trips + trips where I'm a member.
-  // (Unpublished local trips have no uid yet — never drop those.)
+  // Unpublished local trips have no ownerUid yet — NEVER drop those
+  // (dropping + persisting = permanent data loss, Luxmi case).
   const myUidRef = useRef<string | null>(null);
   useEffect(() => {
     myUidRef.current = myUid;
@@ -657,6 +658,7 @@ export function App() {
     if (!myUid) return;
     setTrips((prev) => {
       const filtered = prev.filter((t) =>
+        !tripOwnerUid(t) ||
         t.members.some((m) => m.uid === myUid) ||
         tripOwnerUid(t) === myUid
       );

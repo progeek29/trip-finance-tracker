@@ -3,7 +3,7 @@ import { Trip, TripMember, CityStop } from '../../types';
 import { getRandomEmoji } from '../../utils/avatar';
 import { putMedia } from '../../utils/mediaStore';
 import { loadUserProfile } from '../../utils/storage';
-import { makeInviteCode } from '../../utils/supabaseClient';
+import { makeInviteCode, ensureCloudUser } from '../../utils/supabaseClient';
 import { MemberAvatar } from '../common/MemberAvatar';
 import { DatePicker } from '../common/DatePicker';
 import { ContactPickerModal } from '../common/ContactPickerModal';
@@ -179,13 +179,22 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
       return;
     }
     const tripId = editingTrip?.id || `trip_${Date.now()}`;
+    // Owner is mandatory: a trip without ownerUid is rejected by the server
+    // and later wiped by the isolation filter (total data loss — Luxmi case).
+    // Resolve live if the prop hasn't arrived yet (slow session restore).
+    const uid = ownerUid || (await ensureCloudUser().catch(() => null))?.uid || undefined;
+    if (!editingTrip && !uid) {
+      alert('Session is still loading. Please wait a second and try again.');
+      return;
+    }
+    const finalOwner = editingTrip ? tripOwnerUid(editingTrip) : uid;
     // Legacy custom covers remain as stored pointers; new covers use presets only.
     let cover = coverImage;
     if (cover.startsWith('data:')) {
       cover = await putMedia(tripId, 'image', cover);
     }
     const finalMembers = members.map((m) =>
-      m.isCurrentUser ? { ...m, name: m.name.trim() || 'You', uid: m.uid || ownerUid || undefined } : m
+      m.isCurrentUser ? { ...m, name: m.name.trim() || 'You', uid: m.uid || finalOwner || undefined } : m
     );
     const cleanTitle = title.trim();
     const trip: Trip = {
@@ -199,7 +208,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
       currency: 'INR',
       members: finalMembers,
       inviteCode: editingTrip?.inviteCode || makeInviteCode(),
-      ownerUid: editingTrip ? tripOwnerUid(editingTrip) : ownerUid || undefined,
+      ownerUid: editingTrip ? tripOwnerUid(editingTrip) : finalOwner || undefined,
       cities: cities
         .filter(c => c.name.trim())
         .map((c, i) => ({ ...c, id: `city_${Date.now()}_${i}` })),
