@@ -23,6 +23,10 @@ services:
     environment:
       PORT: 3001
       DATABASE_URL: postgres://wandersync:${POSTGRES_PASSWORD}@postgres:5432/wandersync
+      # Passed through from deploy/.env into the container (compose does NOT
+      # auto-inject .env values — each var must be listed here explicitly).
+      FIREBASE_SERVICE_ACCOUNT: ${FIREBASE_SERVICE_ACCOUNT:-}
+      FIREBASE_SERVICE_ACCOUNT_FILE: ${FIREBASE_SERVICE_ACCOUNT_FILE:-}
     volumes:
       # Host secrets dir → /secrets inside container (read-only).
       # Firebase key file itself NEVER in git; container path comes from
