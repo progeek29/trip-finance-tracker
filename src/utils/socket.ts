@@ -73,7 +73,7 @@ export function joinTripRoom(
     onPin?: (p: { id: string; tripId: string; pinned: boolean }) => void;
     onDelete?: (d: { tripId: string; messageId: string }) => void;
     onBellRing?: (b: { tripId: string; uid?: string; name?: string }) => void;
-    onVoiceBurst?: (v: { tripId: string; voiceUrl: string; senderId?: string; senderName?: string }) => void;
+    onVoiceBurst?: (v: { tripId: string; voiceUrl: string; senderId?: string; senderName?: string; clipId?: string }) => void;
   }
 ): () => void {
   const s = ensureSocket();
@@ -89,7 +89,7 @@ export function joinTripRoom(
   const pinFn = handlers.onPin ? (p: { id: string; tripId: string; pinned: boolean }) => handlers.onPin!(p) : undefined;
   const delFn = handlers.onDelete ? (d: { tripId: string; messageId: string }) => handlers.onDelete!(d) : undefined;
   const bellFn = handlers.onBellRing ? (b: { tripId: string; uid?: string; name?: string }) => handlers.onBellRing!(b) : undefined;
-  const voiceFn = handlers.onVoiceBurst ? (v: { tripId: string; voiceUrl: string; senderId?: string; senderName?: string }) => handlers.onVoiceBurst!(v) : undefined;
+  const voiceFn = handlers.onVoiceBurst ? (v: { tripId: string; voiceUrl: string; senderId?: string; senderName?: string; clipId?: string }) => handlers.onVoiceBurst!(v) : undefined;
 
   if (msgFn) s.on('chat:new', msgFn);
   if (typeFn) s.on('chat:typing', typeFn);

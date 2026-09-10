@@ -47,8 +47,8 @@ import { pushTripShared, subscribeTripShared, pushTombstone, deleteTripFromFires
 import { joinTripRoom } from './utils/socket';
 import { playReceiverSiren, playChime as playChimeSoft } from './utils/chime';
 import { registerPushToken } from './utils/push';
-import { playVoiceLoud, deleteVoiceFile, ringLocalSiren } from './utils/voice';
-import { consumePendingVoiceTrip, fetchLatestVoiceClip } from './utils/voiceWake';
+import { playVoiceLoud, deleteVoiceFile, ringLocalSiren, markVoicePlayed, wasVoicePlayed } from './utils/voice';
+import { consumePendingVoice, fetchLatestVoiceClip, fetchVoiceClipByUrl, lastNativePlayed } from './utils/voiceWake';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { ShareDialog } from './components/common/ShareDialog';
 import { TripLandingView } from './components/trip/TripLandingView';
@@ -780,6 +780,7 @@ export function App() {
       const leave = joinTripRoom(id, { uid, name }, {
         onVoiceBurst: (v) => {
           if (uid && v.senderId === uid) return; // own voice — already heard it live
+          markVoicePlayed(v.clipId); // socket won — FCM fallback must not replay
           const who = v.senderName || 'Someone';
           const when = fmtWhen();
           pushActivity({ id: `voice_${id}_${Date.now()}`, title: `${who} is talking on walkie-talkie`, sub: when, at: Date.now() });
@@ -1304,11 +1305,21 @@ export function App() {
     (async () => {
       try {
         handle = await PushNotifications.addListener('pushNotificationReceived', async (n) => {
-          const d = (n.data || {}) as { kind?: string; title?: string; body?: string; voiceUrl?: string; voicePath?: string };
+          const d = (n.data || {}) as { kind?: string; title?: string; body?: string; voiceUrl?: string; voicePath?: string; clipId?: string; clipUrl?: string };
           if (d.kind === 'voice' && d.voiceUrl) {
             await playVoiceLoud(d.voiceUrl);
             if (d.voicePath) await deleteVoiceFile(d.voicePath);
             showFlash('Voice played • vanished');
+          } else if (d.kind === 'voice' && d.clipId && d.clipUrl && !wasVoicePlayed(d.clipId)) {
+            // Foreground FCM fallback (socket missed it) — fetch + play once.
+            try {
+              const clip = await fetchVoiceClipByUrl(d.clipUrl);
+              if (clip) {
+                markVoicePlayed(d.clipId);
+                await playVoiceLoud(clip.voiceUrl);
+                showFlash(`Voice from ${clip.senderName} • played`);
+              }
+            } catch { /* clip expired */ }
           } else if (d.kind === 'siren') {
             ringLocalSiren();
             showFlash(d.body || 'Siren');
@@ -1322,16 +1333,24 @@ export function App() {
   }, [activeTripId]);
 
   // Closed-app voice: notification tap → open that trip + play the missed clip
+  // (skips autoplay when native already played it — tap still opens for reply)
   useEffect(() => {
     if (!authed) return;
     let cancelled = false;
     (async () => {
       try {
-        const tripId = await consumePendingVoiceTrip();
-        if (cancelled || !tripId) return;
-        setActiveTripId(tripId);
+        const pending = await consumePendingVoice();
+        if (cancelled || !pending) return;
+        setActiveTripId(pending.tripId);
         setAppView('trip_dashboard');
-        const clip = await fetchLatestVoiceClip(tripId, Date.now() - 6 * 60 * 1000);
+        const native = await lastNativePlayed().catch(() => null);
+        if (cancelled) return;
+        if (native && pending.clipId && native.clipId === pending.clipId) {
+          markVoicePlayed(pending.clipId);
+          showNotifFlash('Voice played • tap PTT to reply');
+          return;
+        }
+        const clip = await fetchLatestVoiceClip(pending.tripId, Date.now() - 6 * 60 * 1000);
         if (cancelled) return;
         if (clip) {
           await playVoiceLoud(clip.voiceUrl);

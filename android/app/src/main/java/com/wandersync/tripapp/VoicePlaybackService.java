@@ -33,19 +33,22 @@ public class VoicePlaybackService extends Service {
   static final String EXTRA_FILE = "file";
   static final String EXTRA_SENDER = "sender";
   static final String EXTRA_TRIP = "trip";
+  static final String EXTRA_CLIP = "clip";
   private static final int NOTIF_ID = 9001;
 
   private MediaPlayer player = null;
   private PowerManager.WakeLock wakeLock = null;
   private String clipFile = null;
+  private String clipId = null;
 
-  static void start(Context ctx, String file, String sender, String tripId) {
+  static void start(Context ctx, String file, String sender, String tripId, String clipId) {
     try {
       Intent i = new Intent(ctx, VoicePlaybackService.class);
       i.setAction(ACTION_START);
       i.putExtra(EXTRA_FILE, file);
       i.putExtra(EXTRA_SENDER, sender);
       i.putExtra(EXTRA_TRIP, tripId);
+      i.putExtra(EXTRA_CLIP, clipId);
       ContextCompat.startForegroundService(ctx, i);
     } catch (Exception e) {
       Log.w(TAG, "start failed: " + e.getMessage());
@@ -68,6 +71,7 @@ public class VoicePlaybackService extends Service {
     clipFile = intent.getStringExtra(EXTRA_FILE);
     String sender = intent.getStringExtra(EXTRA_SENDER);
     String tripId = intent.getStringExtra(EXTRA_TRIP);
+    clipId = intent.getStringExtra(EXTRA_CLIP);
     if (sender == null) sender = "Squad";
     if (clipFile == null) {
       stopSelf();
@@ -95,6 +99,7 @@ public class VoicePlaybackService extends Service {
       player.setDataSource(clipFile);
       player.setVolume(1.0f, 1.0f);
       player.setOnCompletionListener((mp) -> {
+        recordPlayed();
         cleanup();
         stopSelf();
       });
@@ -124,8 +129,19 @@ public class VoicePlaybackService extends Service {
       .setPriority(NotificationCompat.PRIORITY_HIGH)
       .setOngoing(true)
       .addAction(android.R.drawable.ic_media_pause, "Stop", stop);
-    if (tripId != null) b.setContentIntent(VoiceFirebaseService.openTripIntent(this, tripId));
+    if (tripId != null) b.setContentIntent(VoiceFirebaseService.openTripIntent(this, tripId, clipId));
     return b.build();
+  }
+
+  /** Remember what natively finished so JS tap-to-open doesn't replay it. */
+  private void recordPlayed() {
+    try {
+      if (clipId == null || clipId.isEmpty()) return;
+      getSharedPreferences(VoiceFirebaseService.PREFS, MODE_PRIVATE).edit()
+        .putString(VoiceFirebaseService.KEY_LAST_PLAYED, clipId)
+        .putLong(VoiceFirebaseService.KEY_LAST_PLAYED_AT, System.currentTimeMillis())
+        .apply();
+    } catch (Exception ignored) { /* stats only */ }
   }
 
   private void vibrate() {

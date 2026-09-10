@@ -130,8 +130,7 @@ export async function sendVoiceViaSocket(
 }
 
 /** Client-side clip id (shared by socket + upload paths for server dedupe). */
-function makeClipId(): string {
-  try {
+function makeClipId(): string {  try {
     const c = (globalThis as unknown as { crypto?: { randomUUID?: () => string } }).crypto;
     if (c && typeof c.randomUUID === 'function') return c.randomUUID().replace(/-/g, '').slice(0, 24);
   } catch { /* fallback below */ }
@@ -147,9 +146,23 @@ export async function sendVoiceBurst(
   return sendVoiceViaSocket(tripId, byName, blob);
 }
 
+/** ClipIds already heard (socket live vs FCM fallback) — prevents double play. */
+const playedVoiceClips = new Set<string>();
+export function markVoicePlayed(clipId: string | undefined): void {
+  if (clipId) {
+    playedVoiceClips.add(clipId);
+    if (playedVoiceClips.size > 100) {
+      const oldest = playedVoiceClips.values().next().value;
+      if (oldest) playedVoiceClips.delete(oldest);
+    }
+  }
+}
+export function wasVoicePlayed(clipId: string | undefined): boolean {
+  return !!clipId && playedVoiceClips.has(clipId);
+}
+
 /** Play at full volume + vibrate. Resolves when finished. */
-export function playVoiceLoud(url: string): Promise<void> {
-  return new Promise((resolve) => {
+export function playVoiceLoud(url: string): Promise<void> {  return new Promise((resolve) => {
     try {
       const audio = new Audio(url);
       audio.volume = 1;

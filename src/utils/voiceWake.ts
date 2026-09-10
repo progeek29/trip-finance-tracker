@@ -9,16 +9,45 @@ import { apiBaseUrl, apiHostRoot } from './supabaseClient';
 
 interface VoiceWakePlugin {
   getPendingVoiceTrip: () => Promise<{ tripId: string }>;
+  getPendingVoice: () => Promise<{ tripId: string; clipId: string }>;
+  getLastNativePlayed: () => Promise<{ clipId: string; at: number }>;
 }
 
 const VoiceWake = registerPlugin<VoiceWakePlugin>('VoiceWake');
 
-/** Consume the notification-tap trip id once (null on web / nothing pending). */
-export async function consumePendingVoiceTrip(): Promise<string | null> {
+/** Consume the notification-tap voice (trip + clip) once (null on web / nothing pending). */
+export async function consumePendingVoice(): Promise<{ tripId: string; clipId: string } | null> {
   if (!Capacitor.isNativePlatform()) return null;
   try {
-    const r = await VoiceWake.getPendingVoiceTrip();
-    return r && r.tripId ? r.tripId : null;
+    const r = await VoiceWake.getPendingVoice();
+    return r && r.tripId ? { tripId: r.tripId, clipId: r.clipId || '' } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Clip the native player finished (to skip JS replay after tap-to-open). */
+export async function lastNativePlayed(): Promise<{ clipId: string; at: number } | null> {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const r = await VoiceWake.getLastNativePlayed();
+    return r && r.clipId ? { clipId: r.clipId, at: Number(r.at) || 0 } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch one clip by its full server URL (foreground FCM fallback). */
+export async function fetchVoiceClipByUrl(
+  clipUrl: string
+): Promise<{ voiceUrl: string; senderName: string } | null> {
+  try {
+    const res = await fetch(clipUrl);
+    const j = await res.json();
+    if (j && j.data && j.data.voiceUrl) {
+      return { voiceUrl: String(j.data.voiceUrl), senderName: String(j.data.senderName || 'Someone') };
+    }
+    return null;
   } catch {
     return null;
   }

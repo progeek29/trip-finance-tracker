@@ -95,6 +95,7 @@ function ingestVoiceClip({ clipId, tripId, voiceUrl, senderUid, senderName, apiB
   const id = (typeof clipId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(clipId))
     ? clipId
     : crypto.randomBytes(12).toString('hex');
+  const isNew = !voiceClips.has(id);
   voiceClips.set(id, {
     tripId: String(tripId),
     voiceUrl: String(voiceUrl).slice(0, 8 * 1024 * 1024),
@@ -106,7 +107,7 @@ function ingestVoiceClip({ clipId, tripId, voiceUrl, senderUid, senderName, apiB
   });
   // Fan-out runs async — never blocks the sender.
   void fanOutVoiceClip(id);
-  console.log(`voice clip stored: trip ${String(tripId)} sender ${senderUid || '?'} clip ${id}`);
+  if (isNew) console.log(`voice clip stored: trip ${String(tripId)} sender ${senderUid || '?'} clip ${id}`);
   return id;
 }
 
@@ -224,7 +225,16 @@ async function fanOutVoiceClip(clipId) {
         const r = await fetch(`https://fcm.googleapis.com/v1/projects/${creds.projectId}/messages:send`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: { token: t.token, data, android: { priority: 'high', ttl: '300s' } } }),
+          // notification = system-tray heads-up when app is background/killed (proven path);
+          // data = native playback + tap-to-trip + foreground JS play. Same clipId everywhere.
+          body: JSON.stringify({
+            message: {
+              token: t.token,
+              data,
+              notification: { title: `${c.senderName} • voice`, body: 'Tap to open trip & reply' },
+              android: { priority: 'high', ttl: '300s' },
+            },
+          }),
         });
         if (r.ok) sent++;
       } catch { /* per-device fail, skip */ }
@@ -622,16 +632,10 @@ io.on('connection', (socket) => {
         if (ack) ack({ error: 'tripId and voiceUrl required' });
         return;
       }
-      socket.to(roomOf(tid)).emit('voice:burst', {
-        tripId: tid,
-        voiceUrl: String(burst.voiceUrl).slice(0, 8 * 1024 * 1024),
-        senderId: burst.senderId || null,
-        senderName: burst.senderName || 'Someone',
-        at: Date.now(),
-      });
-      console.log(`voice burst live: trip ${tid} sender ${burst.senderId || '?'}`);
+      // Ingest FIRST so the live relay carries the shared clipId (client dedupe).
+      let clipId = null;
       try {
-        ingestVoiceClip({
+        clipId = ingestVoiceClip({
           clipId: burst.clipId || null,
           tripId: tid,
           voiceUrl: burst.voiceUrl,
@@ -642,6 +646,15 @@ io.on('connection', (socket) => {
       } catch (e) {
         console.error('voice ingest error:', e.message);
       }
+      socket.to(roomOf(tid)).emit('voice:burst', {
+        tripId: tid,
+        voiceUrl: String(burst.voiceUrl).slice(0, 8 * 1024 * 1024),
+        senderId: burst.senderId || null,
+        senderName: burst.senderName || 'Someone',
+        clipId: clipId,
+        at: Date.now(),
+      });
+      console.log(`voice burst live: trip ${tid} sender ${burst.senderId || '?'} clip ${clipId}`);
       if (ack) ack({ ok: true });
     } catch (e) {
       console.error('voice:burst error:', e.message);

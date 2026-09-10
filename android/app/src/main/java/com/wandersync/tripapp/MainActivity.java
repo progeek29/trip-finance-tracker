@@ -54,12 +54,16 @@ public class MainActivity extends BridgeActivity {
     stashVoiceTripExtra(intent);
   }
 
-  /** Voice notification tap carries the trip id — stash for the JS bridge. */
+  /** Voice notification tap carries the trip (+clip) id — stash for the JS bridge.
+   *  Accepts our own keys AND raw FCM data keys (system-tray tap delivers the
+   *  data payload as launcher-intent extras). */
   private void stashVoiceTripExtra(Intent intent) {
-    if (intent == null || !intent.hasExtra(VoiceFirebaseService.EXTRA_TRIP)) return;
+    if (intent == null) return;
     String tripId = intent.getStringExtra(VoiceFirebaseService.EXTRA_TRIP);
+    if (tripId == null || tripId.isEmpty()) tripId = intent.getStringExtra("tripId");
     if (tripId == null || tripId.isEmpty()) return;
-    getSharedPreferences(VoiceFirebaseService.PREFS, MODE_PRIVATE)
-      .edit().putString(VoiceFirebaseService.KEY_TRIP, tripId).apply();
+    String clipId = intent.getStringExtra(VoiceFirebaseService.EXTRA_CLIP);
+    if (clipId == null || clipId.isEmpty()) clipId = intent.getStringExtra("clipId");
+    VoiceFirebaseService.stashPending(this, tripId, clipId);
   }
 }
