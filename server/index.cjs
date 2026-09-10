@@ -196,7 +196,7 @@ async function fanOutVoiceClip(clipId) {
     const online = new Set(members ? [...members.values()].map((m) => m.uid).filter(Boolean) : []);
     const { rows } = await pool.query('SELECT uid, token FROM push_tokens WHERE "tripId" = $1', [c.tripId]);
     const targets = rows.filter((r) => r.token && r.uid !== c.senderUid && !online.has(r.uid));
-    console.log(`voice fan-out check: trip ${c.tripId} tokens=${rows.length} online=${online.size} targets=${targets.length}`);
+    console.log(`voice fan-out check: trip ${c.tripId} tokens=${rows.length} online=${online.size} [${[...online].join(',')}] targets=${targets.length}`);
     if (!targets.length) return;
     const creds = loadFcmCreds();
     if (!creds) {
