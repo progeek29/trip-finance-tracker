@@ -27,15 +27,17 @@ export async function consumePendingVoiceTrip(): Promise<string | null> {
 /** Upload burst for offline members. Never throws — socket already served online. */
 export function uploadVoiceClip(
   tripId: string,
+  clipId: string,
   voiceUrl: string,
   senderUid: string | undefined,
-  senderName: string
+  senderName: string,
+  apiBase: string
 ): void {
   try {
     void fetch(`${apiBaseUrl()}/voice-clips`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tripId, voiceUrl, senderUid, senderName, apiBase: apiHostRoot() }),
+      body: JSON.stringify({ clipId, tripId, voiceUrl, senderUid, senderName, apiBase }),
     }).catch(() => undefined);
   } catch {
     /* offline — socket already delivered to online members */

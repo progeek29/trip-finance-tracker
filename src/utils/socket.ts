@@ -172,7 +172,7 @@ export function emitBellRing(tripId: string, me: { uid?: string | null; name?: s
 /** Walkie-talkie burst — audio rides the socket live, nothing stored. */
 export function emitVoiceBurst(
   tripId: string,
-  payload: { voiceUrl: string; senderId?: string; senderName?: string }
+  payload: { voiceUrl: string; senderId?: string; senderName?: string; clipId?: string; apiBase?: string }
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     try {

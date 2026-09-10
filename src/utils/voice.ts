@@ -1,4 +1,4 @@
-import { supabase, ensureCloudUser } from './supabaseClient';
+import { supabase, ensureCloudUser, apiHostRoot } from './supabaseClient';
 import { emitVoiceBurst } from './socket';
 import { uploadVoiceClip } from './voiceWake';
 
@@ -115,13 +115,27 @@ export async function sendVoiceViaSocket(
     }
   });
   if (!voiceUrl.startsWith('data:audio')) throw new Error('empty recording — speak closer to the mic');
+  // Same clipId over socket + POST so the server fans out exactly once.
+  const clipId = makeClipId();
+  const apiBase = apiHostRoot();
   // Offline members: store for 5 min so closed apps can fetch + play (never blocks send).
-  uploadVoiceClip(tripId, voiceUrl, user.uid, byName);
+  uploadVoiceClip(tripId, clipId, voiceUrl, user.uid, byName, apiBase);
   await emitVoiceBurst(tripId, {
     voiceUrl,
     senderId: user.uid,
     senderName: byName,
+    clipId,
+    apiBase,
   });
+}
+
+/** Client-side clip id (shared by socket + upload paths for server dedupe). */
+function makeClipId(): string {
+  try {
+    const c = (globalThis as unknown as { crypto?: { randomUUID?: () => string } }).crypto;
+    if (c && typeof c.randomUUID === 'function') return c.randomUUID().replace(/-/g, '').slice(0, 24);
+  } catch { /* fallback below */ }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
 }
 
 export async function sendVoiceBurst(

@@ -75,27 +75,40 @@ setInterval(sweepVoiceClips, 60 * 1000).unref();
 // POST /api/voice-clips — sender uploads right after the socket burst (fire-and-forget)
 app.post('/api/voice-clips', async (req, res) => {
   try {
-    const { tripId, voiceUrl, senderUid, senderName, apiBase } = req.body || {};
+    const { clipId, tripId, voiceUrl, senderUid, senderName, apiBase } = req.body || {};
     if (!tripId || !voiceUrl) return res.status(400).json({ data: null, error: 'tripId and voiceUrl required' });
-    sweepVoiceClips();
-    const clipId = crypto.randomBytes(12).toString('hex');
-    voiceClips.set(clipId, {
-      tripId: String(tripId),
-      voiceUrl: String(voiceUrl).slice(0, 8 * 1024 * 1024),
-      senderUid: senderUid || null,
-      senderName: senderName || 'Someone',
-      apiBase: typeof apiBase === 'string' && /^https?:\/\//.test(apiBase) ? apiBase.replace(/\/$/, '') : null,
-      at: Date.now(),
-      expires: Date.now() + VOICE_CLIP_TTL_MS,
-    });
-    // Fan-out runs async — never blocks the sender.
-    void fanOutVoiceClip(clipId);
-    console.log(`voice clip stored: trip ${String(tripId)} sender ${senderUid || '?'} clip ${clipId}`);
-    res.json({ data: { clipId }, error: null });
+    const id = ingestVoiceClip({ clipId, tripId, voiceUrl, senderUid, senderName, apiBase });
+    res.json({ data: { clipId: id }, error: null });
   } catch (e) {
     res.status(500).json({ data: null, error: e.message });
   }
 });
+
+// Single ingest path for socket bursts AND POST uploads (deduped by clipId,
+// so a burst arriving over both channels fans out exactly once).
+const fannedClips = new Set();
+function cleanApiBase(v) {
+  return typeof v === 'string' && /^https?:\/\//.test(v) ? v.replace(/\/$/, '') : null;
+}
+function ingestVoiceClip({ clipId, tripId, voiceUrl, senderUid, senderName, apiBase }) {
+  sweepVoiceClips();
+  const id = (typeof clipId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(clipId))
+    ? clipId
+    : crypto.randomBytes(12).toString('hex');
+  voiceClips.set(id, {
+    tripId: String(tripId),
+    voiceUrl: String(voiceUrl).slice(0, 8 * 1024 * 1024),
+    senderUid: senderUid || null,
+    senderName: senderName || 'Someone',
+    apiBase: cleanApiBase(apiBase),
+    at: Date.now(),
+    expires: Date.now() + VOICE_CLIP_TTL_MS,
+  });
+  // Fan-out runs async — never blocks the sender.
+  void fanOutVoiceClip(id);
+  console.log(`voice clip stored: trip ${String(tripId)} sender ${senderUid || '?'} clip ${id}`);
+  return id;
+}
 
 // GET /api/voice-clips/latest?tripId=&since= — tap-to-open fallback play inside the app
 // (registered BEFORE /:id — Express matches in registration order)
@@ -175,6 +188,9 @@ async function fanOutVoiceClip(clipId) {
   try {
     const c = voiceClips.get(clipId);
     if (!c) return;
+    if (fannedClips.has(clipId)) return; // socket + POST both arrived — send once
+    fannedClips.add(clipId);
+    if (fannedClips.size > 200) fannedClips.delete(fannedClips.values().next().value);
     // Online = live socket members of this trip (they already heard it).
     const members = typeof roomMembers !== 'undefined' ? roomMembers.get(c.tripId) : null;
     const online = new Set(members ? [...members.values()].map((m) => m.uid).filter(Boolean) : []);
@@ -597,7 +613,8 @@ io.on('connection', (socket) => {
   });
 
   // Walkie-talkie voice burst — relay to room (sender excluded, they just spoke).
-  // Audio rides as data URL; nothing stored, heard = vanished.
+  // Audio rides as data URL; heard-live = vanished. Also ingested for the
+  // closed-app path (store + offline-only FCM, deduped with the POST path).
   socket.on('voice:burst', (burst, ack) => {
     try {
       const tid = burst && burst.tripId;
@@ -612,6 +629,19 @@ io.on('connection', (socket) => {
         senderName: burst.senderName || 'Someone',
         at: Date.now(),
       });
+      console.log(`voice burst live: trip ${tid} sender ${burst.senderId || '?'}`);
+      try {
+        ingestVoiceClip({
+          clipId: burst.clipId || null,
+          tripId: tid,
+          voiceUrl: burst.voiceUrl,
+          senderUid: burst.senderId || null,
+          senderName: burst.senderName || 'Someone',
+          apiBase: burst.apiBase || null,
+        });
+      } catch (e) {
+        console.error('voice ingest error:', e.message);
+      }
       if (ack) ack({ ok: true });
     } catch (e) {
       console.error('voice:burst error:', e.message);
