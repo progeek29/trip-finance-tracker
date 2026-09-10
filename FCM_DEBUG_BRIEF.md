@@ -112,12 +112,28 @@ notification delivery via "Split test").
 4. Something in the data payload Google dislikes (key names? `clipUrl`?
    total size ~200B, well under 4KB).
 
-## 8. What would settle it
+## 9. Logcat trace-down results (device-side, adb)
 
-- A way to confirm, for one accepted message ID, whether Google attempted
-  delivery (FCM delivery data / BigQuery export) vs dropped/throttled it.
-- Or: minimal repro — data-only high-priority push to this token from
-  Firebase console "test message" equivalent, bypassing our server entirely.
-- Relevant code: `server/index.cjs` (fanOutVoiceClip), `android/.../VoiceFirebaseService.java`,
-  `VoicePlaybackService.java`, `AndroidManifest.xml`, `deploy/docker-compose.yml`
-  (secrets mount + env passthrough — both verified working in container).
+During controlled probes (server confirms `voice FCM: 1/1`, Google 200-accepts
+with message ID), `adb logcat` on Samsung S22+ shows:
+
+- **No `Start proc com.wandersync.tripapp` ever** — GMS never starts our
+  process for our messages (contrast: Telegram's FCM DID start its process
+  in the same window; GMS radio works).
+- **Recurring `FcmRetry` alarms** (`setExactAndAllowWhileIdle [name: FcmRetry]`)
+  around every probe — GMS keeps queueing/retrying instead of dispatching.
+- No `VoiceFCM` / `VoicePlay` / `AndroidRuntime` lines (service never runs,
+  never crashes — nothing to crash, it never starts).
+- No `DisplayNotification` for our hybrid payloads either.
+- Earlier positive: one `Start proc … FirebaseInstanceIdReceiver` for our
+  package at 13:39 (data-only era), then silence since.
+- `dumpsys package` confirms installed build = v1.3/code 4 (single FCM
+  service, verified in merged manifest + dex strings).
+
+Conclusion: the break is between Google-accept and GMS-dispatch on this
+device at these times — NOT app code (it never executes), NOT server
+(it sends correctly), NOT token/project (notification-only tests to the
+same token arrive). Suspects in order: FCM high-priority throttle after
+~25 test pushes in 2h; Samsung Device-Care/Doze bucketing; GMS-side queue
+drain delay. Next evidence needed: Firebase/Cloud console delivery stats
+per message ID, or a single probe after multi-hour cooldown.
