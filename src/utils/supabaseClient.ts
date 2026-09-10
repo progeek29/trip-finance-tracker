@@ -14,8 +14,13 @@ function apiHost(): string {
 const API = `${apiHost()}/api`;
 
 async function api(path: string, opts: RequestInit = {}) {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(tokenKey) : null;
   const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...opts.headers as any },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...opts.headers as any,
+    },
     ...opts,
   });
   return res.json();

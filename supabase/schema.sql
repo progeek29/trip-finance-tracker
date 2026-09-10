@@ -212,6 +212,13 @@ create table if not exists users (
   "createdAt" timestamptz default now()
 );
 
+-- Random server sessions. A session token is never a user ID and is never in a URL.
+create table if not exists auth_sessions (
+  token text primary key,
+  "userId" text not null references users(id) on delete cascade,
+  "createdAt" timestamptz default now()
+);
+
 -- A user cannot be deleted while they own a trip. Reassign ownership first.
 DO $$ BEGIN
   ALTER TABLE trips

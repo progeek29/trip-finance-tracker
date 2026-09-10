@@ -1,11 +1,38 @@
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const http = require('http');
 const { Server } = require('socket.io');
 const pool = require('./db.cjs');
 
 const app = express();
+function bearerToken(req) {
+  const value = req.headers.authorization || '';
+  return value.startsWith('Bearer ') ? value.slice(7).trim() : '';
+}
+
+async function createSession(userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  await pool.query('INSERT INTO auth_sessions (token, "userId") VALUES ($1, $2)', [token, userId]);
+  return token;
+}
+
+async function requireSession(req, res, next) {
+  try {
+    const token = bearerToken(req);
+    if (!token) return res.status(401).json({ data: null, error: 'Authentication required' });
+    const { rows } = await pool.query(
+      'SELECT u.id, u.email, u.name, u.phone, u.role FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
+      [token]
+    );
+    if (rows.length === 0) return res.status(401).json({ data: null, error: 'Session expired. Please login again.' });
+    req.user = rows[0];
+    next();
+  } catch (e) {
+    res.status(500).json({ data: null, error: e.message });
+  }
+}
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
@@ -49,7 +76,8 @@ app.post('/api/auth/signup', async (req, res) => {
       [id, email, name || '', phone || '', role, hash]
     );
 
-    res.json({ data: { user: { id, email }, token: id }, error: null });
+    const token = await createSession(id);
+    res.json({ data: { user: { id, email }, token }, error: null });
   } catch (e) {
     console.error('Signup error:', e.message);
     res.json({ data: null, error: e.message });
@@ -69,7 +97,8 @@ app.post('/api/auth/signin', async (req, res) => {
     const valid = await bcrypt.compare(password, user.password_hash || '');
     if (!valid) return res.json({ data: null, error: 'Invalid email or password' });
 
-    res.json({ data: { user: { id: user.id, email: user.email }, token: user.id }, error: null });
+    const token = await createSession(user.id);
+    res.json({ data: { user: { id: user.id, email: user.email }, token }, error: null });
   } catch (e) {
     console.error('Signin error:', e.message);
     res.json({ data: null, error: e.message });
@@ -79,10 +108,13 @@ app.post('/api/auth/signin', async (req, res) => {
 // Auth: get current user
 app.get('/api/auth/user', async (req, res) => {
   try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
+    const token = bearerToken(req);
     if (!token) return res.json({ data: { user: null }, error: null });
 
-    const { rows } = await pool.query('SELECT id, email, name, phone, role FROM users WHERE id = $1', [token]);
+    const { rows } = await pool.query(
+      'SELECT u.id, u.email, u.name, u.phone, u.role FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
+      [token]
+    );
     if (rows.length === 0) return res.json({ data: { user: null }, error: null });
 
     res.json({ data: { user: rows[0] }, error: null });
@@ -107,7 +139,7 @@ async function requireAdmin(adminId) {
 
 // GET /api/users — user directory WITHOUT password hashes
 // (must stay before the generic /:table route)
-app.get('/api/users', async (req, res) => {
+app.get('/api/users', requireSession, async (req, res) => {
   try {
     const { rows } = await pool.query(
       'SELECT id, email, name, phone, role, "createdAt" FROM users ORDER BY email'
@@ -207,6 +239,8 @@ app.post('/api/admin/delete-user', async (req, res) => {
 });
 
 // ─── Generic table CRUD (AFTER specific routes) ────────────
+
+app.use('/api/:table', requireSession);
 
 // GET /api/:table — list rows with optional filters
 app.get('/api/:table', async (req, res) => {

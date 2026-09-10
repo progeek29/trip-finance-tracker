@@ -1,5 +1,4 @@
 import React from 'react';
-import { getAvatarColor, getEmojiFor, isEmojiAvatar } from '../../utils/avatar';
 
 interface MemberAvatarProps {
   name: string;
@@ -17,7 +16,7 @@ const sizes: Record<string, string> = {
   lg: 'w-12 h-12 text-2xl',
 };
 
-/** Squad face: simple emoji in a colored circle (photos come later). */
+/** Lightweight member avatar: initials only, with no image or network cost. */
 export const MemberAvatar: React.FC<MemberAvatarProps> = ({
   name,
   avatar,
@@ -26,14 +25,13 @@ export const MemberAvatar: React.FC<MemberAvatarProps> = ({
   size = 'md',
   ring = true,
 }) => {
-  const emoji = isEmojiAvatar(avatar) ? avatar! : getEmojiFor(`${memberId || ''}${name}`, index);
-  const color = getAvatarColor(memberId || name, index);
+  const initials = name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || '?';
   return (
     <div
       title={name}
-      className={`${sizes[size]} rounded-full flex items-center justify-center flex-shrink-0 ${color} ${ring ? 'border-2 border-white shadow-sm' : ''}`}
+      className={`${sizes[size]} rounded-full flex items-center justify-center flex-shrink-0 bg-indigo-600 text-white ${ring ? 'border-2 border-white shadow-sm' : 'border border-indigo-500 shadow-sm'}`}
     >
-      <span className="leading-none">{emoji}</span>
+      <span className="leading-none font-extrabold">{initials}</span>
     </div>
   );
 };

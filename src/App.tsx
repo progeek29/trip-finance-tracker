@@ -693,21 +693,25 @@ export function App() {
     }
     const shared = locals.filter((t) => t.inviteCode);
     if (shared.length === 0) return;
-    const deletedIds: string[] = [];
     const updates: Record<string, Partial<Trip>> = {};
     await Promise.all(
       shared.map(async (local) => {
         try {
-          const { data } = await supabase.from('trips').select('*').eq('id', local.id).maybeSingle();
+          const { data, error } = await supabase.from('trips').select('*').eq('id', local.id).maybeSingle();
+          if (error) {
+            // A 401, timeout, or transient API error is not a deletion signal.
+            return;
+          }
           if (!data) {
-            // Owner deleted → sabke pass se delete
-            deletedIds.push(local.id);
+            // A missing row may be a stale replica or a deployment race. Never
+            // delete local user data from a refresh; explicit deletes are local.
             return;
           }
           const remote = data as unknown as Trip & { updatedAt?: number };
           // Removed from the squad (and not the owner) → drop the trip
           if (uid && tripOwnerUid(remote) !== uid && !remote.members?.some((m) => m.uid === uid)) {
-            deletedIds.push(local.id);
+            // Keep the local copy until the user explicitly removes it or an
+            // audited recovery flow confirms the remote deletion.
             return;
           }
           const remoteAt = Number(remote.updatedAt) || 0;
@@ -735,27 +739,11 @@ export function App() {
         } catch { /* offline — local data stands */ }
       })
     );
-    if (deletedIds.length === 0 && Object.keys(updates).length === 0) return;
+    if (Object.keys(updates).length === 0) return;
     setTrips((prev) =>
       prev
-        .filter((t) => !deletedIds.includes(t.id))
         .map((t) => (updates[t.id] ? { ...t, ...updates[t.id] } : t))
     );
-    if (deletedIds.length > 0) {
-      if (activeTripId && deletedIds.includes(activeTripId)) {
-        setActiveTripId(null);
-        setAppView('landing');
-      }
-      setExpenses((prev) => prev.filter((e) => !deletedIds.includes(e.tripId)));
-      setTodos((prev) => prev.filter((t) => !deletedIds.includes(t.tripId)));
-      setDocuments((prev) => prev.filter((d) => !deletedIds.includes(d.tripId)));
-      setPhotos((prev) => prev.filter((p) => !deletedIds.includes(p.tripId)));
-      setSettlements((prev) => prev.filter((s) => !deletedIds.includes(s.tripId)));
-      setExpenseEvents((prev) => prev.filter((e) => !deletedIds.includes(e.tripId)));
-      showNotifFlash(
-        deletedIds.length === 1 ? 'A trip was deleted by its owner.' : `${deletedIds.length} trips were deleted by their owners.`
-      );
-    }
   };
 
   // Squad-wide emergency siren: keep a room joined for every shared trip (landing too).
@@ -1521,6 +1509,7 @@ export function App() {
           onEditTrip={handleEditTripFromLanding}
           onDeleteTrip={handleDeleteTrip}
           userName={profile?.name}
+          userId={myUid}
           onOpenProfile={() => setAppView('profile')}
           onShareTrip={handleShareTripCard}
           myUid={myUid}

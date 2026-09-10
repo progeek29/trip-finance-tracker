@@ -283,7 +283,6 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
                         ? <span className="ml-1.5 text-[9px] font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5">JOINED</span>
                         : <span className="ml-1.5 text-[9px] font-extrabold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5">MANUAL</span>;
                   })()}</p><p className="text-[11px] text-slate-400 truncate">{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p></div>
-                  <button type="button" onClick={() => shuffleAvatar(m.id)} title="Shuffle emoji" className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer">Shuffle</button>
                   {!m.isCurrentUser && (
                     <>
                       <button type="button" onClick={() => { startEditMember(m); setShowAddMember(true); }}><Pencil size={13} className="text-slate-400 hover:text-indigo-500" /></button>

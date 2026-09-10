@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Trip, TripMember, CityStop } from '../../types';
 import { getRandomEmoji } from '../../utils/avatar';
-import { putMedia, readFileAsDataUrl } from '../../utils/mediaStore';
+import { putMedia } from '../../utils/mediaStore';
 import { loadUserProfile } from '../../utils/storage';
 import { makeInviteCode } from '../../utils/supabaseClient';
 import { MemberAvatar } from '../common/MemberAvatar';
@@ -26,7 +26,7 @@ interface TripCreateModalProps {
 const COVER_IMAGES = [
   'https://images.unsplash.com/photo-1512343879784-a960bf40e7f2?auto=format&fit=crop&w=800&q=80',
   'https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1589308564641-79f31ea68a78?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=800&q=80',
   'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=800&q=80',
   'https://images.unsplash.com/photo-1518684079-3c830dcef090?auto=format&fit=crop&w=800&q=80',
   'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=800&q=80',
@@ -75,7 +75,6 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
   const [contactPickerSupported, setContactPickerSupported] = useState(false);
-  const coverUploadRef = useRef<HTMLInputElement>(null);
 
   const tripDays = startDate && endDate && new Date(endDate) >= new Date(startDate)
     ? Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1
@@ -180,7 +179,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
       return;
     }
     const tripId = editingTrip?.id || `trip_${Date.now()}`;
-    // Custom uploaded cover → large store (pointer), defaults stay as URL
+    // Legacy custom covers remain as stored pointers; new covers use presets only.
     let cover = coverImage;
     if (cover.startsWith('data:')) {
       cover = await putMedia(tripId, 'image', cover);
@@ -289,13 +288,6 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                       ))}
                     </div>
                     <div className="flex gap-2 mt-2">
-                      <button
-                        type="button"
-                        onClick={() => coverUploadRef.current?.click()}
-                        className="flex-1 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold cursor-pointer"
-                      >
-                        Upload
-                      </button>
                       {!COVER_IMAGES.includes(coverImage) && (
                         <button
                           type="button"
@@ -307,18 +299,6 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                         </button>
                       )}
                     </div>
-                    <input
-                      ref={coverUploadRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0];
-                        if (!f) return;
-                        setCoverImage(await readFileAsDataUrl(f));
-                        setShowCoverPicker(false);
-                      }}
-                    />
                   </>
                 )}
               </div>
@@ -437,13 +417,6 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                           {m.phone && <p className="text-xs text-slate-400 truncate">{formatPhoneDisplay(m.phone)}</p>}
                         </div>
                         <div className="flex items-center gap-1">
-                          <button
-                            title="Shuffle emoji"
-                            onClick={() => setMembers(prev => prev.map(mm => mm.id === m.id ? { ...mm, avatar: getRandomEmoji() } : mm))}
-                            className="text-[10px] font-bold text-indigo-600 hover:underline px-1"
-                          >
-                            Shuffle
-                          </button>
                           <button
                             title="Edit member"
                             onClick={() => { setEditingMemberId(m.id); setNewMemberName(m.name); setNewMemberPhone(m.phone || ''); }}

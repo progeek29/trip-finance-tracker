@@ -21,6 +21,7 @@ interface TripLandingViewProps {
   onEditTrip: (trip: Trip) => void;
   onDeleteTrip: (tripId: string) => void;
   userName?: string;
+  userId?: string | null;
   onOpenProfile?: () => void;
   onShareTrip: (trip: Trip) => void;
   myUid?: string | null;
@@ -284,7 +285,7 @@ function TripCard({
   );
 }
 
-export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange }: TripLandingViewProps) {
+export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange }: TripLandingViewProps) {
   const [filter, setFilter] = useState<'all' | 'inprogress' | 'upcoming' | 'completed'>('all');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'owned' | 'joined'>(ownerFilterProp || 'all');
   const [confirmTrip, setConfirmTrip] = useState<Trip | null>(null);

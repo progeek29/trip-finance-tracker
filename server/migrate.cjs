@@ -3,6 +3,11 @@
 const pool = require('./db.cjs');
 
 const STMTS = [
+  `CREATE TABLE IF NOT EXISTS auth_sessions (
+    token text primary key,
+    "userId" text not null references users(id) on delete cascade,
+    "createdAt" timestamptz default now()
+  )`,
   `UPDATE trips SET "ownerUid" = NULLIF(members->0->>'uid', '')
    WHERE "ownerUid" IS NULL AND jsonb_typeof(members) = 'array'`,
   `DO $$ BEGIN

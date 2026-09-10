@@ -38,6 +38,28 @@ The current release is focused on a stable, simple core experience:
 
 The next MVP must add a travel marketplace layer without breaking the existing trip tracker.
 
+## Payment integration kickoff: today
+
+Payment integration work starts today, but live money movement remains disabled until the complete flow is verified. The implementation order is:
+
+1. Select the payment provider and document the server-side API/webhook contract.
+2. Add package, booking, order, payment, refund, and webhook-event data models.
+3. Create a server-side order before opening checkout; never trust a client-supplied amount or success flag.
+4. Add a sandbox checkout with payment-pending, success, failure, retry, cancellation, and refund states.
+5. Verify webhook signatures and make webhook/order handling idempotent.
+6. Add admin visibility for orders, payments, refunds, and reconciliation errors.
+7. Test the full sandbox flow on web, Android, and iPhone Safari/PWA.
+8. Enable live payments only after backups, rate limits, monitoring, reconciliation, and rollback procedures are ready.
+
+The current VM is sufficient for this phase: 2 OCPU, 10 GB RAM, approximately 19 GB free disk, approximately 49 MB PostgreSQL data, and approximately 1.1 GB active RAM usage. Payment provider card data must remain with the provider; WanderSync stores only the minimum order, booking, status, and verification metadata required for the product.
+
+## Lightweight avatar decision
+
+- The application header/profile icon keeps the existing single initial style.
+- Squad/member avatars use name initials such as `J` for John and `Z` for Zon.
+- No avatar images, DiceBear downloads, or per-user media storage are required.
+- This keeps the UI fast and avoids avatar-related storage and network usage.
+
 ### 1. Featured package cards
 
 Add a package/discovery section using the same clean card language as the current trip cards. The cards should be visually attractive enough to make users want to explore and book a trip.

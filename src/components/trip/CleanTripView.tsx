@@ -452,7 +452,6 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                   </p>
                   <p className="text-[11px] truncate" style={{ color: '#64748b' }}>{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p>
                 </div>
-                <button onClick={() => setMembers((prev) => prev.map((mm) => (mm.id === m.id ? { ...mm, avatar: getRandomEmoji() } : mm)))} className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer">Shuffle</button>
                 {isOwner && !m.isCurrentUser && (
                   <>
                     <button onClick={() => { setEditingId(m.id); setNewName(m.name); setNewPhone(m.phone || ''); setNewBudget(m.budget?.toString() || ''); setShowAdd(true); }}><Pencil size={13} className="text-slate-400 hover:text-indigo-500" /></button>
