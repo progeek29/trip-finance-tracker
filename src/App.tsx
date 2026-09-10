@@ -172,6 +172,7 @@ export function App() {
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   // NOTE: myUid lives up here — selectors below use it during render (avoids TDZ crash)
   const [myUid, setMyUid] = useState<string | null>(null);
+  const [tripsHydrating, setTripsHydrating] = useState(false);
 
   const activeTrip = trips.find((t) => t.id === activeTripId) ?? trips[0];
 
@@ -581,37 +582,35 @@ export function App() {
     }).catch(() => setAuthed(false));
   }, []);
 
+  const hydrateRemoteTrips = async (uid: string) => {
+    setTripsHydrating(true);
+    try {
+      const { data } = await supabase.from('trips').select('*');
+      const remoteTrips = (Array.isArray(data) ? data : [])
+        .filter((t) => {
+          const trip = t as Trip;
+          return tripOwnerUid(trip) === uid || trip.members?.some((m) => m.uid === uid);
+        })
+        .map((t) => {
+          const trip = t as Trip;
+          return { ...trip, members: (trip.members || []).map((m) => ({ ...m, isCurrentUser: m.uid === uid })) };
+        });
+      setTrips((prev) => {
+        const byId = new Map(prev.map((trip) => [trip.id, trip]));
+        remoteTrips.forEach((trip) => byId.set(trip.id, { ...byId.get(trip.id), ...trip }));
+        const merged = [...byId.values()];
+        saveTripsData(merged);
+        return merged;
+      });
+    } catch { /* offline: keep the local trip cache */ }
+    finally {
+      setTripsHydrating(false);
+    }
+  };
+
   useEffect(() => {
     ensureCloudUser()
-      .then(async (u) => {
-        setMyUid(u.uid);
-        // A fresh login may have no local trip cache. Hydrate every trip where
-        // this user is the owner or a member before showing My Trips.
-        try {
-          const { data } = await supabase.from('trips').select('*');
-          const remoteTrips = (Array.isArray(data) ? data : [])
-            .filter((t) => {
-              const trip = t as Trip;
-              return tripOwnerUid(trip) === u.uid || trip.members?.some((m) => m.uid === u.uid);
-            })
-            .map((t) => {
-              const trip = t as Trip;
-              return {
-                ...trip,
-                members: (trip.members || []).map((m) => ({ ...m, isCurrentUser: m.uid === u.uid })),
-              };
-            });
-          if (remoteTrips.length > 0) {
-            setTrips((prev) => {
-              const byId = new Map(prev.map((trip) => [trip.id, trip]));
-              remoteTrips.forEach((trip) => byId.set(trip.id, { ...byId.get(trip.id), ...trip }));
-              const merged = [...byId.values()];
-              saveTripsData(merged);
-              return merged;
-            });
-          }
-        } catch { /* offline: keep the local trip cache */ }
-      })
+      .then(async (u) => { setMyUid(u.uid); await hydrateRemoteTrips(u.uid); })
       .catch(() => setMyUid(null));
 
     // Deep link auto-join: ?join=CODE
@@ -1426,11 +1425,13 @@ export function App() {
     return (
       <AuthScreen
         onAuth={(signupProfile) => {
+          setTripsHydrating(true);
           setAuthed(true);
           setAppView('landing');
           if (signupProfile) {
             // Signup: save profile immediately so WelcomeScreen is skipped
             handleSaveProfile({ name: signupProfile.name, phone: signupProfile.phone });
+            setTripsHydrating(false);
             // Handle invite code join after render
             if (signupProfile.inviteCode) {
               lookupInvite(signupProfile.inviteCode).then((ids) => {
@@ -1442,6 +1443,7 @@ export function App() {
             authGetUser().then((u) => {
               if (u) {
                 setMyUid(u.uid);
+                hydrateRemoteTrips(u.uid).catch(() => setTripsHydrating(false));
                 if (u.name?.trim()) {
                   const restored: UserProfile = {
                     name: u.name.trim(),
@@ -1453,10 +1455,18 @@ export function App() {
                   saveUserProfile(restored);
                 }
               }
-            }).catch(() => {});
+            }).catch(() => setTripsHydrating(false));
           }
         }}
       />
+    );
+  }
+
+  if (tripsHydrating) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <span className="animate-spin w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full" />
+      </div>
     );
   }
 
