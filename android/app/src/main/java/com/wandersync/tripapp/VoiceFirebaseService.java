@@ -10,6 +10,7 @@ import android.util.Log;
 
 import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
+import com.capacitorjs.plugins.pushnotifications.PushNotificationsPlugin;
 
 import org.json.JSONObject;
 
@@ -46,8 +47,17 @@ public class VoiceFirebaseService extends FirebaseMessagingService {
   @Override
   public void onMessageReceived(RemoteMessage msg) {
     Map<String, String> d = msg.getData();
-    if (d == null || !"voice".equals(d.get("kind"))) return; // not ours
-    if (isForeground()) return; // socket/JS owns foreground playback (dedupe)
+    // Single-service design (Capacitor's MessagingService is removed in the
+    // manifest): everything flows through here. Non-voice + foreground voice
+    // go to the JS layer exactly like before; background voice plays natively.
+    if (d == null || !"voice".equals(d.get("kind"))) {
+      PushNotificationsPlugin.sendRemoteMessage(msg);
+      return;
+    }
+    if (isForeground()) {
+      PushNotificationsPlugin.sendRemoteMessage(msg); // socket/JS owns it (dedupe by clipId)
+      return;
+    }
     String tripId = d.get("tripId");
     String clipUrl = d.get("clipUrl");
     String sender = d.get("senderName");
@@ -69,7 +79,8 @@ public class VoiceFirebaseService extends FirebaseMessagingService {
 
   @Override
   public void onNewToken(String token) {
-    // Token registration is handled by the Capacitor push plugin + JS layer.
+    // Token registration still flows to the Capacitor push plugin + JS layer.
+    PushNotificationsPlugin.onNewToken(token);
   }
 
   static void ensureChannel(Context ctx) {
