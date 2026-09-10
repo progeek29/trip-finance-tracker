@@ -218,15 +218,21 @@ async function fanOutVoiceClip(clipId) {
     let sent = 0;
     await Promise.all(targets.map(async (t) => {
       try {
-        // ROOT CAUSE (proven by A/B tests on-device): any `data` block in the
-        // FCM payload kills delivery on this device/profile (Google 200-accepts,
-        // GMS never dispatches — FcmRetry loop). Notification-only arrives
-        // instantly. So: alert via notification (proven channel), audio pulled
-        // by the app on open (clip holds 5 min server-side). Data-path native
-        // code stays dormant until data delivery is proven working again.
+        // HYBRID retry: notification (proven instant alert) + data (native
+        // auto-play + tap-to-trip). Earlier data-silence coincided with dead
+        // tokens + quota barrage — never proven against a healthy device.
+        // Client dedupes by clipId across socket/FCM/native paths.
+        const data = {
+          kind: 'voice',
+          tripId: c.tripId,
+          clipId,
+          senderName: c.senderName,
+        };
+        if (c.apiBase) data.clipUrl = `${c.apiBase}/api/voice-clips/${clipId}`;
         const payload = {
           message: {
             token: t.token,
+            data,
             notification: { title: `${c.senderName} • voice in ${tripTitle}`, body: 'Tap to open & listen' },
             android: {
               priority: 'high',
