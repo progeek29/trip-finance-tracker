@@ -17,7 +17,7 @@ create table if not exists trips (
   "totalBudget" numeric default 0,
   currency text default 'INR',
   "inviteCode" text unique,
-  "ownerUid" text,
+  "ownerUid" text not null,
   cities jsonb default '[]',
   members jsonb default '[]',
   "isActive" boolean default false,
@@ -211,6 +211,14 @@ create table if not exists users (
   password_hash text default '',
   "createdAt" timestamptz default now()
 );
+
+-- A user cannot be deleted while they own a trip. Reassign ownership first.
+DO $$ BEGIN
+  ALTER TABLE trips
+    ADD CONSTRAINT trips_owner_uid_fkey
+    FOREIGN KEY ("ownerUid") REFERENCES users(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ─── ROW LEVEL SECURITY ─────────────────────────────────────
 -- Disable RLS (app handles auth client-side)

@@ -156,6 +156,9 @@ export const supabase = {
           return { data, error: error ? { message: error } : null };
         };
         return {
+          then(resolve: (v: { data: unknown[]; error: null }) => void, reject?: (e: unknown) => void) {
+            runFiltered({}).then((r) => resolve({ data: (r.data as unknown[]) || [], error: null })).catch(reject);
+          },
           eq(col: string, val: string) {
             const filters = { [col]: val };
             const runOrdered = async (orderCol?: string, ascending = true, limit?: number) => {
