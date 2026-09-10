@@ -77,14 +77,19 @@ export function uploadVoiceClip(
 export async function fetchLatestVoiceClip(
   tripId: string,
   since: number
-): Promise<{ voiceUrl: string; senderName: string } | null> {
+): Promise<{ clipId: string; voiceUrl: string; senderName: string; at: number } | null> {
   try {
     const res = await fetch(
       `${apiBaseUrl()}/voice-clips/latest?tripId=${encodeURIComponent(tripId)}&since=${since}`
     );
     const j = await res.json();
     if (j && j.data && j.data.voiceUrl) {
-      return { voiceUrl: String(j.data.voiceUrl), senderName: String(j.data.senderName || 'Someone') };
+      return {
+        clipId: String(j.data.clipId || ''),
+        voiceUrl: String(j.data.voiceUrl),
+        senderName: String(j.data.senderName || 'Someone'),
+        at: Number(j.data.at) || 0,
+      };
     }
     return null;
   } catch {

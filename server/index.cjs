@@ -199,6 +199,12 @@ async function fanOutVoiceClip(clipId) {
     const targets = rows.filter((r) => r.token && r.uid !== c.senderUid && !online.has(r.uid));
     console.log(`voice fan-out check: trip ${c.tripId} tokens=${rows.length} online=${online.size} [${[...online].join(',')}] targets=${targets.length}`);
     if (!targets.length) return;
+    // Trip title for the alert (cheap indexed read, only when pushing).
+    let tripTitle = 'Trip';
+    try {
+      const tr = await pool.query('SELECT title FROM trips WHERE id = $1', [c.tripId]);
+      if (tr.rows.length && tr.rows[0].title) tripTitle = String(tr.rows[0].title).slice(0, 60);
+    } catch { /* title optional */ }
     const creds = loadFcmCreds();
     if (!creds) {
       if (!fcmCredsWarned) {
@@ -209,30 +215,22 @@ async function fanOutVoiceClip(clipId) {
     }
     const access = await fcmAccessToken();
     if (!access) return;
-    const clipUrl = c.apiBase ? `${c.apiBase}/api/voice-clips/${clipId}` : null;
     let sent = 0;
     await Promise.all(targets.map(async (t) => {
       try {
-        const data = {
-          kind: 'voice',
-          title: `${c.senderName} • voice`,
-          body: 'Tap to open trip & reply',
-          tripId: c.tripId,
-          clipId,
-          senderName: c.senderName,
-        };
-        if (clipUrl) data.clipUrl = clipUrl;
+        // ROOT CAUSE (proven by A/B tests on-device): any `data` block in the
+        // FCM payload kills delivery on this device/profile (Google 200-accepts,
+        // GMS never dispatches — FcmRetry loop). Notification-only arrives
+        // instantly. So: alert via notification (proven channel), audio pulled
+        // by the app on open (clip holds 5 min server-side). Data-path native
+        // code stays dormant until data delivery is proven working again.
         const r = await fetch(`https://fcm.googleapis.com/v1/projects/${creds.projectId}/messages:send`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
-          // HYBRID payload: notification forces OS handling on swipe-killed apps
-          // (system tray, proven path); data rides along for tap-to-trip +
-          // native playback. Data-only alone gets dropped on some OEM skins.
           body: JSON.stringify({
             message: {
               token: t.token,
-              data,
-              notification: { title: `${c.senderName} • voice`, body: 'Tap to open trip & reply' },
+              notification: { title: `${c.senderName} • voice in ${tripTitle}`, body: 'Tap to open & listen' },
               android: { priority: 'high', ttl: '300s' },
             },
           }),

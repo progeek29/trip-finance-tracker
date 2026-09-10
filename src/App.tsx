@@ -1363,6 +1363,37 @@ export function App() {
     };
   }, [authed]);
 
+  // Missed-voice sweep: notification-only FCM carries no data, so on every
+  // launch pull the freshest unexpired clip across my trips and play it once.
+  // (Persistent played-guard: relaunch never replays what was heard.)
+  const voiceSweepDone = useRef(false);
+  useEffect(() => {
+    if (!authed || trips.length === 0 || voiceSweepDone.current) return;
+    voiceSweepDone.current = true;
+    (async () => {
+      try {
+        const since = Date.now() - 5 * 60 * 1000;
+        const found: { tripId: string; clipId: string; voiceUrl: string; senderName: string; at: number }[] = [];
+        await Promise.all(
+          trips.slice(0, 20).map(async (t) => {
+            try {
+              const clip = await fetchLatestVoiceClip(t.id, since);
+              if (clip && clip.clipId) found.push({ tripId: t.id, ...clip });
+            } catch { /* per-trip fail, skip */ }
+          })
+        );
+        found.sort((a, b) => b.at - a.at);
+        const fresh = found.find((f) => !wasVoicePlayed(f.clipId));
+        if (!fresh) return;
+        markVoicePlayed(fresh.clipId);
+        setActiveTripId(fresh.tripId);
+        setAppView('trip_dashboard');
+        await playVoiceLoud(fresh.voiceUrl);
+        showNotifFlash(`Voice from ${fresh.senderName} • played`);
+      } catch { /* silent */ }
+    })();
+  }, [authed, trips]);
+
   // Card Share: publish under the trip's stable code and open the Google-style Public Link Share dialog
   const [shareSheet, setShareSheet] = useState<{
     title?: string;

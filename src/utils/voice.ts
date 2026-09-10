@@ -146,16 +146,30 @@ export async function sendVoiceBurst(
   return sendVoiceViaSocket(tripId, byName, blob);
 }
 
-/** ClipIds already heard (socket live vs FCM fallback) — prevents double play. */
-const playedVoiceClips = new Set<string>();
+/** ClipIds already heard (socket live vs FCM fallback) — prevents double play.
+ *  Persisted: a kill + relaunch must not replay what was already heard. */
+const PLAYED_LS_KEY = 'wandersync_played_clips';
+function loadPlayedSet(): Set<string> {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(PLAYED_LS_KEY) : null;
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch { /* fresh */ }
+  return new Set<string>();
+}
+const playedVoiceClips: Set<string> = loadPlayedSet();
+function persistPlayed(): void {
+  try {
+    localStorage.setItem(PLAYED_LS_KEY, JSON.stringify([...playedVoiceClips].slice(-100)));
+  } catch { /* storage full/blocked */ }
+}
 export function markVoicePlayed(clipId: string | undefined): void {
-  if (clipId) {
-    playedVoiceClips.add(clipId);
-    if (playedVoiceClips.size > 100) {
-      const oldest = playedVoiceClips.values().next().value;
-      if (oldest) playedVoiceClips.delete(oldest);
-    }
+  if (!clipId) return;
+  playedVoiceClips.add(clipId);
+  if (playedVoiceClips.size > 100) {
+    const oldest = playedVoiceClips.values().next().value;
+    if (oldest) playedVoiceClips.delete(oldest);
   }
+  persistPlayed();
 }
 export function wasVoicePlayed(clipId: string | undefined): boolean {
   return !!clipId && playedVoiceClips.has(clipId);
