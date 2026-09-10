@@ -119,6 +119,15 @@ export async function authSignOut(): Promise<void> {
   cachedIsAdmin = false;
 }
 
+/** Logout everywhere: revoke ALL server sessions (every device/tab/browser),
+ *  then wipe local. Server failure still clears local (never trap the user). */
+export async function authSignOutAll(): Promise<void> {
+  try {
+    await api('/auth/logout-all', { method: 'POST' });
+  } catch { /* session already dead — local wipe is what matters */ }
+  await authSignOut();
+}
+
 export async function authGetUser(): Promise<{ uid: string; email: string; isAdmin: boolean; name: string; phone: string; role: string } | null> {
   const token = getToken();
   if (!token) return null;

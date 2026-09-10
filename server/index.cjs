@@ -378,6 +378,17 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   }
 });
 
+// POST /api/auth/logout-all — kill EVERY session for this user, all devices/tabs.
+// Enterprise rule: logout must revoke server-side, not just wipe local storage.
+app.post('/api/auth/logout-all', requireSession, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM auth_sessions WHERE "userId" = $1', [req.user.id]);
+    res.json({ data: { ok: true }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
 // POST /api/admin/create-user — admin creates a login-ready user (hashed server-side)
 app.post('/api/admin/create-user', async (req, res) => {
   try {

@@ -1575,8 +1575,8 @@ export function App() {
           onBack={() => setAppView('landing')}
           onOpenAdmin={() => setAppView('admin_activity')}
           onLogout={async () => {
-            const { authSignOut } = await import('./utils/supabaseClient');
-            await authSignOut();
+            const { authSignOutAll } = await import('./utils/supabaseClient');
+            await authSignOutAll();
             setAuthed(false);
             setProfile(null);
             setMyUid(null);
