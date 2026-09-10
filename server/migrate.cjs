@@ -3,6 +3,20 @@
 const pool = require('./db.cjs');
 
 const STMTS = [
+  `UPDATE trips SET "ownerUid" = NULLIF(members->0->>'uid', '')
+   WHERE "ownerUid" IS NULL AND jsonb_typeof(members) = 'array'`,
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM trips WHERE "ownerUid" IS NULL) THEN
+       RAISE EXCEPTION 'Cannot enforce trip ownership: one or more trips have no ownerUid';
+     END IF;
+     ALTER TABLE trips ALTER COLUMN "ownerUid" SET NOT NULL;
+   EXCEPTION WHEN duplicate_object THEN NULL;
+   END $$`,
+  `DO $$ BEGIN
+     ALTER TABLE trips ADD CONSTRAINT trips_owner_uid_fkey
+       FOREIGN KEY ("ownerUid") REFERENCES users(id) ON DELETE RESTRICT;
+   EXCEPTION WHEN duplicate_object THEN NULL;
+   END $$`,
   `ALTER TABLE expenses ADD COLUMN IF NOT EXISTS "updatedBy" text`,
   `ALTER TABLE documents ADD COLUMN IF NOT EXISTS "updatedBy" text`,
   `ALTER TABLE documents ADD COLUMN IF NOT EXISTS "remoteUrl" text`,

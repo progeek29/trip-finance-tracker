@@ -65,7 +65,7 @@ import { ProfilePage } from './components/common/ProfilePage';
 type AppView = 'landing' | 'trip_dashboard' | 'admin_activity' | 'profile';
 
 import { migrateDataUrl, deleteMediaRefs, collectRefs } from './utils/mediaStore';
-import { viewerBudget } from './utils/budget';
+import { viewerBudget, tripOwnerUid } from './utils/budget';
 import {
   parseActivity,
   parseChatMessage,
@@ -583,7 +583,35 @@ export function App() {
 
   useEffect(() => {
     ensureCloudUser()
-      .then((u) => setMyUid(u.uid))
+      .then(async (u) => {
+        setMyUid(u.uid);
+        // A fresh login may have no local trip cache. Hydrate every trip where
+        // this user is the owner or a member before showing My Trips.
+        try {
+          const { data } = await supabase.from('trips').select('*');
+          const remoteTrips = (Array.isArray(data) ? data : [])
+            .filter((t) => {
+              const trip = t as Trip;
+              return tripOwnerUid(trip) === u.uid || trip.members?.some((m) => m.uid === u.uid);
+            })
+            .map((t) => {
+              const trip = t as Trip;
+              return {
+                ...trip,
+                members: (trip.members || []).map((m) => ({ ...m, isCurrentUser: m.uid === u.uid })),
+              };
+            });
+          if (remoteTrips.length > 0) {
+            setTrips((prev) => {
+              const byId = new Map(prev.map((trip) => [trip.id, trip]));
+              remoteTrips.forEach((trip) => byId.set(trip.id, { ...byId.get(trip.id), ...trip }));
+              const merged = [...byId.values()];
+              saveTripsData(merged);
+              return merged;
+            });
+          }
+        } catch { /* offline: keep the local trip cache */ }
+      })
       .catch(() => setMyUid(null));
 
     // Deep link auto-join: ?join=CODE
@@ -624,8 +652,7 @@ export function App() {
     setTrips((prev) => {
       const filtered = prev.filter((t) =>
         t.members.some((m) => m.uid === myUid) ||
-        t.ownerUid === myUid ||
-        !t.ownerUid
+        tripOwnerUid(t) === myUid
       );
       return filtered.length === prev.length ? prev : filtered;
     });
@@ -679,7 +706,7 @@ export function App() {
           }
           const remote = data as unknown as Trip & { updatedAt?: number };
           // Removed from the squad (and not the owner) → drop the trip
-          if (uid && remote.ownerUid !== uid && !remote.members?.some((m) => m.uid === uid)) {
+          if (uid && tripOwnerUid(remote) !== uid && !remote.members?.some((m) => m.uid === uid)) {
             deletedIds.push(local.id);
             return;
           }

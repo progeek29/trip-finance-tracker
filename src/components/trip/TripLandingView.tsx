@@ -412,7 +412,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
               onClick={onCreateTrip}
               className="bg-indigo-600 text-white font-semibold px-6 py-2.5 rounded-xl hover:bg-indigo-700 transition-colors"
             >
-              Plan a New Trip
+              Plan New Trip
             </button>
           </div>
         ) : (

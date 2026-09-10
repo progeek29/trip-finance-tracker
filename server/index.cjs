@@ -195,7 +195,10 @@ app.post('/api/admin/delete-user', async (req, res) => {
     if (!userId) return res.json({ data: null, error: 'User required' });
     if (userId === admin.id) return res.json({ data: null, error: 'You cannot delete your own admin account' });
 
-    await pool.query('DELETE FROM trips WHERE "ownerUid" = $1', [userId]);
+    const { rows: ownedTrips } = await pool.query('SELECT id FROM trips WHERE "ownerUid" = $1 LIMIT 1', [userId]);
+    if (ownedTrips.length > 0) {
+      return res.json({ data: null, error: 'User owns trips. Reassign ownership before deleting this user.' });
+    }
     await pool.query('DELETE FROM users WHERE id = $1', [userId]);
     res.json({ data: { ok: true }, error: null });
   } catch (e) {
