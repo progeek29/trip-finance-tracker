@@ -49,6 +49,8 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Walkie-talkie PTT microphone access; Android asks at first use. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Bank SMS auto-logging (native receiver comes with backend phase; user grants at runtime) -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />

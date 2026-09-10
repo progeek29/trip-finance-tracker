@@ -582,6 +582,12 @@ export function App() {
     }).catch(() => setAuthed(false));
   }, []);
 
+  // Ask once after login so local reminders and system notifications can reach
+  // the Android notification tray instead of remaining in-app only.
+  useEffect(() => {
+    if (authed && isNativeApp()) void ensureReminderChannel();
+  }, [authed]);
+
   const hydrateRemoteTrips = async (uid: string) => {
     setTripsHydrating(true);
     try {

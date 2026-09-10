@@ -79,7 +79,12 @@ export function startVoiceRecorder(
         if (recorder && recorder.state !== 'inactive') recorder.stop();
       }, VOICE_MAX_MS);
     })
-    .catch(() => onError('Microphone blocked. Allow mic access and retry.'));
+    .catch((error: unknown) => {
+      const name = error instanceof DOMException ? error.name : '';
+      onError(name === 'NotAllowedError'
+        ? 'Microphone permission denied. Allow microphone access in Android Settings and retry.'
+        : 'Microphone unavailable. Check Android microphone permission and retry.');
+    });
 
   return () => {
     stopped = true;

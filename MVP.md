@@ -60,6 +60,32 @@ The current VM is sufficient for this phase: 2 OCPU, 10 GB RAM, approximately 19
 - No avatar images, DiceBear downloads, or per-user media storage are required.
 - This keeps the UI fast and avoids avatar-related storage and network usage.
 
+## Closed-app voice and notification work
+
+The current walkie-talkie implementation is a live WebSocket voice burst. It works when the app is open and the user has granted microphone access, but it is not a closed-app voice system yet.
+
+This is a required next-MVP native feature and must not be marked complete until all of the following are implemented:
+
+- Android foreground service for the PTT session.
+- Persistent Android notification while the voice service is active.
+- Native microphone permission request and clear Settings fallback.
+- Push/wake delivery through the FCM worker when the receiving app is backgrounded or closed.
+- Server-side sender/device-token validation and sender exclusion.
+- Short-lived voice payloads with no permanent audio storage by default.
+- Automatic service shutdown, timeout, and battery safeguards.
+- Android notification-channel and lock-screen behavior tested on real devices.
+- Reconnect and offline failure states that never show a false “sent” message.
+
+The current release only provides the microphone permission declaration, foreground PTT permission prompt, local notification channel initialization, and live in-app voice path. Closed-app voice remains **planned**, because it requires native service code plus configured FCM worker secrets and real-device validation.
+
+### Notification delivery states
+
+- **In-app activity feed**: available while the app is running.
+- **Local Android notification**: available after notification permission and channel initialization.
+- **Closed-app remote push**: requires the deployed FCM worker URL, valid Firebase service credentials, registered device tokens, and verified worker delivery.
+
+The app must never claim that a closed-app voice message was delivered until the push provider acknowledges the request.
+
 ### 1. Featured package cards
 
 Add a package/discovery section using the same clean card language as the current trip cards. The cards should be visually attractive enough to make users want to explore and book a trip.
