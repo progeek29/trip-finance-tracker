@@ -16,8 +16,14 @@ export function myMemberOf(trip: Trip, myUid?: string | null) {
   );
 }
 
+/** Legacy trips may not have ownerUid; their first linked member is the owner. */
+export function tripOwnerUid(trip: Trip): string | undefined {
+  return trip.ownerUid || trip.members.find((m) => !!m.uid)?.uid;
+}
+
 export function isTripOwner(trip: Trip, myUid?: string | null, isAdmin = false): boolean {
-  return isAdmin || !trip.ownerUid || trip.ownerUid === myUid;
+  const ownerUid = tripOwnerUid(trip);
+  return isAdmin || (!!ownerUid && ownerUid === myUid);
 }
 
 /** This viewer's share of costs = sum of their split amounts. */
@@ -49,9 +55,8 @@ export function memberStatus(
   trip: Trip,
   m: { uid?: string; isCurrentUser?: boolean }
 ): MemberStatus {
-  const isOwnerRow = trip.ownerUid
-    ? !!m.uid && m.uid === trip.ownerUid
-    : !!m.isCurrentUser;
+  const ownerUid = tripOwnerUid(trip);
+  const isOwnerRow = !!ownerUid && !!m.uid && m.uid === ownerUid;
   if (isOwnerRow) return 'OWNER';
   return m.uid ? 'JOINED' : 'MANUAL';
 }

@@ -5,6 +5,7 @@ import { Logo } from '../common/Logo';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { BUILD_TAG } from '../../utils/version';
 import { viewerBudget } from '../../utils/budget';
+import { tripOwnerUid } from '../../utils/budget';
 import { MediaImg } from '../common/MediaImg';
 import {
   MapPin, Calendar, Users, Wallet, ChevronRight,
@@ -309,8 +310,8 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
     ownershipFilter === 'all'
       ? trips
       : ownershipFilter === 'owned'
-        ? trips.filter((t) => !t.ownerUid || t.ownerUid === myUid)
-        : trips.filter((t) => t.ownerUid && t.ownerUid !== myUid)
+        ? trips.filter((t) => tripOwnerUid(t) === myUid)
+        : trips.filter((t) => tripOwnerUid(t) && tripOwnerUid(t) !== myUid)
   );
   const filtered = filter === 'all' ? ownershipFiltered : ownershipFiltered.filter(t => liveTripStatus(t) === filter);
 
@@ -411,7 +412,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
               onClick={onCreateTrip}
               className="bg-indigo-600 text-white font-semibold px-6 py-2.5 rounded-xl hover:bg-indigo-700 transition-colors"
             >
-              + Plan a New Trip
+              Plan a New Trip
             </button>
           </div>
         ) : (
@@ -425,7 +426,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
                 onEdit={() => onEditTrip(trip)}
                 onDelete={() => handleDelete(trip)}
                 onShare={() => onShareTrip(trip)}
-                isOwner={!trip.ownerUid || trip.ownerUid === myUid}
+                isOwner={tripOwnerUid(trip) === myUid}
                 myUid={myUid}
               />
             ))}

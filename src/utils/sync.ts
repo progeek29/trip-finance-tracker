@@ -1,6 +1,7 @@
 import { supabase, ensureCloudUser } from './supabaseClient';
 import { resolveMedia } from './mediaStore';
 import type { Trip, Expense, DocumentVaultItem, TripTodo, Settlement, ExpenseEvent } from '../types';
+import { tripOwnerUid } from './budget';
 
 /**
  * Live sync for shared trips: Supabase DB + Storage.
@@ -45,7 +46,7 @@ export async function pushTripShared(
     totalBudget: trip.totalBudget,
     currency: trip.currency,
     inviteCode: trip.inviteCode,
-    ownerUid: trip.ownerUid,
+    ownerUid: tripOwnerUid(trip),
     cities: trip.cities,
     members: trip.members,
     isActive: trip.isActive,

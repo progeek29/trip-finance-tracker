@@ -11,7 +11,7 @@ import { fetchDeviceContacts, type DeviceContact } from '../../utils/deviceConta
 import { useMediaUrl } from '../common/MediaImg';
 import { getRandomEmoji } from '../../utils/avatar';
 import { TalkButton } from '../voice/TalkButton';
-import { memberStatus } from '../../utils/budget';
+import { memberStatus, tripOwnerUid } from '../../utils/budget';
 
 interface CleanTripViewProps {
   trip: Trip;
@@ -107,7 +107,7 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
     tripPhase === 'upcoming'
       ? daysToStart <= 0 ? 'Starts today' : daysToStart === 1 ? 'Starts tomorrow' : `Starts in ${daysToStart} days`
       : tripPhase === 'live' && tripDayCount > 0 ? `Day ${liveDayNum} of ${tripDayCount}` : 'Trip live';
-  const isOwner = isAdmin || !trip.ownerUid || trip.ownerUid === myUid;
+  const isOwner = isAdmin || tripOwnerUid(trip) === myUid;
   const myName = ((myUid ? trip.members.find((m) => m.uid === myUid) : undefined)
     || trip.members.find((m) => m.isCurrentUser))?.name?.replace(/\(You\)/g, '').trim() || 'Someone';
 
@@ -406,7 +406,7 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
   const [showAdd, setShowAdd] = useState(false);
   const [contactList, setContactList] = useState<DeviceContact[] | null>(null);
   const [contactError, setContactError] = useState<string | null>(null);
-  const isOwner = isAdmin || !trip.ownerUid || trip.ownerUid === myUid;
+  const isOwner = isAdmin || tripOwnerUid(trip) === myUid;
 
   const addOrSave = () => {
     if (!newName.trim()) return;

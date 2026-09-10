@@ -9,6 +9,7 @@ import { DatePicker } from '../common/DatePicker';
 import { ContactPickerModal } from '../common/ContactPickerModal';
 import { PhoneInput, isValidPhone, formatPhoneDisplay } from '../common/PhoneInput';
 import { fetchDeviceContacts, type DeviceContact } from '../../utils/deviceContacts';
+import { tripOwnerUid } from '../../utils/budget';
 import {
   X, MapPin, Trash2,
   Check, Image, Pencil
@@ -199,7 +200,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
       currency: 'INR',
       members: finalMembers,
       inviteCode: editingTrip?.inviteCode || makeInviteCode(),
-      ownerUid: editingTrip?.ownerUid || ownerUid || undefined,
+      ownerUid: editingTrip ? tripOwnerUid(editingTrip) : ownerUid || undefined,
       cities: cities
         .filter(c => c.name.trim())
         .map((c, i) => ({ ...c, id: `city_${Date.now()}_${i}` })),

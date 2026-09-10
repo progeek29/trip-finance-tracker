@@ -16,6 +16,11 @@ app.get('/', (req, res) => {
   res.json({ ok: true, service: 'wandersync-api' });
 });
 
+// Friendly API root response; endpoint clients should use /api/health for DB status.
+app.get('/api', (req, res) => {
+  res.json({ ok: true, service: 'wandersync-api', health: '/api/health' });
+});
+
 // Health check
 app.get('/api/health', async (req, res) => {
   try {
