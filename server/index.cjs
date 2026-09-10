@@ -96,17 +96,8 @@ app.post('/api/voice-clips', async (req, res) => {
   }
 });
 
-// GET /api/voice-clips/:id — native service downloads the clip (410 = expired)
-app.get('/api/voice-clips/:id', (req, res) => {
-  const c = voiceClips.get(req.params.id);
-  if (!c || c.expires <= Date.now()) {
-    if (c) voiceClips.delete(req.params.id);
-    return res.status(410).json({ data: null, error: 'clip expired' });
-  }
-  res.json({ data: { tripId: c.tripId, voiceUrl: c.voiceUrl, senderName: c.senderName, at: c.at }, error: null });
-});
-
 // GET /api/voice-clips/latest?tripId=&since= — tap-to-open fallback play inside the app
+// (registered BEFORE /:id — Express matches in registration order)
 app.get('/api/voice-clips/latest', (req, res) => {
   const tid = String(req.query.tripId || '');
   const since = Number(req.query.since || 0);
@@ -116,6 +107,16 @@ app.get('/api/voice-clips/latest', (req, res) => {
     if (!best || c.at > best.at) best = { clipId: id, voiceUrl: c.voiceUrl, senderName: c.senderName, at: c.at };
   }
   res.json({ data: best, error: null });
+});
+
+// GET /api/voice-clips/:id — native service downloads the clip (410 = expired)
+app.get('/api/voice-clips/:id', (req, res) => {
+  const c = voiceClips.get(req.params.id);
+  if (!c || c.expires <= Date.now()) {
+    if (c) voiceClips.delete(req.params.id);
+    return res.status(410).json({ data: null, error: 'clip expired' });
+  }
+  res.json({ data: { tripId: c.tripId, voiceUrl: c.voiceUrl, senderName: c.senderName, at: c.at }, error: null });
 });
 
 // ─── FCM sender (raw HTTP v1, no new deps) ───
