@@ -225,13 +225,14 @@ async function fanOutVoiceClip(clipId) {
         const r = await fetch(`https://fcm.googleapis.com/v1/projects/${creds.projectId}/messages:send`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
-          // DATA-ONLY by design: a notification key makes Android route the
-          // message to the system tray and BYPASS onMessageReceived while the
-          // app is dead. Same clipId everywhere for client dedupe.
+          // HYBRID payload: notification forces OS handling on swipe-killed apps
+          // (system tray, proven path); data rides along for tap-to-trip +
+          // native playback. Data-only alone gets dropped on some OEM skins.
           body: JSON.stringify({
             message: {
               token: t.token,
               data,
+              notification: { title: `${c.senderName} • voice`, body: 'Tap to open trip & reply' },
               android: { priority: 'high', ttl: '300s' },
             },
           }),
