@@ -224,18 +224,26 @@ async function fanOutVoiceClip(clipId) {
         // instantly. So: alert via notification (proven channel), audio pulled
         // by the app on open (clip holds 5 min server-side). Data-path native
         // code stays dormant until data delivery is proven working again.
+        const payload = {
+          message: {
+            token: t.token,
+            notification: { title: `${c.senderName} • voice in ${tripTitle}`, body: 'Tap to open & listen' },
+            android: { priority: 'high', ttl: '300s' },
+          },
+        };
+        console.log('voice FCM to:', String(t.token).slice(0, 12) + '…');
         const r = await fetch(`https://fcm.googleapis.com/v1/projects/${creds.projectId}/messages:send`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: {
-              token: t.token,
-              notification: { title: `${c.senderName} • voice in ${tripTitle}`, body: 'Tap to open & listen' },
-              android: { priority: 'high', ttl: '300s' },
-            },
-          }),
+          body: JSON.stringify(payload),
         });
-        if (r.ok) sent++;
+        const rb = await r.text();
+        console.log('voice FCM resp:', r.status, rb.slice(0, 200));
+        let ok = false;
+        try {
+          ok = r.ok && !!JSON.parse(rb).name;
+        } catch { /* non-JSON */ }
+        if (ok) sent++;
       } catch { /* per-device fail, skip */ }
     }));
     console.log(`voice FCM: ${sent}/${targets.length} offline (trip ${c.tripId})`);
