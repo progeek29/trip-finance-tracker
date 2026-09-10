@@ -225,13 +225,13 @@ async function fanOutVoiceClip(clipId) {
         const r = await fetch(`https://fcm.googleapis.com/v1/projects/${creds.projectId}/messages:send`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
-          // notification = system-tray heads-up when app is background/killed (proven path);
-          // data = native playback + tap-to-trip + foreground JS play. Same clipId everywhere.
+          // DATA-ONLY by design: a notification key makes Android route the
+          // message to the system tray and BYPASS onMessageReceived while the
+          // app is dead. Same clipId everywhere for client dedupe.
           body: JSON.stringify({
             message: {
               token: t.token,
               data,
-              notification: { title: `${c.senderName} • voice`, body: 'Tap to open trip & reply' },
               android: { priority: 'high', ttl: '300s' },
             },
           }),

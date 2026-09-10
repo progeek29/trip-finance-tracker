@@ -53,12 +53,18 @@ public class VoiceFirebaseService extends FirebaseMessagingService {
     String sender = d.get("senderName");
     if (sender == null || sender.isEmpty()) sender = "Squad";
     if (tripId == null || tripId.isEmpty() || clipUrl == null) return;
-    String file = downloadClip(clipUrl);
+    String file = null;
+    try {
+      file = downloadClip(clipUrl);
+    } catch (Exception e) {
+      Log.w(TAG, "clip download threw: " + e.getMessage());
+    }
     if (file != null) {
       VoicePlaybackService.start(this, file, sender, tripId, d.get("clipId"));
+    } else {
+      // Stream setup failed/timed out — never leave the user in silence.
+      showMissed(tripId, d.get("clipId"), sender);
     }
-    // Download failed → system-tray notification (server payload) still stands
-    // with tap-to-trip fallback. Nothing else to do here.
   }
 
   @Override
@@ -105,6 +111,31 @@ public class VoiceFirebaseService extends FirebaseMessagingService {
     i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
     return PendingIntent.getActivity(ctx, (tripId + clipId).hashCode(), i,
       PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+  }
+
+  /** Fallback: stream failed — stash trip + loud miss notification (tap opens trip). */
+  private void showMissed(String tripId, String clipId, String sender) {
+    try {
+      ensureChannel(this);
+      stashPending(this, tripId, clipId);
+      androidx.core.app.NotificationCompat.Builder b =
+        new androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
+          .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+          .setContentTitle(sender + " • voice")
+          .setContentText("Tap to open trip & listen")
+          .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+          .setAutoCancel(true)
+          .setContentIntent(openTripIntent(this, tripId, clipId));
+      android.app.NotificationManager nm =
+        (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+      if (nm != null) nm.notify((int) (System.currentTimeMillis() % Integer.MAX_VALUE), b.build());
+      try {
+        android.os.Vibrator vib = (android.os.Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        if (vib != null && vib.hasVibrator()) vib.vibrate(new long[]{0, 400, 150, 400}, -1);
+      } catch (Exception ignored) { /* no vibrator */ }
+    } catch (Exception e) {
+      Log.w(TAG, "missed notify failed: " + e.getMessage());
+    }
   }
 
   /** GET clip JSON -> decode data-URL audio -> cache file. Returns path or null. */
