@@ -230,32 +230,36 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
       <TalkButton tripId={trip.id} byName={myName} />
 
       {/* Snapshot — Total Spent jumps to Expenses, Squad opens members */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <button onClick={onGoExpenses} className="text-left clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-2xs space-y-1 hover:border-indigo-400 cursor-pointer group">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-            {!isOwner ? 'Your Share' : 'Total Spent'}
-            <span className="flex items-center gap-0.5 text-[10px] font-bold text-indigo-600">History <ChevronRight size={12} strokeWidth={2.75} stroke="currentColor" /></span>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <button onClick={onGoExpenses} className="text-left bg-white rounded-3xl p-6 border border-gray-100 shadow-[0_8px_30px_rgb(0,0,0,0.03)] hover:shadow-[0_12px_40px_rgba(0,0,0,0.06)] transition-all duration-300 cursor-pointer group flex flex-col justify-between">
+          <span className="flex flex-col gap-1">
+            <span className="text-[11px] font-bold uppercase tracking-widest text-gray-400 flex items-center justify-between">
+              {!isOwner ? 'Your Share' : 'Total Spent'}
+              <span className="flex items-center gap-1 text-xs font-bold text-[#4f46e5]">History <ChevronRight size={12} strokeWidth={2.75} stroke="currentColor" /></span>
+            </span>
+            <span className="text-3xl font-black text-gray-900 tracking-tight">₹{(!isOwner ? mySpent : totalSpent).toLocaleString('en-IN')}</span>
           </span>
-          <div className="text-xl font-extrabold text-slate-900 font-display">₹{(!isOwner ? mySpent : totalSpent).toLocaleString('en-IN')}</div>
-          <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
-            <div className="bg-indigo-600 h-1.5 rounded-full" style={{ width: `${!isOwner ? (myBudget > 0 ? Math.min(100, Math.round((mySpent / myBudget) * 100)) : 0) : percentSpent}%` }} />
-          </div>
-          <span className="text-[10px] text-slate-500 font-medium block pt-1">{!isOwner ? (myBudget > 0 ? `₹${Math.max(0, myBudget - mySpent).toLocaleString('en-IN')} left of ₹${myBudget.toLocaleString('en-IN')}` : `Budget ₹0 (not set) · ₹${totalSpent.toLocaleString('en-IN')} trip total`) : `₹${remaining.toLocaleString('en-IN')} remaining of ₹${trip.totalBudget.toLocaleString('en-IN')}`} · tap for history</span>
+          <span className="mt-5 pt-3 border-t border-gray-50 flex items-center justify-between text-xs text-gray-400 font-medium">
+            <span>Budget Utilized</span>
+            <span className="text-gray-500 font-semibold">{!isOwner ? (myBudget > 0 ? `₹${Math.max(0, myBudget - mySpent).toLocaleString('en-IN')} left of ₹${myBudget.toLocaleString('en-IN')}` : 'Budget not set') : `₹${remaining.toLocaleString('en-IN')} left of ₹${trip.totalBudget.toLocaleString('en-IN')}`}</span>
+          </span>
         </button>
-        <button onClick={() => setSquadOpen(true)} className="text-left clean-card rounded-2xl p-4 border border-slate-200 bg-white shadow-2xs space-y-1 hover:border-indigo-400 cursor-pointer">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-            Squad
-            <span className="flex items-center gap-0.5 text-[10px] font-bold text-indigo-600">View all <ChevronRight size={12} strokeWidth={2.75} stroke="currentColor" /></span>
+        <button onClick={() => setSquadOpen(true)} className="text-left bg-white rounded-3xl p-6 border border-gray-100 shadow-[0_8px_30px_rgb(0,0,0,0.03)] hover:shadow-[0_12px_40px_rgba(0,0,0,0.06)] transition-all duration-300 cursor-pointer flex flex-col justify-between">
+          <span className="flex flex-col gap-1">
+            <span className="text-[11px] font-bold uppercase tracking-widest text-gray-400 flex items-center justify-between">
+              Squad Members
+              <span className="flex items-center gap-1 text-xs font-bold text-[#4f46e5]">View all <ChevronRight size={12} strokeWidth={2.75} stroke="currentColor" /></span>
+            </span>
+            <span className="flex items-center gap-3 mt-1">
+              <span className="flex -space-x-2.5 overflow-hidden">
+                {trip.members.slice(0, 4).map((m, i) => (
+                  <MemberAvatar key={m.id} name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="xs" />
+                ))}
+              </span>
+              <span className="text-base font-bold text-gray-800 tracking-tight">{trip.members.length} friends active</span>
+            </span>
           </span>
-          <div className="flex items-center gap-2">
-            <div className="flex -space-x-1.5">
-              {trip.members.slice(0, 4).map((m, i) => (
-                <MemberAvatar key={m.id} name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="xs" />
-              ))}
-            </div>
-            <div className="text-xl font-extrabold text-slate-900 font-display">{trip.members.length} friends</div>
-          </div>
-          <span className="text-[11px] text-slate-500 font-medium block pt-1">Tap to view, add, edit or remove members</span>
+          <span className="mt-5 pt-3 border-t border-gray-50 block text-[11px] font-medium text-gray-400">Tap to view, add, or coordinate travel settings</span>
         </button>
       </div>
 
