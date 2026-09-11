@@ -430,7 +430,7 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
-      <div className="bg-white max-w-md w-full rounded-xl border border-[#e2e8f0] p-6 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto">
+      <div className="modal-enter bg-white max-w-md w-full rounded-xl border border-[#e2e8f0] p-6 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between">
           <h4 className="font-extrabold text-slate-900" style={{ letterSpacing: '0.02em' }}>Squad Members ({members.length})</h4>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-4 h-4" /></button>
