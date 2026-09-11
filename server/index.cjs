@@ -262,6 +262,62 @@ async function fanOutVoiceClip(clipId) {
   }
 }
 
+// ─── Chat push (WhatsApp-style): offline members get a system notification ──
+// Notification-only (proven instant channel). Online members saw it live.
+async function fanOutChat({ tripId, senderId, senderName, type, text }) {
+  try {
+    if (!tripId || type === 'system') return;
+    const name = senderName || 'Someone';
+    let preview = String(text || '').trim().slice(0, 120);
+    let channel = 'wandersync_chat';
+    if (type === 'location') preview = '📍 Shared a location';
+    else if (type === 'siren') {
+      preview = '🚨 Emergency siren — open now';
+      channel = 'wandersync_voice';
+    }
+    if (!preview) preview = 'New message';
+    const members = typeof roomMembers !== 'undefined' ? roomMembers.get(tripId) : null;
+    const online = new Set(members ? [...members.values()].map((m) => m.uid).filter(Boolean) : []);
+    const { rows } = await pool.query('SELECT uid, token FROM push_tokens WHERE "tripId" = $1', [tripId]);
+    const targets = rows.filter((r) => r.token && r.uid !== senderId && !online.has(r.uid));
+    if (!targets.length) return;
+    let tripTitle = 'Trip';
+    try {
+      const tr = await pool.query('SELECT title FROM trips WHERE id = $1', [tripId]);
+      if (tr.rows.length && tr.rows[0].title) tripTitle = String(tr.rows[0].title).slice(0, 60);
+    } catch { /* title optional */ }
+    const creds = loadFcmCreds();
+    if (!creds) return;
+    const access = await fcmAccessToken();
+    if (!access) return;
+    let sent = 0;
+    await Promise.all(targets.map(async (t) => {
+      try {
+        const payload = {
+          message: {
+            token: t.token,
+            notification: { title: `${name} • ${tripTitle}`, body: preview },
+            android: {
+              priority: 'high',
+              ttl: '300s',
+              notification: { channel_id: channel, sound: 'default' },
+            },
+          },
+        };
+        const r = await fetch(`https://fcm.googleapis.com/v1/projects/${creds.projectId}/messages:send`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (r.ok) sent++;
+      } catch { /* per-device fail, skip */ }
+    }));
+    console.log(`chat FCM: ${sent}/${targets.length} offline (trip ${tripId})`);
+  } catch (e) {
+    console.error('chat fan-out error:', e.message);
+  }
+}
+
 // Auth: signup
 app.post('/api/auth/signup', async (req, res) => {
   try {
@@ -726,6 +782,9 @@ io.on('connection', (socket) => {
       const { rows } = await pool.query('SELECT * FROM chat_messages WHERE id = $1', [id]);
       const saved = rows[0] || { ...msg };
       io.to(roomOf(tid)).emit('chat:new', saved);
+      // Closed-app reach (WhatsApp-style): offline members get a system
+      // notification; online ones already saw it live. Never blocks send.
+      void fanOutChat({ tripId: tid, senderId, senderName, type: type || 'text', text });
       if (ack) ack({ ok: true, message: saved });
     } catch (e) {
       console.error('chat:send error:', e.message);

@@ -27,6 +27,7 @@ public class MainActivity extends BridgeActivity {
     super.onCreate(savedInstanceState);
     stashVoiceTripExtra(getIntent());
     ensureVoiceChannel();
+    ensureChatChannel();
 
     if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
       requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_PERMISSION_REQUEST);
@@ -83,6 +84,26 @@ public class MainActivity extends BridgeActivity {
       ch.setDescription("Walkie-talkie voice bursts, even when the app is closed");
       ch.enableVibration(true);
       ch.setVibrationPattern(new long[]{0, 400, 150, 400});
+      ch.setSound(
+        android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+        new AudioAttributes.Builder()
+          .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+          .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+          .build());
+      nm.createNotificationChannel(ch);
+    } catch (Exception ignored) { /* channel optional */ }
+  }
+
+  /** Chat message channel (default importance + sound) for FCM auto-display. */
+  private void ensureChatChannel() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+    try {
+      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+      if (nm == null || nm.getNotificationChannel("wandersync_chat") != null) return;
+      NotificationChannel ch = new NotificationChannel(
+        "wandersync_chat", "Chat messages", NotificationManager.IMPORTANCE_DEFAULT);
+      ch.setDescription("New squad chat messages");
+      ch.enableVibration(true);
       ch.setSound(
         android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
         new AudioAttributes.Builder()
