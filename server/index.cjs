@@ -551,7 +551,11 @@ app.use('/api/:table', requireSession);
 app.get('/api/:table', async (req, res) => {
   try {
     const { table } = req.params;
+    if (!checkTable(table)) return fail(res, 404, 'Unknown table');
     const { single, order, ascending, ...filters } = req.query;
+    if (!checkIdents([...Object.keys(filters), ...(order ? [order] : [])])) {
+      return fail(res, 400, 'Invalid column');
+    }
 
     let sql = `SELECT * FROM ${table}`;
     const vals = [];
@@ -575,10 +579,27 @@ app.get('/api/:table', async (req, res) => {
   }
 });
 
+// ─── Generic table guard: table + identifiers come from the URL/body, so
+// allowlist them. Without this any authenticated caller could inject SQL
+// through a crafted table or column name.
+const KNOWN_TABLES = new Set([
+  'trips', 'expenses', 'todos', 'documents', 'settlements', 'expense_events',
+  'chat_messages', 'invites', 'members_joined', 'presence', 'push_tokens',
+  'signals', 'message_reads', 'users',
+]);
+const SAFE_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function checkTable(table) {
+  return typeof table === 'string' && KNOWN_TABLES.has(table);
+}
+function checkIdents(names) {
+  return names.every((n) => typeof n === 'string' && SAFE_IDENT.test(n));
+}
+
 // POST /api/:table — upsert
 app.post('/api/:table', async (req, res) => {
   try {
     const { table } = req.params;
+    if (!checkTable(table)) return fail(res, 404, 'Unknown table');
     const body = req.body;
     // Same rule as PUT: password hashes never enter via generic upsert.
     const rows = Array.isArray(body) ? body : [body];
@@ -596,6 +617,7 @@ app.post('/api/:table', async (req, res) => {
     if (rows.length === 0) return res.json({ data: [], error: null });
 
     const cols = Object.keys(rows[0]);
+    if (!checkIdents(cols)) return fail(res, 400, 'Invalid column');
     const colList = cols.map((c) => `"${c}"`).join(', ');
 
     const placeholders = rows.map((_, ri) =>
@@ -629,11 +651,15 @@ app.post('/api/:table', async (req, res) => {
 app.put('/api/:table', async (req, res) => {
   try {
     const { table } = req.params;
+    if (!checkTable(table)) return fail(res, 404, 'Unknown table');
     const { _filters, ...updates } = req.body;
     // Password hashes can only be written through the auth/admin endpoints
     // (which bcrypt them) — never as plaintext via generic update.
     if (table === 'users') delete updates.password_hash;
     const filters = _filters || {};
+    if (!checkIdents([...Object.keys(updates), ...Object.keys(filters)])) {
+      return fail(res, 400, 'Invalid column');
+    }
 
     const setClauses = [];
     const vals = [];
@@ -652,6 +678,8 @@ app.put('/api/:table', async (req, res) => {
     }
 
     if (setClauses.length === 0) return res.json({ data: null, error: 'No updates provided' });
+    // Refuse unfiltered mass update (would rewrite the whole table).
+    if (conds.length === 0) return fail(res, 400, 'Update needs a filter');
 
     let sql = `UPDATE ${table} SET ${setClauses.join(', ')}`;
     if (conds.length) sql += ` WHERE ${conds.join(' AND ')}`;
@@ -669,7 +697,11 @@ app.put('/api/:table', async (req, res) => {
 app.delete('/api/:table', async (req, res) => {
   try {
     const { table } = req.params;
+    if (!checkTable(table)) return fail(res, 404, 'Unknown table');
     const filters = req.query;
+    if (!checkIdents(Object.keys(filters))) {
+      return fail(res, 400, 'Invalid column');
+    }
 
     const conds = [];
     const vals = [];
@@ -682,6 +714,7 @@ app.delete('/api/:table', async (req, res) => {
 
     let sql = `DELETE FROM ${table}`;
     if (conds.length) sql += ` WHERE ${conds.join(' AND ')}`;
+    else return fail(res, 400, 'Delete needs a filter');
 
     await pool.query(sql, vals);
     res.json({ data: null, error: null });
