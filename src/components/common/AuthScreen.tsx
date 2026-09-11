@@ -29,6 +29,10 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
       setError('Email and password are required');
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Enter a valid email address');
+      return;
+    }
     if (!isLogin) {
       if (!name.trim()) {
         setError('Name is required');

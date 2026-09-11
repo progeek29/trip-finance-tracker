@@ -30,6 +30,49 @@ function safeSet(key: string, value: string): void {
   }
 }
 
+// ─── Account isolation: cached trips/expenses/photos are PER-USER ───
+// Every key below is global (ws_*), so without this a new login on the same
+// browser sees the previous user's data until sync overwrites it (data leak).
+const DATA_OWNER_KEY = 'ws_data_uid_v1';
+
+/** Wipe every app cache key (local + session). Used on logout + account switch. */
+export function clearAllLocalData(): void {
+  try {
+    const kill: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith('ws_') || k === 'wandersync_token' || k === 'wandersync_played_clips')) kill.push(k);
+    }
+    kill.forEach((k) => {
+      try { localStorage.removeItem(k); } catch { /* gone */ }
+    });
+  } catch { /* storage blocked */ }
+  try {
+    const killS: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith('ws_')) killS.push(k);
+    }
+    killS.forEach((k) => {
+      try { sessionStorage.removeItem(k); } catch { /* gone */ }
+    });
+  } catch { /* storage blocked */ }
+}
+
+/**
+ * Single choke point: whenever we learn the logged-in uid, make the cache
+ * belong to them. Different uid than cached → wipe first (no cross-account
+ * bleed), then stamp. Cheap (one read) and idempotent.
+ */
+export function claimDataOwner(uid: string | null): void {
+  try {
+    if (!uid) return;
+    const prev = localStorage.getItem(DATA_OWNER_KEY);
+    if (prev && prev !== uid) clearAllLocalData();
+    localStorage.setItem(DATA_OWNER_KEY, uid);
+  } catch { /* storage blocked */ }
+}
+
 export function loadTripsData(): Trip[] {
   const saved = localStorage.getItem(STORAGE_KEYS.TRIPS);
   if (saved) {

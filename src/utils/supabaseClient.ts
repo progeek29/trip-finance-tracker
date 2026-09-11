@@ -1,3 +1,5 @@
+import { claimDataOwner } from './storage';
+
 function apiHost(): string {
   try {
     // Production override (Vercel): VITE_API_URL=https://<backend>/api
@@ -53,13 +55,17 @@ let cachedIsAdmin: boolean = false;
 const ADMIN_EMAIL = 'admin@wandersync.com';
 
 export async function ensureCloudUser(): Promise<{ uid: string }> {
-  if (cachedUid) return { uid: cachedUid };
+  if (cachedUid) {
+    claimDataOwner(cachedUid);
+    return { uid: cachedUid };
+  }
   const token = getToken();
   if (!token) throw new Error('NOT_LOGGED_IN');
   const { data } = await api('/auth/user', { headers: { Authorization: `Bearer ${token}` } });
   if (data?.user) {
     cachedUid = data.user.id;
     cachedIsAdmin = data.user.email === ADMIN_EMAIL;
+    claimDataOwner(data.user.id);
     return { uid: data.user.id };
   }
   clearToken();
@@ -117,6 +123,11 @@ export async function authSignOut(): Promise<void> {
   clearToken();
   cachedUid = null;
   cachedIsAdmin = false;
+  // No cross-account bleed: drop every cached trip/expense/photo on logout.
+  try {
+    const { clearAllLocalData } = await import('./storage');
+    clearAllLocalData();
+  } catch { /* already gone */ }
 }
 
 /** Logout everywhere: revoke ALL server sessions (every device/tab/browser),

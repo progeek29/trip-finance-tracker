@@ -1,0 +1,201 @@
+{
+  "info": {
+    "name": "WanderSync API",
+    "description": "Trip Finance & Travel Sync backend. Flow: Health → Signup/Login (copy token) → everything else uses Bearer token. Socket.io realtime (rooms trip:<id>) is documented in the Realtime folder — voice bursts, chat, presence ride the socket, not REST.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://wandersync-app.duckdns.org", "description": "Public API host. Local dev: http://localhost:3001" },
+    { "key": "token", "value": "", "description": "Paste auth token from Auth/Signup or Auth/Signin response (data.token). Sent as Bearer on protected routes." }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Root",
+          "request": { "method": "GET", "url": "{{baseUrl}}/", "description": "Platform check. Expect {ok:true, service:'wandersync-api'}." }
+        },
+        {
+          "name": "API health (DB)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/health", "description": "DB ping. 200 {ok:true,time} = healthy. 503 {ok:false} = Postgres down — check VM docker." }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Signup",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/signup",
+            "description": "Create user. Email normalized+unique (case-proof), phone unique (last-10-digits), password min 6. 409 on duplicate. Copies: save data.token into {{token}}.",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"Test1234\",\n  \"name\": \"Test\",\n  \"phone\": \"9999999999\"\n}" }
+          }
+        },
+        {
+          "name": "Signin",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/signin",
+            "description": "Login. Email case-proof. Always 401 'Invalid email or password' on failure (never reveals if email exists — standard). Save data.token.",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"Test1234\"\n}" }
+          }
+        },
+        {
+          "name": "Current user",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/user",
+            "description": "Who owns this token. 200 {user:null} when logged out/expired.",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/forgot-password",
+            "description": "Reset by email. 404 'No account found' when email unknown (explicit by design). Login with new password after.",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test@example.com\",\n  \"newPassword\": \"NewPass123\"\n}" }
+          }
+        },
+        {
+          "name": "Logout everywhere",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/logout-all",
+            "description": "Revokes ALL sessions for this user (every device/tab/browser). Other devices hit login on next click.",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users (admin directory, no hashes)",
+      "item": [
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users",
+            "description": "Safe directory (id,email,name,phone,role). password_hash NEVER leaves the API.",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tables CRUD (generic, session-gated)",
+      "description": "One set of routes serves every table (trips, expenses, todos, documents, settlements, expense_events, chat_messages, invites, members_joined, presence, push_tokens, signals, message_reads, users-read). Trips upsert auto-stamps ownerUid from session when missing (ghost-trip guard). Unknown columns error visibly.",
+      "item": [
+        {
+          "name": "List rows (filter via query)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/trips",
+            "description": "List with optional ?col=value filters, ?single=true, ?order=col. Example filters trips; swap table name for others."
+          }
+        },
+        {
+          "name": "Upsert row",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/trips",
+            "description": "Insert or update by id. Body = row object (single) or array. users: password_hash stripped server-side.",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{token}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"id\": \"trip_probe\",\n  \"title\": \"Probe\",\n  \"startDate\": \"2026-10-01\",\n  \"endDate\": \"2026-10-05\",\n  \"totalBudget\": 1000\n}" }
+          }
+        },
+        {
+          "name": "Update rows by filter",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/trips",
+            "description": "Body has _filters + columns to set. Example renames the probe trip.",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{token}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"_filters\": { \"id\": \"trip_probe\" },\n  \"title\": \"Probe Renamed\"\n}" }
+          }
+        },
+        {
+          "name": "Delete rows by filter",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/trips?id=trip_probe",
+            "description": "Delete with ?col=value filters. Trips cascade (expenses/chat/etc. go with the trip).",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Voice clips (closed-app PTT store)",
+      "description": "Memory-only, 5-min TTL, max 50 clips. Sender uploads after socket burst; offline members fetch via native service. Server fans out FCM offline-only.",
+      "item": [
+        {
+          "name": "Upload clip",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/voice-clips",
+            "description": "Body: tripId, voiceUrl (data URL, max 8MB), senderUid, senderName, apiBase. Returns clipId. Triggers offline FCM fan-out.",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"tripId\": \"trip_1\",\n  \"voiceUrl\": \"data:audio/webm;base64,AAA\",\n  \"senderUid\": \"u_1\",\n  \"senderName\": \"Probe\",\n  \"apiBase\": \"https://wandersync-app.duckdns.org\"\n}" }
+          }
+        },
+        {
+          "name": "Download clip",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/voice-clips/:clipId", "description": "Native service download. 410 when expired. Replace :clipId with real id from upload." }
+        },
+        {
+          "name": "Latest clip for trip",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/voice-clips/latest?tripId=trip_1&since=0", "description": "Tap-to-open fallback: newest unexpired clip for a trip (app plays it on open)." }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "description": "Needs role=admin (admin@wandersync.com seeded). userId = admin's own uid, resolved server-side from token where applicable.",
+      "item": [
+        {
+          "name": "Create user",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/admin/create-user",
+            "description": "Admin creates login-ready user (server-side bcrypt — created users CAN log in).",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{token}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"new@example.com\",\n  \"password\": \"Test1234\",\n  \"name\": \"New\",\n  \"phone\": \"9888888888\"\n}" }
+          }
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/admin/reset-password",
+            "description": "Admin resets any user's password (never sees the old one — bcrypt one-way). Refuses? No — but delete refuses self.",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{token}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"userId\": \"u_target\",\n  \"newPassword\": \"NewPass123\"\n}" }
+          }
+        },
+        {
+          "name": "Delete user",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/admin/delete-user",
+            "description": "Deletes user + purges owned trips. Refuses self-delete (lockout-proof).",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{token}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"userId\": \"u_target\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Realtime (Socket.io — not REST)",
+      "description": "Connect ws to {{baseUrl}} (path /socket.io). Rooms: trip:<tripId> via room:join {tripId,uid,name}. Events: room:leave, bell:ring (ephemeral), voice:burst {tripId,voiceUrl,senderId,senderName,clipId,apiBase} (relayed + ingested for offline FCM, ack {ok}), chat:typing, chat:send {id,tripId,...} (persisted + broadcast + offline FCM fan-out, ack {ok,message}), chat:read, chat:pin, chat:delete. Test with the app (two logins) or a socket.io client — Postman REST cannot speak socket.io handshake reliably.",
+      "item": []
+    }
+  ]
+}

@@ -131,7 +131,7 @@ public class VoiceFirebaseService extends FirebaseMessagingService {
       stashPending(this, tripId, clipId);
       androidx.core.app.NotificationCompat.Builder b =
         new androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
-          .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+          .setSmallIcon(R.mipmap.ic_launcher)
           .setContentTitle(sender + " • voice")
           .setContentText("Tap to open trip & listen")
           .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)

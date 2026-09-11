@@ -36,6 +36,12 @@ async function requireSession(req, res, next) {
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// ─── API envelope: every response is { data, error }; failures ALSO carry
+// the right HTTP status (client reads the body, monitors read the status).
+function fail(res, status, message) {
+  return res.status(status).json({ data: null, error: message });
+}
+
 // ─── Specific routes FIRST (before generic /:table) ────────
 
 // Root (platform health checks) + API health check
@@ -48,13 +54,13 @@ app.get('/api', (req, res) => {
   res.json({ ok: true, service: 'wandersync-api', health: '/api/health' });
 });
 
-// Health check
+// Health check — 503 when the DB is down (monitors read the status).
 app.get('/api/health', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT NOW()');
     res.json({ ok: true, time: rows[0].now });
   } catch (e) {
-    res.json({ ok: false, error: e.message });
+    return res.status(503).json({ ok: false, error: e.message });
   }
 });
 
@@ -237,7 +243,7 @@ async function fanOutVoiceClip(clipId) {
             android: {
               priority: 'high',
               ttl: '300s',
-              notification: { channel_id: 'wandersync_voice', sound: 'default' },
+              notification: { channel_id: 'wandersync_voice', sound: 'default', icon: 'ic_launcher' },
             },
           },
         };
@@ -300,7 +306,7 @@ async function fanOutChat({ tripId, senderId, senderName, type, text }) {
             android: {
               priority: 'high',
               ttl: '300s',
-              notification: { channel_id: channel, sound: 'default' },
+              notification: { channel_id: channel, sound: 'default', icon: 'ic_launcher' },
             },
           },
         };
@@ -318,14 +324,36 @@ async function fanOutChat({ tripId, senderId, senderName, type, text }) {
   }
 }
 
-// Auth: signup
+// Auth: signup — email + phone unique (case/format-proof), validated.
 app.post('/api/auth/signup', async (req, res) => {
   try {
-    const { email, password, name, phone } = req.body;
-    if (!email || !password) return res.json({ data: null, error: 'Email and password required' });
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const name = String(req.body?.name || '').trim();
+    const phone = normPhone(req.body?.phone);
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return fail(res, 400, 'Enter a valid email address');
+    }
+    if (!password || password.length < 6) {
+      return fail(res, 400, 'Password must be at least 6 characters');
+    }
 
-    const { rows: existing } = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existing.length > 0) return res.json({ data: null, error: 'User already exists' });
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]
+    );
+    if (existing.length > 0) {
+      return fail(res, 409, 'This email is already registered. Try logging in.');
+    }
+    if (phone) {
+      const { rows: phoneHit } = await pool.query(
+        `SELECT id FROM users
+         WHERE RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g'), 10) = $1`,
+        [phone]
+      );
+      if (phoneHit.length > 0) {
+        return fail(res, 409, 'This mobile number is already registered.');
+      }
+    }
 
     const id = 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
     const hash = await bcrypt.hash(password, 10);
@@ -333,29 +361,35 @@ app.post('/api/auth/signup', async (req, res) => {
 
     await pool.query(
       'INSERT INTO users (id, email, name, phone, role, password_hash) VALUES ($1, $2, $3, $4, $5, $6)',
-      [id, email, name || '', phone || '', role, hash]
+      [id, email, name, phone, role, hash]
     );
 
     const token = await createSession(id);
     res.json({ data: { user: { id, email }, token }, error: null });
   } catch (e) {
+    // Race-proof backstop: DB unique constraint hit between check and insert.
+    if (e && (e.code === '23505' || String(e.message || '').toLowerCase().includes('unique'))) {
+      return fail(res, 409, 'This email is already registered. Try logging in.');
+    }
     console.error('Signup error:', e.message);
-    res.json({ data: null, error: e.message });
+    return fail(res, 500, e.message);
   }
 });
 
-// Auth: signin
+// Auth: signin — email normalized (case-proof). Generic failure message on
+// purpose: login must NOT reveal whether an email exists (standard practice).
 app.post('/api/auth/signin', async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.json({ data: null, error: 'Email and password required' });
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    if (!email || !password) return fail(res, 400, 'Email and password required');
 
-    const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (rows.length === 0) return res.json({ data: null, error: 'Invalid email or password' });
+    const { rows } = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    if (rows.length === 0) return fail(res, 401, 'Invalid email or password');
 
     const user = rows[0];
     const valid = await bcrypt.compare(password, user.password_hash || '');
-    if (!valid) return res.json({ data: null, error: 'Invalid email or password' });
+    if (!valid) return fail(res, 401, 'Invalid email or password');
 
     const token = await createSession(user.id);
     res.json({ data: { user: { id: user.id, email: user.email }, token }, error: null });
@@ -418,13 +452,13 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const rawPassword = req.body?.newPassword ?? req.body?.password;
     const email = rawEmail.toLowerCase();
 
-    if (!email) return res.json({ data: null, error: 'Email is required' });
+    if (!email) return fail(res, 400, 'Email is required');
     if (!rawPassword || String(rawPassword).trim().length < 6) {
-      return res.json({ data: null, error: 'New password must be at least 6 characters' });
+      return fail(res, 400, 'New password must be at least 6 characters');
     }
 
     const { rows } = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-    if (rows.length === 0) return res.json({ data: null, error: 'No account found with this email' });
+    if (rows.length === 0) return fail(res, 404, 'No account found with this email');
 
     const hash = await bcrypt.hash(String(rawPassword), 10);
     await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, rows[0].id]);
@@ -655,6 +689,17 @@ app.delete('/api/:table', async (req, res) => {
     console.error('DELETE error:', e.message);
     res.json({ data: null, error: e.message });
   }
+});
+
+// Unknown API route — always the envelope, never an HTML stack page.
+app.use('/api', (req, res) => fail(res, 404, 'Unknown endpoint'));
+
+// Last net: any uncaught error becomes a 500 envelope (never leaks a stack).
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('Unhandled API error:', err && err.message);
+  if (res.headersSent) return next(err);
+  return fail(res, 500, 'Server error. Try again.');
 });
 
 const PORT = Number(process.env.PORT || 3001);

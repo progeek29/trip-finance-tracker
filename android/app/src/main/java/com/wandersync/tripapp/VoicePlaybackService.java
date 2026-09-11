@@ -123,7 +123,7 @@ public class VoicePlaybackService extends Service {
       new Intent(this, VoicePlaybackService.class).setAction(ACTION_STOP),
       PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     NotificationCompat.Builder b = new NotificationCompat.Builder(this, VoiceFirebaseService.CHANNEL_ID)
-      .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+      .setSmallIcon(R.mipmap.ic_launcher)
       .setContentTitle(sender + " • voice")
       .setContentText("Playing walkie-talkie burst")
       .setPriority(NotificationCompat.PRIORITY_HIGH)
