@@ -132,7 +132,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="max-w-md w-full rounded-3xl p-5 sm:p-6 border border-gray-100 bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)] max-h-[92vh] overflow-y-auto">
+      <div className="modal-enter max-w-md w-full rounded-3xl p-5 sm:p-6 border border-gray-100 bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)] max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
           <h3 className="text-sm font-extrabold text-slate-900 font-display tracking-tight">{initialExpense ? 'Edit Expense' : 'Add Expense'}</h3>
           <button onClick={onClose} className="p-1 rounded-full text-slate-400 hover:text-slate-600 cursor-pointer">

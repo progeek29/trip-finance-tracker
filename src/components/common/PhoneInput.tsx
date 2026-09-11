@@ -32,13 +32,13 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({ value, onChange, placeho
 
   return (
     <div>
-      {label && <label className="block text-[11px] font-bold text-slate-700 mb-1">{label}</label>}
+      {label && <label className="block ui-label mb-1">{label}</label>}
       <div
         className={`flex items-center rounded-xl border bg-slate-50 focus-within:bg-white transition-colors overflow-hidden ${
           showError ? 'border-rose-300' : 'border-slate-200 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100'
         }`}
       >
-        <span className="pl-3.5 pr-2 py-2.5 text-sm font-bold text-slate-500 select-none">+91</span>
+        <span className="pl-3.5 pr-2 py-2.5 text-sm font-semibold text-slate-500 select-none">+91</span>
         <input
           type="tel"
           inputMode="numeric"
@@ -47,7 +47,7 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({ value, onChange, placeho
           maxLength={10}
           onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 10))}
           placeholder={placeholder || 'Mobile number'}
-          className="flex-1 min-w-0 bg-transparent py-2.5 pr-3.5 text-sm text-slate-800 focus:outline-none placeholder-slate-300"
+          className="flex-1 min-w-0 bg-transparent py-2.5 pr-3.5 text-sm font-semibold text-slate-800 focus:outline-none placeholder-slate-300"
         />
       </div>
       {showError && <p className="text-[10px] text-rose-500 font-bold mt-1">Enter a 10-digit mobile number</p>}

@@ -7,11 +7,10 @@ import { BUILD_TAG } from '../../utils/version';
 import { viewerBudget } from '../../utils/budget';
 import { tripOwnerUid } from '../../utils/budget';
 import { MediaImg } from '../common/MediaImg';
-import { CategoryNavigation } from '../common/CategoryNavigation';
 import {
-  MapPin, Calendar, Wallet, ChevronRight,
+  MapPin, Calendar, Users, User, Wallet, ChevronRight,
   MoreVertical, Edit2, Trash2, Plane, CheckCircle2,
-  Clock, Zap, Star, Share2
+  Clock, Zap, Star, Share2, Globe
 } from 'lucide-react';
 
 interface TripLandingViewProps {
@@ -127,7 +126,7 @@ function TripCard({
 
   return (
     <div
-      className={`group relative bg-white rounded-2xl overflow-hidden shadow-sm border border-slate-200/80 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-pointer ${live === 'completed' ? 'opacity-80' : ''}`}
+      className={`group relative bg-white rounded-2xl overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.08)] border border-slate-200/80 hover:shadow-[0_12px_32px_rgba(0,0,0,0.12)] hover:-translate-y-0.5 transition-all duration-200 cursor-pointer ${live === 'completed' ? 'opacity-80' : ''}`}
       onClick={onSelect}
     >
       {/* Cover Image */}
@@ -375,20 +374,30 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
 
       {/* Filter chips */}
       <div className="max-w-2xl mx-auto px-4 pt-5 pb-1">
-        {/* Ownership pills — Airbnb style, categories from data */}
-        <CategoryNavigation
-          categories={[
-            { id: 'all', label: 'All' },
-            { id: 'owned', label: 'Owner' },
-            { id: 'joined', label: 'Joined' },
-          ]}
-          activeCategory={ownershipFilter}
-          onCategoryChange={(id) => {
-            const next = id as 'all' | 'owned' | 'joined';
-            setOwnershipFilter(next);
-            onOwnerFilterChange?.(next);
-          }}
-        />
+        {/* Ownership tabs */}
+        <div className="relative grid grid-cols-3 gap-2 overflow-hidden rounded-full bg-slate-100 p-1">
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-1 left-1 w-[calc((100%-1rem)/3)] rounded-full bg-indigo-600 shadow-sm shadow-indigo-200 transition-transform duration-300 ease-out"
+            style={{ transform: `translateX(${(['all', 'owned', 'joined'] as const).indexOf(ownershipFilter) * 100}%)` }}
+          />
+          {(['all', 'owned', 'joined'] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => {
+                setOwnershipFilter(f);
+                onOwnerFilterChange?.(f);
+              }}
+              className={`relative z-10 min-w-0 px-4 py-2 rounded-full text-sm font-semibold transition-colors duration-200 ${
+                ownershipFilter === f
+                  ? 'text-white'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {f === 'all' ? 'All' : f === 'owned' ? 'Owner' : 'Joined'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Trips Grid */}

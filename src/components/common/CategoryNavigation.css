@@ -2,6 +2,7 @@
   --category-pill-height: 48px;
   --category-pill-radius: 30px;
   --category-gap: 10px;
+  --category-pill-min-width: 118px;
   --category-shadow:
     inset 0 1px 1px rgba(255, 255, 255, 0.9),
     inset 0 -2px 3px rgba(0, 0, 0, 0.05),
@@ -29,6 +30,8 @@
 
 .category-pill {
   flex-shrink: 0;
+  min-width: var(--category-pill-min-width);
+  justify-content: center;
   height: var(--category-pill-height);
   border-radius: var(--category-pill-radius);
   background: #ffffff;
@@ -62,9 +65,12 @@
 /* Pressed DOWN: the human psychology of "I pushed this button" */
 .category-pill.active {
   transform: translateY(2px);
-  background: #f4f4f5;
-  border-color: #e4e4e7;
-  box-shadow: var(--category-shadow-active);
+  background: #ffffff;
+  border-color: #e4e4e4;
+  color: #1a1a1a;
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.06);
   font-weight: 600;
 }
 
@@ -86,6 +92,7 @@
     --category-padding-x: 18px;
     --category-font-size: 14px;
     --category-gap: 10px;
+    --category-pill-min-width: 100px;
   }
 }
 
@@ -96,5 +103,12 @@
     --category-padding-x: 30px;
     --category-font-size: 17px;
     --category-gap: 14px;
+    --category-pill-min-width: 0;
+  }
+  /* Full-width rhythm like the stat cards above: equal columns, phone keeps scroll */
+  .category-nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    overflow: visible;
   }
 }

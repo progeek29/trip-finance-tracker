@@ -230,3 +230,15 @@ input[type='number'] {
 .ui-footer { margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid #f9fafb; font-size: 12px; color: #9ca3af; font-weight: 500; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .ui-section { font-size: 0.875rem; font-weight: 800; color: #0f172a; font-family: 'Outfit', sans-serif; }
 
+
+/* Fullscreen panel enter (notification feed) */
+.panel-enter { animation: panel-in .25s ease-out; }
+@keyframes panel-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Modal enter (QuickAdd and popups) */
+.modal-enter { animation: modal-in .22s ease-out; }
+@keyframes modal-in { from { opacity: 0; transform: scale(.96) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+
+/* Tab switch fade-slide */
+.tab-enter { animation: tab-in .22s ease-out; }
+@keyframes tab-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

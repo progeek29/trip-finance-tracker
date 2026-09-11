@@ -3,6 +3,7 @@ import { Trip, Expense, Settlement, ExpenseEvent } from '../../types';
 import { calculateMemberBalances, simplifyDebts } from '../../utils/debtSimplifier';
 import { Search, Edit2, Trash2, Download, Users, ArrowRight, CheckCircle2, History, Receipt } from 'lucide-react';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { SmoothExpand } from '../common/SmoothExpand';
 import { MemberAvatar } from '../common/MemberAvatar';
 
 interface CleanExpensesViewProps {
@@ -257,7 +258,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
             <button onClick={() => setHistoryOpen(!historyOpen)} className="flex items-center gap-1.5 text-xs font-extrabold text-slate-700 hover:text-indigo-600 cursor-pointer">
               <History size={13} /> Expense History ({expenseEvents.length}) {historyOpen ? '▲' : '▼'}
             </button>
-            {historyOpen && (
+            <SmoothExpand open={historyOpen}>
               <div className="space-y-1.5">
                 {expenseEvents.length === 0 && (
                   <p className="text-[11px] text-slate-400 font-medium">No edits yet.</p>
@@ -273,7 +274,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
                   </div>
                 ))}
               </div>
-            )}
+            </SmoothExpand>
           </div>
 
           {/* Printable full-history statement (hidden on screen, included in PDF) */}

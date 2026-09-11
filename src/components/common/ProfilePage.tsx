@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, User, Phone, Mail, Shield, LogOut, Pencil } from 'lucide-react';
 import { PhoneInput, isValidPhone } from './PhoneInput';
+import { SmoothExpand } from './SmoothExpand';
 import { lookupInvite, joinTripById } from '../../utils/invites';
 import { supabase } from '../../utils/supabaseClient';
 import type { UserProfile } from '../../utils/storage';
@@ -42,6 +43,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [choices, setChoices] = useState<Trip[] | null>(null);
+  const [joinOpen, setJoinOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -58,7 +60,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         setEmail(u.email || '');
         setSavedEmail(u.email || '');
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const isAdmin = profile?.role === 'admin';
@@ -217,17 +219,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                   value={email}
                   onChange={(e) => { setEmail(e.target.value); setEmailMsg(null); }}
                   placeholder="you@email.com"
-                  className="flex-1 min-w-0 rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 placeholder-slate-300"
+                  readOnly
+                  className="flex-1 min-w-0 rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm font-semibold text-slate-800 focus:outline-none placeholder-slate-300"
                 />
-                <button
-                  type="button"
-                  onClick={updateEmail}
-                  disabled={emailBusy || !email.trim() || email.trim().toLowerCase() === savedEmail.toLowerCase()}
-                  className="w-8 h-8 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-500/10 active:bg-slate-500/15 active:scale-95 disabled:opacity-30 disabled:hover:bg-transparent flex items-center justify-center flex-shrink-0 self-center transition-all cursor-pointer"
-                  title="Save email"
-                >
-                  <Pencil size={15} strokeWidth={1.75} />
-                </button>
               </div>
               {emailMsg && (
                 <p className={`mt-1.5 text-[11px] font-bold rounded-lg px-3 py-1.5 ${emailMsg.ok ? 'text-emerald-600 bg-emerald-50' : 'text-rose-500 bg-rose-50'}`}>
@@ -247,59 +241,64 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               type="submit"
               className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer transition-colors"
             >
-              Save Changes
+              Save
             </button>
           </form>
         </div>
 
-        {/* Join with Code */}
-        <div className="ui-card p-6 space-y-3">
-          <h3 className="ui-section">Join a Trip</h3>
-          <p className="text-[11px] text-slate-500 font-medium -mt-1">
-            Enter the invite code your friend shared.
-          </p>
-
-          {!choices ? (
-            <>
-              <div className="flex gap-2">
-                <input
-                  value={code}
-                  onChange={(e) => {
-                    setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6));
-                    setError(null);
-                  }}
-                  placeholder="e.g. GOA4X8"
-                  className="flex-1 min-w-0 rounded-xl bg-slate-50 border border-slate-200 px-4 py-2.5 text-center text-lg font-extrabold tracking-[0.3em] text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 placeholder-slate-300 placeholder:tracking-normal placeholder:text-sm placeholder:font-medium"
-                />
-                <button
-                  onClick={lookup}
-                  disabled={busy || code.trim().length < 4}
-                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold cursor-pointer flex-shrink-0 transition-colors"
-                >
-                  {busy ? '...' : 'Join'}
-                </button>
-              </div>
-              {error && <p className="text-[11px] text-rose-500 font-bold text-center">{error}</p>}
-            </>
-          ) : (
-            <div className="space-y-1.5">
-              <p className="text-[11px] text-slate-500 font-medium">Pick a trip to join:</p>
-              {choices.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => joinOne(t.id)}
-                  disabled={busy}
-                  className="w-full text-left p-3 rounded-xl bg-slate-50 hover:bg-indigo-50 border border-slate-200 text-xs cursor-pointer transition-colors"
-                >
-                  <span className="block font-extrabold text-slate-900 truncate">{t.title}</span>
-                  <span className="block text-[11px] text-slate-500">{t.startDate} • {t.members?.length || 0} members</span>
-                </button>
-              ))}
-              <button onClick={() => setChoices(null)} className="w-full text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer">
-                Use a different code
-              </button>
+        {/* Join with Code — walkie-style button, smooth expand inline (not a popup) */}
+        <div className="space-y-3">
+          <button
+            onClick={() => setJoinOpen((v) => !v)}
+            className="w-full flex items-center justify-center gap-2.5 py-3.5 rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-sm font-extrabold shadow-lg shadow-indigo-200 active:scale-[0.99] transition-all cursor-pointer focus:outline-none"
+          >
+            Join a Trip
+          </button>
+          <SmoothExpand open={joinOpen}>
+            <div className="space-y-3" onClick={(e) => e.stopPropagation()}>
+              {!choices ? (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      value={code}
+                      onChange={(e) => {
+                        setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6));
+                        setError(null);
+                      }}
+                      placeholder="e.g. GOA4X8"
+                      className="flex-1 min-w-0 rounded-xl bg-slate-50 border border-slate-200 px-4 py-2.5 text-center text-lg font-extrabold tracking-[0.3em] text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 placeholder-slate-300 placeholder:tracking-normal placeholder:text-sm placeholder:font-medium"
+                    />
+                    <button
+                      onClick={lookup}
+                      disabled={busy || code.trim().length < 4}
+                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold cursor-pointer flex-shrink-0 transition-colors"
+                    >
+                      {busy ? '...' : 'Join'}
+                    </button>
+                  </div>
+                  {error && <p className="text-[11px] text-rose-500 font-bold text-center">{error}</p>}
+                </>
+              ) : (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-slate-500 font-medium">Pick a trip to join:</p>
+                  {choices.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => joinOne(t.id)}
+                      disabled={busy}
+                      className="w-full text-left p-3 rounded-xl bg-slate-50 hover:bg-indigo-50 border border-slate-200 text-xs cursor-pointer transition-colors"
+                    >
+                      <span className="block font-extrabold text-slate-900 truncate">{t.title}</span>
+                      <span className="block text-[11px] text-slate-500">{t.startDate} • {t.members?.length || 0} members</span>
+                    </button>
+                  ))}
+                  <button onClick={() => setChoices(null)} className="w-full text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer">
+                    Use a different code
+                  </button>
+                </div>
+              )}
             </div>
-          )}
+          </SmoothExpand>
         </div>
 
         {/* Admin + Logout */}
