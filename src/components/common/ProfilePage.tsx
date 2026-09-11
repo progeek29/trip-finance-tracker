@@ -159,17 +159,17 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         <div className="max-w-lg mx-auto px-4 h-14 flex items-center gap-3">
           <button
             onClick={onBack}
-            className="flex items-center justify-center w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
+            className="flex items-center justify-center p-1 text-slate-700 hover:text-indigo-600 transition-colors cursor-pointer"
           >
-            <ArrowLeft size={16} />
+            <ArrowLeft size={20} strokeWidth={2} />
           </button>
-          <h1 className="font-extrabold text-slate-900 text-lg">Profile</h1>
+          <h1 className="font-extrabold text-slate-900 text-lg font-display tracking-tight">Profile</h1>
         </div>
       </header>
 
       <div className="max-w-lg mx-auto px-4 py-6 space-y-6">
         {/* Profile Card */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+        <div className="ui-card p-6 space-y-4">
           <div className="flex items-center gap-3">
             <div className="w-14 h-14 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xl font-extrabold">
               {name ? name.charAt(0).toUpperCase() : <User size={24} />}
@@ -193,7 +193,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
           <form onSubmit={submitProfile} className="space-y-3">
             <div>
-              <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 mb-1">
+              <label className="flex items-center gap-1.5 ui-label mb-1">
                 <User size={12} /> Name
               </label>
               <input
@@ -208,7 +208,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             <PhoneInput label="Mobile number" value={phone} onChange={setPhone} />
 
             <div>
-              <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 mb-1">
+              <label className="flex items-center gap-1.5 ui-label mb-1">
                 <Mail size={12} /> Email (login ID)
               </label>
               <div className="flex gap-2">
@@ -253,8 +253,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         </div>
 
         {/* Join with Code */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
-          <h3 className="font-extrabold text-slate-900 text-sm">Join a Trip</h3>
+        <div className="ui-card p-6 space-y-3">
+          <h3 className="ui-section">Join a Trip</h3>
           <p className="text-[11px] text-slate-500 font-medium -mt-1">
             Enter the invite code your friend shared.
           </p>

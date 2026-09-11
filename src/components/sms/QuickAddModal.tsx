@@ -132,9 +132,9 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="clean-surface max-w-md w-full rounded-3xl p-5 sm:p-6 border border-slate-200 bg-white shadow-2xl max-h-[92vh] overflow-y-auto">
+      <div className="max-w-md w-full rounded-3xl p-5 sm:p-6 border border-gray-100 bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)] max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-          <h3 className="text-sm font-extrabold text-slate-900">{initialExpense ? 'Edit Expense' : 'Add Expense'}</h3>
+          <h3 className="text-sm font-extrabold text-slate-900 font-display tracking-tight">{initialExpense ? 'Edit Expense' : 'Add Expense'}</h3>
           <button onClick={onClose} className="p-1 rounded-full text-slate-400 hover:text-slate-600 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
@@ -142,23 +142,26 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 
         <form onSubmit={handleSubmit} className="space-y-3.5">
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1">Amount (Rs.) *</label>
-              <input
-                type="number"
-                placeholder="0"
-                value={amount}
-                onChange={(e) => {
-                  setAmount(e.target.value === '' ? '' : Number(e.target.value));
-                  if (formError === 'amount' && Number(e.target.value) > 0) setFormError(null);
-                }}
-                className={`w-full rounded-xl border px-3 py-2 text-base font-extrabold text-slate-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-indigo-100 font-display ${
-                  formError === 'amount' ? 'bg-rose-50 border-rose-400 placeholder-rose-300 focus:border-rose-400' : 'bg-slate-50 border-slate-200 focus:border-indigo-500'
-                }`}
-              />
+              <label className="block ui-label mb-1.5">Amount *</label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg text-slate-400 select-none">₹</span>
+                <input
+                  type="number"
+                  placeholder="0"
+                  value={amount}
+                  onChange={(e) => {
+                    setAmount(e.target.value === '' ? '' : Number(e.target.value));
+                    if (formError === 'amount' && Number(e.target.value) > 0) setFormError(null);
+                  }}
+                  className={`w-full rounded-2xl border pl-10 pr-4 py-2.5 text-lg text-slate-900 tabular-nums focus:outline-none focus:bg-white focus:ring-2 focus:ring-indigo-100 font-display placeholder:text-slate-300 ${
+                    formError === 'amount' ? 'bg-rose-50 border-rose-400 placeholder-rose-200 focus:border-rose-400' : 'bg-slate-50 border-slate-200 focus:border-indigo-500'
+                  }`}
+                />
+              </div>
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1">Description / Merchant *</label>
+              <label className="block ui-label mb-1.5">What you paid for *</label>
               <input
                 type="text"
                 placeholder="e.g. Thalassa Restaurant, Cab to Airport..."
@@ -167,10 +170,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                   setTitle(e.target.value);
                   if (formError === 'title' && e.target.value.trim()) setFormError(null);
                 }}
-                className={`w-full rounded-xl border px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-indigo-100 ${
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-indigo-100 font-display placeholder:text-slate-300 ${
                   formError === 'title' ? 'bg-rose-50 border-rose-400 placeholder-rose-300 focus:border-rose-400' : 'bg-slate-50 border-slate-200 focus:border-indigo-500'
                   }`}
-                />
+              />
               </div>
 
             <div>

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Plane, Mail, Lock, ArrowRight, User } from 'lucide-react';
+import { Mail, Lock, ArrowRight, User } from 'lucide-react';
 import { authSignUp, authSignIn, authForgotPassword } from '../../utils/supabaseClient';
 import { PhoneInput, isValidPhone } from './PhoneInput';
+import { Logo } from './Logo';
 
 interface AuthScreenProps {
   onAuth: (profile?: { name: string; phone: string; inviteCode?: string }) => void;
@@ -98,8 +99,8 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-6">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-600 to-pink-600 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-indigo-600/30">
-            <Plane className="w-8 h-8 text-white" />
+          <div className="flex justify-center mb-4 drop-shadow-lg">
+            <Logo size={64} />
           </div>
           <h1 className="text-2xl font-extrabold text-slate-900">WanderSync</h1>
           <p className="text-sm text-slate-500 mt-1">Trip finance, simplified</p>

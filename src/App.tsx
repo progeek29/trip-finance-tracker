@@ -1659,7 +1659,10 @@ export function App() {
         totalSpent={viewerBudget(activeTrip, tripExpenses, myUid, isAdmin).spent}
         totalBudget={viewerBudget(activeTrip, tripExpenses, myUid, isAdmin).budget}
         tripTitle={activeTrip.title}
-        onBackToTrips={() => setAppView('landing')}
+        onBackToTrips={() => {
+          if (activeTab === 'trip') setAppView('landing');
+          else setActiveTab('trip');
+        }}
         unreadCount={chatFeed.filter((m) => msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system').length}
         onBellClick={() => setNotifOpen((v) => !v)}
         bellPulse={bellPulse}

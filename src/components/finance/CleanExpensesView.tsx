@@ -54,12 +54,12 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
   return (
     <div className="space-y-5 max-w-3xl mx-auto pb-24">
       {/* View toggle: Balances (default) · All Expenses */}
-      <div className="flex gap-1.5 p-1 bg-white border border-slate-200 rounded-xl">
+      <div className="flex gap-1 p-1 bg-slate-100 rounded-full">
         {(['balances', 'all'] as const).map((v) => (
           <button
             key={v}
             onClick={() => setView(v)}
-            className={`flex-1 py-2 rounded-lg text-xs font-bold cursor-pointer ${view === v ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
+            className={`flex-1 py-2 rounded-full text-xs font-bold cursor-pointer transition-all ${view === v ? 'bg-white text-[#4f46e5] font-extrabold shadow-[0_2px_8px_rgba(0,0,0,0.1)]' : 'text-slate-500 hover:text-slate-800'}`}
           >
             {v === 'balances' ? 'Balances' : `All Expenses (${expenses.length})`}
           </button>
@@ -69,9 +69,9 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
       {view === 'balances' ? (
         <>
           {/* My balance card */}
-          <div className="clean-card rounded-3xl p-6 border border-slate-200 bg-white shadow-xs">
-            <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">Your Balance</span>
-            <div className={`text-3xl font-extrabold font-display mt-1 tracking-tight ${myBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+          <div className="ui-card p-6">
+            <span className="ui-label">Your Balance</span>
+            <div className={`ui-metric mt-1 ${myBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
               {myBalance >= 0 ? `+₹${myBalance.toLocaleString('en-IN')}` : `-₹${Math.abs(myBalance).toLocaleString('en-IN')}`}
             </div>
             <p className="text-xs text-slate-500 font-medium mt-1">
@@ -82,11 +82,11 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
           {/* Who owes whom */}
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-extrabold text-slate-900 font-display">Who Owes Whom</h3>
-              <button onClick={onGoSplit} className="text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer">Full splitwise →</button>
+              <h3 className="ui-section">Who Owes Whom</h3>
+              <button onClick={onGoSplit} className="ui-link">Full splitwise →</button>
             </div>
             {debts.length === 0 ? (
-              <div className="clean-card rounded-2xl p-6 text-center border border-slate-200 bg-white">
+              <div className="ui-card p-6 text-center">
                 <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
                 <p className="text-xs text-slate-700 font-bold">All settled — nobody owes anybody.</p>
               </div>
@@ -95,7 +95,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
                 const from = getMember(debt.fromMemberId);
                 const to = getMember(debt.toMemberId);
                 return (
-                  <div key={idx} className="clean-card rounded-2xl p-4 border border-slate-200 bg-white flex items-center justify-between gap-3">
+                  <div key={idx} className="ui-card p-4 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="flex -space-x-2 flex-shrink-0">
                         <MemberAvatar name={from.name} avatar={from.avatar} memberId={from.id} size="sm" />
@@ -119,10 +119,10 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
 
           {/* Member nets */}
           <div className="space-y-2.5">
-            <h3 className="text-sm font-extrabold text-slate-900 font-display">Member Balances</h3>
+            <h3 className="ui-section">Member Balances</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {balances.map((b, i) => (
-                <div key={b.memberId} className="clean-card rounded-2xl p-4 border border-slate-200 bg-white space-y-2 text-center shadow-2xs">
+                <div key={b.memberId} className="ui-card p-4 space-y-2 text-center">
                   <div className="flex justify-center"><MemberAvatar name={b.member.name} avatar={b.member.avatar} memberId={b.memberId} index={i} size="lg" /></div>
                   <span className="text-xs font-extrabold text-slate-900 block truncate">{b.member.name}</span>
                   <span className={`text-xs font-extrabold block px-2 py-0.5 rounded-full ${b.netBalance >= 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
@@ -136,12 +136,12 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
       ) : (
         <>
           {/* 1. Large Spend Header */}
-          <div className="clean-card rounded-3xl p-6 sm:p-7 border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="ui-card p-6 sm:p-7 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <span className="text-[11px] font-extrabold text-slate-400 block uppercase tracking-wider">
+              <span className="ui-label block">
                 Total Trip Spend
               </span>
-              <div className="text-3xl sm:text-4xl font-extrabold text-slate-900 font-display mt-1 tracking-tight">
+              <div className="ui-metric text-slate-900 mt-1">
                 ₹{totalSpent.toLocaleString('en-IN')}
               </div>
               <div className="text-[11px] text-slate-500 font-medium mt-1">
@@ -190,7 +190,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
               return (
                 <div
                   key={exp.id}
-                  className="clean-card rounded-2xl p-4 border border-slate-200 bg-white hover:border-indigo-300 flex items-center justify-between gap-4 transition-all shadow-2xs"
+                  className="ui-card p-4 hover:border-indigo-300 flex items-center justify-between gap-4 transition-all"
                 >
               <div className="flex items-center gap-3.5">
                 <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center flex-shrink-0">
@@ -263,7 +263,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
                   <p className="text-[11px] text-slate-400 font-medium">No edits yet.</p>
                 )}
                 {expenseEvents.map((ev) => (
-                  <div key={ev.id} className="bg-white border border-slate-200 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+                  <div key={ev.id} className="bg-white border border-gray-100 rounded-2xl px-3 py-2 flex items-center justify-between gap-2 shadow-[0_8px_30px_rgb(0,0,0,0.03)]">
                     <p className="text-[11px] text-slate-600 font-medium truncate">
                       <strong className="text-slate-800">{ev.byName}</strong> {ev.action} <strong className="text-slate-800">"{ev.title}"</strong> (Rs.{Number(ev.amount).toLocaleString('en-IN')})
                     </p>

@@ -64,10 +64,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 id="back-to-trips-btn"
                 onClick={onBackToTrips}
-                className="flex items-center justify-center w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors flex-shrink-0"
-                title="All Trips"
+                className="flex items-center justify-center p-1 text-slate-700 hover:text-indigo-600 transition-colors flex-shrink-0 cursor-pointer"
+                title="Back to trip"
               >
-                <ArrowLeft size={15} />
+                <ArrowLeft size={20} strokeWidth={2} />
               </button>
             )}
 
@@ -103,7 +103,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onBellClick}
-              className="relative p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              className="relative w-8 h-8 flex items-center justify-center text-slate-600 hover:text-indigo-600 transition-colors cursor-pointer"
               title="Notifications"
             >
               <span className={`inline-flex ${ringing ? 'bell-jiggle' : ''}`}>
@@ -117,19 +117,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
             <button
               onClick={onOpenQuickAdd}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shadow-sm shadow-indigo-200 transition-all transform active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 px-3 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shadow-sm shadow-indigo-200 transition-all transform active:scale-95 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>Log Spend</span>
+              <span>Spend</span>
             </button>
           </div>
         </div>
       </header>
 
-      {activeTab === 'chat' ? (
-        /* Chat page: slim tab bar stuck to the top, input stays at the very bottom */
-        <div className="sticky top-14 z-40 bg-slate-50/95 backdrop-blur-md border-b border-slate-200/80 flex-shrink-0">
-          <nav className="max-w-3xl mx-auto px-4 sm:px-6 py-1.5 flex items-center gap-1">
+      {activeTab !== 'chat' && (
+        /* Airbnb-style bottom bar: white, top border, icon-over-label, indigo active */
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 shadow-[0_-8px_30px_rgba(0,0,0,0.03)]">
+          <nav className="max-w-3xl mx-auto px-4 pt-1.5 pb-3 flex justify-around items-center">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -137,36 +137,20 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   key={tab.id}
                   onClick={() => onTabChange(tab.id)}
-                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                    isActive ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
+                  className="flex flex-col items-center justify-center bg-transparent border-0 gap-0.5 flex-1 py-0.5 transition-all duration-200 ease-out active:scale-95 focus:outline-none cursor-pointer"
                 >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-      ) : (
-        /* Floating Bottom Navigation Pill Dock (slim) */
-        <div className="fixed bottom-3 left-0 right-0 z-40 flex justify-center px-4 pointer-events-none">
-          <nav className="floating-dock pointer-events-auto rounded-2xl p-1 flex items-center gap-1 max-w-sm w-full justify-around shadow-xl">
-            {tabs.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => onTabChange(tab.id)}
-                  className={`flex-1 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-2 py-1.5 px-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-200'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
-                  <Icon className={`w-4 h-4 ${isActive ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />
-                  <span className="text-[10px] sm:text-xs">{tab.label}</span>
+                  <Icon
+                    size={20}
+                    strokeWidth={2}
+                    className={`transition-colors duration-200 ${isActive ? 'text-[#4f46e5]' : 'text-gray-400'}`}
+                  />
+                  <span
+                    className={`text-[9px] leading-tight tracking-tight transition-colors duration-200 ${
+                      isActive ? 'text-[#4f46e5] font-bold' : 'text-gray-500 font-medium'
+                    }`}
+                  >
+                    {tab.label}
+                  </span>
                 </button>
               );
             })}
