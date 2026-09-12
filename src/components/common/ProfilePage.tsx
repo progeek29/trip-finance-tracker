@@ -65,36 +65,38 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
   const isAdmin = profile?.role === 'admin';
 
-  const updateEmail = async () => {
+  const updateEmail = async (): Promise<boolean> => {
     const clean = email.trim().toLowerCase();
     setEmailMsg(null);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) {
       setEmailMsg({ ok: false, text: 'Enter a valid email address.' });
-      return;
+      return false;
     }
     if (!uid) {
       setEmailMsg({ ok: false, text: 'Login session missing — logout & login again.' });
-      return;
+      return false;
     }
-    if (clean === savedEmail.toLowerCase()) return;
+    if (clean === savedEmail.toLowerCase()) return true;
     setEmailBusy(true);
     try {
       const { error } = await supabase.from('users').update({ email: clean }).eq('id', uid);
       if (error) throw new Error(error.message || 'update failed');
       setSavedEmail(clean);
       setEmailMsg({ ok: true, text: 'Email updated! Login next time with the new email.' });
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
       setEmailMsg({
         ok: false,
         text: /unique|duplicate|already/i.test(msg) ? 'This email is already registered.' : 'Could not update email. Check internet and retry.',
       });
+      return false;
     } finally {
       setEmailBusy(false);
     }
   };
 
-  const submitProfile = (e: React.FormEvent) => {
+  const submitProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       setError('Please enter your name');
@@ -103,6 +105,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     if (phone && !isValidPhone(phone)) {
       setError('Please enter a valid 10-digit mobile number');
       return;
+    }
+    // Email saves together with the profile (no separate button).
+    if (email.trim().toLowerCase() !== savedEmail.toLowerCase()) {
+      const emailOk = await updateEmail();
+      if (!emailOk) return;
     }
     onSave({ name: name.trim(), phone: phone.trim() });
     setSuccess('Profile updated!');
@@ -213,14 +220,13 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               <label className="flex items-center gap-1.5 ui-label mb-1">
                 <Mail size={12} /> Email (login ID)
               </label>
-              <div className="flex gap-2">
+              <div>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => { setEmail(e.target.value); setEmailMsg(null); }}
                   placeholder="you@email.com"
-                  readOnly
-                  className="flex-1 min-w-0 rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm font-semibold text-slate-800 focus:outline-none placeholder-slate-300"
+                  className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 placeholder-slate-300"
                 />
               </div>
               {emailMsg && (

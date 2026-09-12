@@ -11,6 +11,7 @@ import { fetchDeviceContacts, type DeviceContact } from '../../utils/deviceConta
 import { useMediaUrl } from '../common/MediaImg';
 import { getRandomEmoji } from '../../utils/avatar';
 import { TalkButton } from '../voice/TalkButton';
+import { useLockBodyScroll } from '../common/useLockBodyScroll';
 import { memberStatus, tripOwnerUid } from '../../utils/budget';
 
 interface CleanTripViewProps {
@@ -182,9 +183,14 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
           <div className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-white/20">
             <div className="flex items-center gap-2.5">
               <div className="flex -space-x-2">
-                {trip.members.slice(0, 6).map((m, i) => (
+                {trip.members.slice(0, 4).map((m, i) => (
                   <MemberAvatar key={m.id} name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="sm" />
                 ))}
+                {trip.members.length > 4 && (
+                  <div className="w-8 h-8 rounded-full border-2 border-white/40 bg-white/15 backdrop-blur flex items-center justify-center">
+                    <span className="text-[9px] font-bold text-white">+{trip.members.length - 4}</span>
+                  </div>
+                )}
               </div>
               <button onClick={isOwner ? onOpenTripEditor : undefined} className={`text-xs font-semibold ${isOwner ? 'text-white hover:underline cursor-pointer' : 'text-white/70'}`}>
                 {trip.members.length} Squad Member{trip.members.length !== 1 ? 's' : ''}{isOwner ? ' · Manage' : ''}
@@ -255,8 +261,13 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
                 {trip.members.slice(0, 4).map((m, i) => (
                   <MemberAvatar key={m.id} name={m.name} avatar={m.avatar} memberId={m.id} index={i} size="xs" />
                 ))}
+                {trip.members.length > 4 && (
+                  <span className="w-6 h-6 rounded-full border-2 border-white bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[8px] font-bold text-indigo-600">+{trip.members.length - 4}</span>
+                  </span>
+                )}
               </span>
-              <span className="text-base font-bold text-gray-800 tracking-tight">{trip.members.length} friends active</span>
+              <span className="text-base font-bold text-gray-800 tracking-tight">{trip.members.length > 4 ? `+${trip.members.length - 4} others` : `${trip.members.length} friends active`}</span>
             </span>
           </span>
           <span className="mt-5 pt-3 border-t border-gray-50 block text-[11px] font-medium text-gray-400">Tap to view, add, or coordinate travel settings</span>
@@ -283,7 +294,7 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
       {/* Itinerary — simple spots list (days come from trip dates) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-extrabold text-slate-900 font-display">Itinerary{tripDayCount > 0 ? ` (${tripDayCount}-day trip)` : ''}</h3>
+          <h3 className="text-sm font-bold text-slate-900 font-display">Itinerary{tripDayCount > 0 ? ` (${tripDayCount}-day trip)` : ''}</h3>
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 font-medium">{trip.cities.length} spots</span>
             <button onClick={() => setStopModal({ open: true, editing: null })} className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer">
@@ -366,6 +377,7 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
 };
 
 function StopFormModal({ editing, onClose, onSave }: { editing: CityStop | null; onClose: () => void; onSave: (s: CityStop) => void }) {
+  useLockBodyScroll();
   const [name, setName] = useState(editing?.name || '');
   const [notes, setNotes] = useState(editing?.notes || '');
   const [nameError, setNameError] = useState(false);
@@ -378,7 +390,7 @@ function StopFormModal({ editing, onClose, onSave }: { editing: CityStop | null;
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
       <form onSubmit={submit} className="bg-white max-w-md w-full rounded-3xl p-6 space-y-3 shadow-2xl">
         <div className="flex items-center justify-between">
-          <h4 className="font-extrabold">{editing ? 'Edit Spot' : 'Add Spot'}</h4>
+          <h4 className="text-sm font-bold text-slate-900">{editing ? 'Edit Spot' : 'Add Spot'}</h4>
           <button type="button" onClick={onClose} className="p-1 text-slate-400 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
         <div>
@@ -402,6 +414,7 @@ function StopFormModal({ editing, onClose, onSave }: { editing: CityStop | null;
 }
 
 function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onClose: () => void; onSave: (members: TripMember[]) => void; myUid?: string | null; isAdmin?: boolean }) {
+  useLockBodyScroll();
   const [members, setMembers] = useState<TripMember[]>(trip.members);
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
@@ -422,6 +435,7 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
     if (editingId) {
       setMembers((prev) => prev.map((m) => (m.id === editingId ? { ...m, name: newName.trim(), phone: newPhone.trim(), budget: budgetVal } : m)));
       setEditingId(null);
+      setShowAdd(false);
     } else {
       setMembers((prev) => [...prev, { id: `m_${Date.now()}`, name: newName.trim(), avatar: getRandomEmoji(), phone: newPhone.trim(), upiId: '', joinedAt: new Date().toISOString(), budget: budgetVal }]);
     }
@@ -430,12 +444,13 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
-      <div className="modal-enter bg-white max-w-md w-full rounded-xl border border-[#e2e8f0] p-6 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h4 className="font-extrabold text-slate-900" style={{ letterSpacing: '0.02em' }}>Squad Members ({members.length})</h4>
+      <div className="modal-enter bg-white max-w-md w-full rounded-xl border border-[#e2e8f0] p-6 shadow-2xl h-[600px] max-h-[92vh] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between flex-shrink-0 pb-2">
+          <h4 className="text-sm font-bold text-slate-900" style={{ letterSpacing: '0.02em' }}>Squad Members ({members.length})</h4>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
-        <div className="divide-y divide-[#f1f5f9]">
+        <div className="flex-1 overflow-y-auto space-y-3 pr-0.5 min-h-0">
+        <div className="divide-y divide-[#f1f5f9] pr-1">
           {members.map((m, i) => (
             <div key={m.id} className="py-2.5 space-y-1.5">
               <div className="flex items-center gap-2.5">
@@ -470,7 +485,7 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                   <div className="flex items-center gap-1.5 pl-[38px]">
                     <span className="text-[10px] font-medium" style={{ color: '#64748b' }}>Trip budget:</span>
                     <span className="text-[11px] font-bold text-slate-600">₹{Number(trip.totalBudget).toLocaleString('en-IN')}</span>
-                    <span className="text-[10px]" style={{ color: '#64748b' }}>(Edit Trip se change)</span>
+                    <span className="text-[10px]" style={{ color: '#64748b' }}>(change in Edit Trip)</span>
                   </div>
                 ) : (
                   <div className="pl-[38px]">
@@ -495,13 +510,7 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
           ))}
         </div>
         {isOwner && (
-          <button onClick={() => { setShowAdd(!showAdd); setEditingId(null); setNewName(''); setNewPhone(''); }} className="w-full h-11 rounded-lg border border-dashed border-indigo-300 text-indigo-600 text-xs font-bold cursor-pointer" style={{ letterSpacing: '0.02em' }}>
-            {showAdd ? 'Hide' : 'Add Member'}
-          </button>
-        )}
-        {showAdd && (
-          <div className="bg-[#f8fafc] rounded-xl p-3 space-y-2">
-            <p className="text-[11px] font-bold text-slate-500 uppercase" style={{ letterSpacing: '0.02em' }}>{editingId ? 'Edit member' : 'Add manually or pick contacts'}</p>
+          <div className="flex justify-center gap-2">
             <button
               onClick={async () => {
                 setContactError(null);
@@ -512,14 +521,23 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                   setContactError('Could not open phone contacts (permission denied or unavailable). Add manually below.');
                 }
               }}
-              className="w-full bg-indigo-600 text-white text-xs font-bold h-11 rounded-xl hover:bg-indigo-700 cursor-pointer flex items-center justify-center gap-2" style={{ letterSpacing: '0.02em' }}
+              className="px-6 py-2 rounded-full bg-indigo-600 text-white text-[11px] font-bold hover:bg-indigo-700 cursor-pointer flex items-center justify-center gap-1.5 shadow-md active:scale-[0.98] transition-all" style={{ letterSpacing: '0.02em' }}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               Add Contacts
             </button>
-            {contactError && (
-              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 font-medium">{contactError}</p>
-            )}
+            <button onClick={() => { setShowAdd(!showAdd); if (showAdd) { setEditingId(null); setNewName(''); setNewPhone(''); setNewBudget(''); } }} className="px-6 py-2 rounded-full bg-white border border-indigo-200 text-indigo-600 text-[11px] font-bold hover:bg-indigo-50 cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98] transition-all" style={{ letterSpacing: '0.02em' }}>
+              <span className="text-sm leading-none font-extrabold">+</span>
+              {showAdd && !editingId ? 'Hide Manual' : 'Add Manually'}
+            </button>
+          </div>
+        )}
+        {contactError && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 font-medium">{contactError}</p>
+        )}
+        {(showAdd || editingId) && (
+          <div className="bg-[#f8fafc] rounded-xl p-3 space-y-2 border border-slate-100">
+            <p className="text-[11px] font-bold text-slate-500 uppercase" style={{ letterSpacing: '0.02em' }}>{editingId ? 'Edit member' : 'Add manually'}</p>
             <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name *" className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100" />
             <PhoneInput value={newPhone} onChange={setNewPhone} placeholder="Phone" />
             <div>
@@ -528,10 +546,14 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                 <input type="number" min={0} value={newBudget} onChange={(e) => setNewBudget(e.target.value)} placeholder="Budget per Trip" className="w-full rounded-xl bg-slate-50 border border-slate-200 pl-9 pr-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100" />
               </div>
             </div>
-            <button onClick={addOrSave} disabled={!newName.trim()} className="w-full bg-indigo-600 text-white text-xs font-bold h-11 rounded-xl disabled:opacity-40 cursor-pointer" style={{ letterSpacing: '0.02em' }}>{editingId ? 'Save' : 'Add to Squad'}</button>
+            <div className="flex justify-center gap-2">
+              <button onClick={addOrSave} disabled={!newName.trim()} className="px-8 py-2 rounded-full bg-indigo-600 text-white text-[11px] font-bold disabled:opacity-40 cursor-pointer hover:bg-indigo-700 shadow-md active:scale-[0.98] transition-all" style={{ letterSpacing: '0.02em' }}>{editingId ? 'Save' : 'Add to Squad'}</button>
+              <button onClick={() => { setShowAdd(false); setEditingId(null); setNewName(''); setNewPhone(''); setNewBudget(''); }} className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-500 text-[11px] font-bold hover:bg-slate-50 cursor-pointer">Cancel</button>
+            </div>
           </div>
         )}
-        <div className="pt-1 border-t border-[#f1f5f9]">
+        </div>
+        <div className="flex-shrink-0 pt-2 border-t border-[#f1f5f9]">
           <button onClick={() => onSave(members)} className="w-full h-11 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer" style={{ letterSpacing: '0.02em' }}>Save</button>
         </div>
       </div>

@@ -222,6 +222,11 @@ Vault functionality should remain controlled until the storage and security poli
 - A signed native iOS build requires macOS, Xcode, Apple Developer setup, and TestFlight/App Store review.
 - Validate Safari layout, login, PWA launch, uploads, notifications limitations, and payment checkout before native iOS work.
 
+## Future: landing bell → multi-chat + activity
+- The My Trips header bell is intentionally a "Coming soon" placeholder (no action today).
+- Next: tapping it opens a global view combining multi-trip chat (all trips in one feed) and the unified activity timeline.
+- Scope when built: per-trip unread badges roll up to the landing bell; tap a row to jump into that trip's chat.
+
 ## Release gates for the next MVP
 
 Before public booking is enabled:
@@ -238,7 +243,6 @@ Before public booking is enabled:
 - Production backups, monitoring, and error reporting are configured.
 
 ## Explicit non-goals for the current release
-
 - Live payment capture before the booking flow is verified.
 - Public package booking before inventory and payment reconciliation are ready.
 - Native signed iOS release from Windows alone.

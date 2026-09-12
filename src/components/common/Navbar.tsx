@@ -128,8 +128,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {activeTab !== 'chat' && (
         /* Airbnb-style bottom bar: white, top border, icon-over-label, indigo active */
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 shadow-[0_-8px_30px_rgba(0,0,0,0.03)]">
-          <nav className="max-w-3xl mx-auto px-4 pt-1.5 pb-3 flex justify-around items-center">
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 shadow-[0_-8px_30px_rgba(0,0,0,0.03)] [transform:translateZ(0)]">
+          <nav className="max-w-3xl mx-auto px-4 pt-1.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex justify-around items-center">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;

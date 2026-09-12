@@ -60,7 +60,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
           <button
             key={v}
             onClick={() => setView(v)}
-            className={`flex-1 py-2 rounded-full text-xs font-bold cursor-pointer transition-all ${view === v ? 'bg-white text-[#4f46e5] font-extrabold shadow-[0_2px_8px_rgba(0,0,0,0.1)]' : 'text-slate-500 hover:text-slate-800'}`}
+            className={`flex-1 py-2 rounded-full text-xs font-bold cursor-pointer transition-all ${view === v ? 'bg-white text-[#4f46e5] font-bold shadow-[0_2px_8px_rgba(0,0,0,0.1)]' : 'text-slate-500 hover:text-slate-800'}`}
           >
             {v === 'balances' ? 'Balances' : `All Expenses (${expenses.length})`}
           </button>
@@ -102,7 +102,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
                         <MemberAvatar name={from.name} avatar={from.avatar} memberId={from.id} size="sm" />
                         <MemberAvatar name={to.name} avatar={to.avatar} memberId={to.id} size="sm" />
                       </div>
-                      <p className="text-xs font-extrabold text-slate-900 truncate">
+                      <p className="text-xs font-bold text-slate-900 truncate">
                         {from.name.split(' ')[0]} <ArrowRight className="w-3 h-3 text-slate-400 inline" /> {to.name.split(' ')[0]}
                       </p>
                     </div>
@@ -125,8 +125,8 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
               {balances.map((b, i) => (
                 <div key={b.memberId} className="ui-card p-4 space-y-2 text-center">
                   <div className="flex justify-center"><MemberAvatar name={b.member.name} avatar={b.member.avatar} memberId={b.memberId} index={i} size="lg" /></div>
-                  <span className="text-xs font-extrabold text-slate-900 block truncate">{b.member.name}</span>
-                  <span className={`text-xs font-extrabold block px-2 py-0.5 rounded-full ${b.netBalance >= 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+<span className="text-xs font-bold block truncate">{b.member.name}</span>
+                  <span className={`text-xs font-bold block px-2 py-0.5 rounded-full ${b.netBalance >= 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
                     {b.netBalance >= 0 ? `+₹${b.netBalance.toLocaleString('en-IN')}` : `-₹${Math.abs(b.netBalance).toLocaleString('en-IN')}`}
                   </span>
                 </div>
@@ -200,7 +200,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
 
                     <div>
                       <div className="flex items-center gap-2">
-                        <h4 className="font-extrabold text-slate-900 text-sm">{exp.title}</h4>
+                        <h4 className="font-bold text-slate-900 text-sm">{exp.title}</h4>
                         {exp.paymentMode === 'cash' && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 font-bold border border-amber-200">
                             Cash
@@ -255,7 +255,7 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
 
           {/* 4. History — every edit/delete with timestamp */}
           <div className="space-y-2">
-            <button onClick={() => setHistoryOpen(!historyOpen)} className="flex items-center gap-1.5 text-xs font-extrabold text-slate-700 hover:text-indigo-600 cursor-pointer">
+            <button onClick={() => setHistoryOpen(!historyOpen)} className="flex items-center gap-1.5 text-xs font-bold text-slate-700 hover:text-indigo-600 cursor-pointer">
               <History size={13} /> Expense History ({expenseEvents.length}) {historyOpen ? '▲' : '▼'}
             </button>
             <SmoothExpand open={historyOpen}>
@@ -323,3 +323,4 @@ export const CleanExpensesView: React.FC<CleanExpensesViewProps> = ({
     </div>
   );
 };
+

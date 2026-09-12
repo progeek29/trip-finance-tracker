@@ -22,7 +22,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({ value, onChange, opt
 
   return (
     <div>
-      {label && <label className="block text-[11px] font-bold text-slate-700 mb-1">{label}</label>}
+      {label && <label className="block ui-label mb-1">{label}</label>}
       <button
         type="button"
         onClick={() => setOpen(true)}

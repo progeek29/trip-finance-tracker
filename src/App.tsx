@@ -63,7 +63,7 @@ import { AdminActivity } from './components/admin/AdminActivity';
 import { AuthScreen } from './components/common/AuthScreen';
 import { ProfilePage } from './components/common/ProfilePage';
 
-type AppView = 'landing' | 'trip_dashboard' | 'admin_activity' | 'profile';
+  type AppView = 'landing' | 'trip_dashboard' | 'admin_activity' | 'profile' | 'coming_soon';
 
 import { migrateDataUrl, deleteMediaRefs, collectRefs } from './utils/mediaStore';
 import { viewerBudget, tripOwnerUid } from './utils/budget';
@@ -1514,11 +1514,21 @@ export function App() {
             // Signup: save profile immediately so WelcomeScreen is skipped
             handleSaveProfile({ name: signupProfile.name, phone: signupProfile.phone });
             setTripsHydrating(false);
-            // Handle invite code join after render
+            // Handle invite code join after render — NEVER silent: a failed
+            // join must tell the user (else: logged in, no trip, no clue).
             if (signupProfile.inviteCode) {
-              lookupInvite(signupProfile.inviteCode).then((ids) => {
+              const code = signupProfile.inviteCode;
+              lookupInvite(code).then((ids) => {
                 return joinTripById(ids[0]).then(handleJoinTripById);
-              }).catch(() => {});
+              }).then(() => {
+                showNotifFlash('Joined trip!');
+              }).catch((err) => {
+                showNotifFlash(
+                  err instanceof Error && err.message === 'NOT_FOUND'
+                    ? `No trip found for code ${code} — ask owner for a fresh code, then Profile → Join a Trip`
+                    : 'Could not join with that code — Profile → Join a Trip to retry'
+                );
+              });
             }
           } else {
             // Login: pull name/phone from server so WelcomeScreen is skipped
@@ -1588,6 +1598,34 @@ export function App() {
     );
   }
 
+  if (appView === 'coming_soon') {
+    return (
+      <div className="min-h-screen bg-slate-50 panel-enter">
+        <div className="max-w-lg mx-auto px-4 h-14 flex items-center gap-3 sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200/80">
+          <button
+            onClick={() => setAppView('landing')}
+            className="flex items-center justify-center p-1 text-slate-700 hover:text-indigo-600 transition-colors cursor-pointer"
+            title="Back"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+          </button>
+          <h1 className="font-extrabold text-slate-900 text-sm tracking-tight font-display">Notifications</h1>
+        </div>
+        <div className="max-w-lg mx-auto px-4 py-16 text-center">
+          <div className="w-20 h-20 rounded-3xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto mb-5">
+            <Bell size={34} strokeWidth={1.75} className="text-indigo-300" />
+          </div>
+          <h1 className="text-2xl font-extrabold text-slate-300 tracking-tight">Coming Soon</h1>
+          <p className="text-sm text-slate-400 font-medium mt-2 max-w-xs mx-auto">
+            Multi-chat + activity feed is on the way. All your trips, all conversations — one place.
+          </p>
+        </div>
+        {SirenBanner}
+        {FlashToast}
+      </div>
+    );
+  }
+
   if (appView === 'landing') {
     return (
       <>
@@ -1607,6 +1645,11 @@ export function App() {
           myUid={myUid}
           ownerFilter={ownerFilter}
           onOwnerFilterChange={setOwnerFilter}
+          unreadCount={chatFeed.filter((m) => msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system').length}
+          bellPulse={bellPulse}
+          onBellClick={() => {
+            setAppView('coming_soon');
+          }}
         />
         <TripCreateModal
           isOpen={isTripCreateOpen}

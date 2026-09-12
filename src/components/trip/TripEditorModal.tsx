@@ -8,6 +8,7 @@ import { MemberAvatar } from '../common/MemberAvatar';
 import { DatePicker } from '../common/DatePicker';
 import { ContactPickerModal } from '../common/ContactPickerModal';
 import { fetchDeviceContacts, type DeviceContact } from '../../utils/deviceContacts';
+import { useLockBodyScroll } from '../common/useLockBodyScroll';
 import { PhoneInput, isValidPhone, formatPhoneDisplay } from '../common/PhoneInput';
 import { memberStatus } from '../../utils/budget';
 
@@ -55,6 +56,31 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
     : 0;
 
   const prevTripId = useRef<string | null>(null);
+  // Spots UX: never add an empty row; new rows arrive below with auto-scroll + focus.
+  const stopsBodyRef = useRef<HTMLDivElement | null>(null);
+  const prevSpotCount = useRef(0);
+  const lastSpotEmpty = cities.length > 0 && !cities[cities.length - 1].name.trim();
+  const addSpot = () => {
+    if (lastSpotEmpty) return;
+    setCities((prev) => [...prev, { id: `city_${Date.now()}`, name: '', stateOrCountry: '', startDate, endDate, budget: 0 }]);
+  };
+  useEffect(() => {
+    if (cities.length > prevSpotCount.current) {
+      const body = stopsBodyRef.current;
+      if (body) {
+        window.setTimeout(() => {
+          const rows = body.querySelectorAll('.spot-row');
+          const lastRow = rows[rows.length - 1] as HTMLElement | undefined;
+          if (lastRow) {
+            lastRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            const nameInput = lastRow.querySelector('input') as HTMLInputElement | null;
+            if (nameInput) nameInput.focus({ preventScroll: true });
+          }
+        }, 80);
+      }
+    }
+    prevSpotCount.current = cities.length;
+  }, [cities.length]);
   useEffect(() => {
     if (!isOpen) { prevTripId.current = null; return; }
     // Only reset when modal opens or a different trip is edited — not on every parent re-render
@@ -68,6 +94,7 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
     setEndDate(trip.endDate);
     setCoverImage(trip.coverImage);
     setCities(trip.cities);
+    prevSpotCount.current = trip.cities.length;
     setMembers(trip.members);
     setEditingMemberId(null);
     setNewName(''); setNewPhone('');
@@ -79,6 +106,8 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
     // @ts-ignore
     setContactSupported(typeof navigator !== 'undefined' && 'contacts' in navigator && typeof (navigator as any).contacts?.select === 'function');
   }, [isOpen, trip.id]);
+
+  useLockBodyScroll(isOpen);
 
   if (!isOpen) return null;
 
@@ -118,6 +147,7 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
     if (editingMemberId) {
       setMembers((prev) => prev.map((m) => (m.id === editingMemberId ? { ...m, name: newName.trim(), phone: newPhone.trim() } : m)));
       setEditingMemberId(null);
+      setShowAddMember(false);
     } else {
       const name = newName.trim();
       setMembers((prev) => [...prev, { id: `m_${Date.now()}`, name, avatar: getRandomEmoji(), phone: newPhone.trim(), upiId: '', joinedAt: new Date().toISOString() }]);
@@ -151,18 +181,19 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="max-w-lg w-full rounded-3xl p-6 border border-slate-200 bg-white shadow-2xl max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-          <h3 className="text-lg font-extrabold text-slate-900 font-display">Edit Trip</h3>
+      <div className="max-w-lg w-full rounded-3xl border border-slate-200 bg-white shadow-2xl h-[85vh] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 pt-6 pb-3 border-b border-slate-100 flex-shrink-0">
+          <h3 className="text-sm font-bold text-slate-900 font-display">Edit Trip</h3>
           <button onClick={onClose} className="p-1 rounded-full text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-5 h-5" /></button>
         </div>
-        <div className="flex gap-1.5 p-1 bg-slate-100 rounded-xl mb-4">
+        <div className="flex gap-1.5 p-1 bg-slate-100 rounded-xl mx-6 mt-4 mb-0 flex-shrink-0">
           {(['details', 'stops', 'members'] as const).map((t) => (
             <button key={t} type="button" onClick={() => setTab(t)} className={`flex-1 py-1.5 rounded-lg text-xs font-bold capitalize cursor-pointer ${tab === t ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500'}`}>{t}</button>
           ))}
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-3.5">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div ref={stopsBodyRef} className="flex-1 overflow-y-auto overscroll-contain px-6 py-3 space-y-3.5" style={{ WebkitOverflowScrolling: 'touch', willChange: 'transform' }}>
           {tab === 'details' && (
             <>
               <div><label className="block text-[11px] font-bold text-slate-700 mb-1">Location</label><input type="text" required value={title} onChange={(e) => setTitle(e.target.value)} className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2 text-xs font-bold" /></div>
@@ -171,7 +202,7 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
                 <div><label className="block text-[11px] font-bold text-slate-700 mb-1">Start Date</label><DatePicker value={startDate} onChange={setStartDate} /></div>
                 <div><label className="block text-[11px] font-bold text-slate-700 mb-1">End Date</label><DatePicker value={endDate} onChange={setEndDate} min={startDate} /></div>
               </div>
-              <div><label className="block text-[11px] font-bold text-slate-700 mb-1">Total Budget (₹)</label><input type="number" required value={totalBudget} onChange={(e) => setTotalBudget(Number(e.target.value))} className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2 text-sm font-extrabold font-display" /></div>
+              <div><label className="block text-[11px] font-bold text-slate-700 mb-1">Total Budget (₹)</label><input type="number" required value={totalBudget} onChange={(e) => setTotalBudget(Number(e.target.value))} className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2 text-sm text-slate-800 font-display" /></div>
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">Invite Code</label>
                 {inviteCode ? (
@@ -257,16 +288,20 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
           {tab === 'stops' && (
             <div className="space-y-2.5">
               <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Itinerary{tripDays > 0 ? ` (${tripDays}-day trip)` : ''}</p>
+              <div className="space-y-2.5">
               {cities.map((c) => (
-                <div key={c.id} className="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-2">
+                <div key={c.id} className="spot-row bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-2">
                   <div className="flex items-center gap-2">
-                    <input value={c.name} onChange={(e) => setCities((prev) => prev.map((cc) => (cc.id === c.id ? { ...cc, name: e.target.value } : cc)))} placeholder="Spot name (e.g. Vagator Beach)" className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-bold text-slate-800 focus:outline-none focus:border-indigo-400 placeholder-slate-300" />
+                    <input value={c.name} onChange={(e) => setCities((prev) => prev.map((cc) => (cc.id === c.id ? { ...cc, name: e.target.value } : cc)))} placeholder="Spot Name" className="flex-1 min-w-0 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:border-indigo-400 placeholder-slate-300" />
                     <button type="button" onClick={() => setCities((prev) => prev.filter((cc) => cc.id !== c.id))}><Trash2 size={13} className="text-slate-300 hover:text-red-400" /></button>
                   </div>
-                  <input value={c.notes || ''} onChange={(e) => setCities((prev) => prev.map((cc) => (cc.id === c.id ? { ...cc, notes: e.target.value } : cc)))} placeholder="Description (optional)" className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-indigo-400 placeholder-slate-300" />
+                  <input value={c.notes || ''} onChange={(e) => setCities((prev) => prev.map((cc) => (cc.id === c.id ? { ...cc, notes: e.target.value } : cc)))} placeholder="Description (Optional)" className="w-full min-w-0 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-indigo-400 placeholder-slate-300" />
                 </div>
               ))}
-              <button type="button" onClick={() => setCities((prev) => [...prev, { id: `city_${Date.now()}`, name: '', stateOrCountry: '', startDate, endDate, budget: 0 }])} className="w-full py-2 rounded-xl border border-dashed border-indigo-300 text-indigo-600 text-xs font-bold cursor-pointer">Add Spot</button>
+              </div>
+              <div className="flex justify-center">
+              <button type="button" onClick={addSpot} disabled={lastSpotEmpty} title={lastSpotEmpty ? 'Fill the current spot name first' : 'Add another spot'} className="px-6 py-2 rounded-full bg-white border border-indigo-200 text-indigo-600 text-[11px] font-bold hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-sm active:scale-[0.98] transition-all"><span className="text-sm leading-none font-extrabold">+ </span>Add Spot</button>
+              </div>
             </div>
           )}
 
@@ -291,31 +326,39 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
                   )}
                 </div>
               ))}
-              <button type="button" onClick={() => { setShowAddMember(!showAddMember); setEditingMemberId(null); setNewName(''); setNewPhone(''); }} className="w-full py-2.5 rounded-xl border border-dashed border-indigo-300 text-indigo-600 text-xs font-bold cursor-pointer">
-                {showAddMember ? 'Hide' : 'Add Member'}
-              </button>
-              {showAddMember && (
+              <div className="flex justify-center gap-2">
+                <button type="button" onClick={pickContacts} className="px-6 py-2 rounded-full bg-indigo-600 text-white text-[11px] font-bold hover:bg-indigo-700 cursor-pointer shadow-md active:scale-[0.98] transition-all">Add Contacts</button>
+                <button type="button" onClick={() => { setShowAddMember(!showAddMember); if (showAddMember) { setEditingMemberId(null); setNewName(''); setNewPhone(''); } }} className="px-6 py-2 rounded-full bg-white border border-indigo-200 text-indigo-600 text-[11px] font-bold hover:bg-indigo-50 cursor-pointer shadow-sm active:scale-[0.98] transition-all">
+                  <span className="text-sm leading-none font-extrabold">+ </span>
+                  {showAddMember && !editingMemberId ? 'Hide Manual' : 'Add Manually'}
+                </button>
+              </div>
+              {(showAddMember || editingMemberId) && (
                 <div className="space-y-2.5">
-                  <button type="button" onClick={pickContacts} className="w-full bg-indigo-600 text-white font-semibold py-2.5 rounded-xl text-xs hover:bg-indigo-700 cursor-pointer">Add Contacts</button>
                   {contactError && (
                     <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 font-medium">{contactError}</p>
                   )}
                   {!contactSupported && !contactError && (
                     <p className="text-[11px] text-slate-400 text-center">Phone contacts open on Android Chrome / the app. Otherwise add manually below.</p>
                   )}
-                  <div className="bg-slate-50 rounded-xl p-3 border space-y-2">
-                    <p className="text-[11px] font-bold text-slate-500 uppercase">{editingMemberId ? 'Edit member' : 'Add manually'}</p>
-                    <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name *" className="w-full border rounded-xl px-3 py-2 text-xs" />
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-2">
+                    <p className="ui-label">{editingMemberId ? 'Edit member' : 'Add manually'}</p>
+                    <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name *" className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-xs text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100" />
                     <PhoneInput value={newPhone} onChange={setNewPhone} placeholder="Phone" />
-                    <button type="button" onClick={addMember} disabled={!newName.trim()} className="w-full bg-indigo-600 text-white text-xs font-bold py-2 rounded-xl disabled:opacity-40 cursor-pointer">{editingMemberId ? 'Save' : 'Add to Squad'}</button>
+                    <div className="flex justify-center gap-2">
+                      <button type="button" onClick={addMember} disabled={!newName.trim()} className="px-8 py-2 rounded-full bg-indigo-600 text-white text-xs font-bold disabled:opacity-40 cursor-pointer shadow-md hover:bg-indigo-700 active:scale-[0.98] transition-all">{editingMemberId ? 'Save' : 'Add to Squad'}</button>
+                      <button type="button" onClick={() => { setShowAddMember(false); setEditingMemberId(null); setNewName(''); setNewPhone(''); }} className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-500 text-[11px] font-bold hover:bg-slate-50 cursor-pointer">Cancel</button>
+                    </div>
                   </div>
                 </div>
               )}
             </div>
           )}
 
-          <div className="pt-3 border-t border-slate-100">
-            <button type="submit" className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer">Save</button>
+          </div>
+
+          <div className="px-6 pb-6 pt-3 border-t border-slate-100 bg-white flex-shrink-0 flex justify-center">
+            <button type="submit" className="px-10 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm cursor-pointer shadow-md transition-all">Save</button>
           </div>
         </form>
       </div>

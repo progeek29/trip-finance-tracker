@@ -151,7 +151,7 @@ export const CleanVaultView: React.FC<CleanVaultViewProps> = ({
       {subTab === 'tickets' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-extrabold text-slate-900 font-display">Important Tickets and Passes ({documents.length})</h3>
+            <h3 className="text-sm font-bold text-slate-900 font-display">Important Tickets and Passes ({documents.length})</h3>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setDocModal({ open: true, editing: null })}
@@ -269,7 +269,7 @@ export const CleanVaultView: React.FC<CleanVaultViewProps> = ({
       {/* 2. Photos — coming soon (full rebuild from scratch) */}
       {subTab === 'photos' && (
         <div className="space-y-3">
-          <h3 className="text-sm font-extrabold text-slate-900 font-display">Shared Photos ({photos.length})</h3>
+          <h3 className="text-sm font-bold text-slate-900 font-display">Shared Photos ({photos.length})</h3>
           <div className="clean-card rounded-3xl p-10 text-center border border-dashed border-slate-300 bg-white space-y-2">
             <p className="text-base font-extrabold text-slate-900">Coming Soon</p>
             <p className="text-xs text-slate-500 font-medium max-w-xs mx-auto">
@@ -284,7 +284,7 @@ export const CleanVaultView: React.FC<CleanVaultViewProps> = ({
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <h3 className="text-sm font-extrabold text-slate-900 font-display">Places and Fares ({visibleRecs.length})</h3>
+              <h3 className="text-sm font-bold text-slate-900 font-display">Places and Fares ({visibleRecs.length})</h3>
               <p className="text-[11px] text-slate-500 font-medium">Community picks with real fares — public for all once sync is on.</p>
             </div>
             <button

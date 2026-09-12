@@ -24,7 +24,7 @@ export const TodoView: React.FC<TodoViewProps> = ({ todos, onAddTodo, onToggleTo
   return (
     <div className="space-y-3 max-w-3xl mx-auto">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-extrabold text-slate-900 font-display">Trip Checklist</h3>
+        <h3 className="text-sm font-bold text-slate-900 font-display">Trip Checklist</h3>
         <span className="text-xs text-slate-500 font-medium">{done.length}/{todos.length} done</span>
       </div>
       <div className="clean-card rounded-2xl p-3.5 border border-slate-200 bg-white space-y-2">

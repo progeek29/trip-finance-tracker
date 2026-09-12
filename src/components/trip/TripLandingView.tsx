@@ -10,7 +10,7 @@ import { MediaImg } from '../common/MediaImg';
 import {
   MapPin, Calendar, Users, User, Wallet, ChevronRight,
   MoreVertical, Edit2, Trash2, Plane, CheckCircle2,
-  Clock, Zap, Star, Share2, Globe
+  Clock, Zap, Star, Share2, Globe, Plus, Bell
 } from 'lucide-react';
 
 interface TripLandingViewProps {
@@ -27,6 +27,10 @@ interface TripLandingViewProps {
   myUid?: string | null;
   ownerFilter?: 'all' | 'owned' | 'joined';
   onOwnerFilterChange?: (f: 'all' | 'owned' | 'joined') => void;
+  unreadCount?: number;
+  onBellClick?: () => void;
+  /** Bumps on every new notification → bell jiggles + vibrates (same as trip header). */
+  bellPulse?: number;
 }
 
 const STATUS_META = {
@@ -254,7 +258,7 @@ function TripCard({
                 </div>
               )}
             </div>
-            <span className="text-xs text-slate-400">{trip.members.length} members</span>
+            <span className="text-xs text-slate-400">{trip.members.length > 4 ? `+${trip.members.length - 4} others` : `${trip.members.length} members`}</span>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -285,10 +289,22 @@ function TripCard({
   );
 }
 
-export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange }: TripLandingViewProps) {
+export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange, unreadCount, onBellClick, bellPulse = 0 }: TripLandingViewProps) {
   const [filter, setFilter] = useState<'all' | 'inprogress' | 'upcoming' | 'completed'>('all');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'owned' | 'joined'>(ownerFilterProp || 'all');
   const [confirmTrip, setConfirmTrip] = useState<Trip | null>(null);
+
+  // New notification → bell jiggles ~2s + vibrates (same as trip header bell)
+  const [ringing, setRinging] = useState(false);
+  useEffect(() => {
+    if (!bellPulse) return;
+    setRinging(true);
+    try {
+      navigator.vibrate?.([70, 50, 70]);
+    } catch { /* vibrate unsupported */ }
+    const t = window.setTimeout(() => setRinging(false), 2000);
+    return () => window.clearTimeout(t);
+  }, [bellPulse]);
 
   const inProgress = trips.filter(t => liveTripStatus(t) === 'inprogress');
   const upcoming = trips.filter(t => liveTripStatus(t) === 'upcoming');
@@ -330,20 +346,26 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
               <Logo size={36} />
               <div>
                 <p className="text-indigo-200 text-xs font-medium uppercase tracking-widest">WanderSync</p>
-                <h1 className="text-white font-bold text-xl leading-tight">My Trips</h1>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <button
-                id="create-trip-btn"
-                onClick={onCreateTrip}
-                className="bg-white text-indigo-700 font-bold text-sm px-5 py-2.5 rounded-xl hover:bg-indigo-50 active:scale-95 transition-all shadow-lg shadow-indigo-900/30 cursor-pointer"
+                onClick={onBellClick}
+                className="relative w-8 h-8 flex items-center justify-center text-white hover:text-indigo-200 transition-colors cursor-pointer"
+                title="Notifications"
               >
-                New Trip
+                <span className={`inline-flex ${ringing ? 'bell-jiggle' : ''}`}>
+                  <Bell size={28} strokeWidth={2} />
+                </span>
+                {(unreadCount || 0) > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-0.5 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
+                    {(unreadCount || 0) > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
               </button>
               <button
                 onClick={onOpenProfile}
-                className="w-10 h-10 rounded-full bg-white text-indigo-700 flex items-center justify-center text-base font-extrabold hover:bg-indigo-50 active:scale-95 transition-all shadow-lg shadow-indigo-900/30 cursor-pointer"
+                className="w-8 h-8 rounded-full bg-white text-indigo-700 flex items-center justify-center text-base font-extrabold hover:bg-indigo-50 active:scale-95 transition-all shadow-lg shadow-indigo-900/30 cursor-pointer"
                 title={userName || 'Your profile'}
               >
                 {(userName || 'Y').trim().charAt(0).toUpperCase()}
@@ -366,19 +388,20 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
                 <Icon size={18} className={color} />
                 <span className="text-white font-bold text-xl mt-1">{count}</span>
                 <span className="text-white/60 text-xs">{label}</span>
-              </button>
-            ))}
-          </div>
+            </button>
+          ))}
+        </div>
         </div>
       </div>
 
-      {/* Filter chips */}
-      <div className="max-w-2xl mx-auto px-4 pt-5 pb-1">
+      {/* Filter chips + separate create button */}
+      <div className="max-w-2xl mx-auto px-4 pt-5 pb-1 flex items-center gap-2.5">
+        <div className="flex-1 min-w-0">
         {/* Ownership tabs */}
         <div className="relative grid grid-cols-3 gap-2 overflow-hidden rounded-full bg-slate-100 p-1">
           <span
             aria-hidden="true"
-            className="absolute inset-y-1 left-1 w-[calc((100%-1rem)/3)] rounded-full bg-indigo-600 shadow-sm shadow-indigo-200 transition-transform duration-300 ease-out"
+            className="absolute inset-y-1 left-1 w-[calc((100%-1rem)/3)] rounded-full bg-indigo-600 shadow-md shadow-indigo-300 transition-transform duration-300 ease-out"
             style={{ transform: `translateX(${(['all', 'owned', 'joined'] as const).indexOf(ownershipFilter) * 100}%)` }}
           />
           {(['all', 'owned', 'joined'] as const).map((f) => (
@@ -398,6 +421,15 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
             </button>
           ))}
         </div>
+        </div>
+        <button
+          id="create-trip-btn"
+          onClick={onCreateTrip}
+          title="New Trip"
+          className="flex-shrink-0 w-11 h-11 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center shadow-lg shadow-indigo-200 active:scale-95 transition-all cursor-pointer"
+        >
+          <Plus size={20} strokeWidth={2.5} />
+        </button>
       </div>
 
       {/* Trips Grid */}

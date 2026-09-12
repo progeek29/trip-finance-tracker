@@ -797,7 +797,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
       ) : (
       <div className="flex items-center justify-between pb-1 flex-shrink-0">
         <div>
-          <h3 className="text-sm font-extrabold text-slate-900 font-display">Squadroom</h3>
+          <h3 className="text-sm font-bold text-slate-900 font-display">Squadroom</h3>
           <p className="text-[11px] text-slate-500 font-medium">
             {online > 0 ? `${online} online` : `${trip.members.length} members`}
           </p>

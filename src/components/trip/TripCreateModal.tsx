@@ -9,9 +9,10 @@ import { DatePicker } from '../common/DatePicker';
 import { ContactPickerModal } from '../common/ContactPickerModal';
 import { PhoneInput, isValidPhone, formatPhoneDisplay } from '../common/PhoneInput';
 import { fetchDeviceContacts, type DeviceContact } from '../../utils/deviceContacts';
+import { useLockBodyScroll } from '../common/useLockBodyScroll';
 import { tripOwnerUid } from '../../utils/budget';
 import {
-  X, MapPin, Trash2,
+  X, Trash2,
   Check, Image, Pencil
 } from 'lucide-react';
 
@@ -70,10 +71,35 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
     { name: '', stateOrCountry: '', startDate: '', endDate: '', budget: 0 },
   ]);
 
+  // Spots UX: never add an empty row; new rows arrive below with auto-scroll + focus.
+  const spotsListRef = useRef<HTMLDivElement | null>(null);
+  const prevSpotCount = useRef(1);
+  const lastSpotEmpty = cities.length > 0 && !cities[cities.length - 1].name.trim();
+  const addSpot = () => {
+    if (lastSpotEmpty) return;
+    setCities((prev) => [...prev, { name: '', stateOrCountry: '', startDate: '', endDate: '', budget: 0, notes: '' }]);
+  };
+  useEffect(() => {
+    if (cities.length > prevSpotCount.current) {
+      const el = spotsListRef.current;
+      if (el) {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        window.setTimeout(() => {
+          const inputs = el.querySelectorAll('input');
+          // each spot block ends with [name, notes] — focus the newest name field
+          const nameInput = inputs[inputs.length - 2] as HTMLInputElement | undefined;
+          if (nameInput) nameInput.focus({ preventScroll: true });
+        }, 80);
+      }
+    }
+    prevSpotCount.current = cities.length;
+  }, [cities.length]);
+
   // Squad
   const [members, setMembers] = useState<TripMember[]>(() => [youFromProfile()]);
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
+  const [showManualAdd, setShowManualAdd] = useState(false);
   const [contactPickerSupported, setContactPickerSupported] = useState(false);
 
   const tripDays = startDate && endDate && new Date(endDate) >= new Date(startDate)
@@ -95,7 +121,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
     if (!isOpen) { setStep('details'); return; }
     if (!shouldReset) return;
     setEditingMemberId(null);
-    setNewMemberName(''); setNewMemberPhone('');
+    setNewMemberName(''); setNewMemberPhone(''); setShowManualAdd(false);
     setContactError(null);
     setShowCoverPicker(false);
     if (editingTrip) {
@@ -107,11 +133,13 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
       setCoverImage(editingTrip.coverImage);
       setMembers(editingTrip.members);
       setCities(editingTrip.cities.map(c => ({ ...c })));
+      prevSpotCount.current = editingTrip.cities.length;
     } else {
       setTitle(''); setDescription(''); setStartDate(''); setEndDate('');
       setBudget(''); setCoverImage(COVER_IMAGES[0]);
       setMembers([youFromProfile()]);
       setCities([{ name: '', stateOrCountry: '', startDate: '', endDate: '', budget: 0 }]);
+      prevSpotCount.current = 1;
     }
   }, [isOpen, editingTrip?.id]);
 
@@ -157,6 +185,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
     if (editingMemberId) {
       setMembers(prev => prev.map(m => m.id === editingMemberId ? { ...m, name, phone: newMemberPhone.trim() } : m));
       setEditingMemberId(null);
+      setShowManualAdd(false);
     } else {
       const newM: TripMember = {
         id: `m_${Date.now()}`,
@@ -219,6 +248,8 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
     onSaveTrip(trip);
     onClose();
   };
+
+  useLockBodyScroll(isOpen);
 
   if (!isOpen) return null;
 
@@ -314,7 +345,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
 
               {/* Location */}
               <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Add Location *</label>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Location *</label>
                 <input
                   type="text"
                   value={title}
@@ -332,7 +363,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                   onChange={e => setDescription(e.target.value)}
                   placeholder="Short note about the trip vibe..."
                   rows={2}
-                  className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-slate-300 resize-none"
+                  className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-slate-300 resize-none overflow-y-auto overscroll-contain break-words"
                 />
               </div>
 
@@ -363,29 +394,23 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                 </div>
               </div>
 
-              {/* Itinerary — spots list (days come from trip dates) */}
+                {/* Itinerary — spots list (days come from trip dates) */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
                     Itinerary{tripDays > 0 ? ` (${tripDays}-day trip)` : ''}
                   </label>
-                  <button
-                    onClick={() => setCities(prev => [...prev, { name: '', stateOrCountry: '', startDate: '', endDate: '', budget: 0, notes: '' }])}
-                    className="text-indigo-600 text-xs font-semibold hover:text-indigo-700 cursor-pointer"
-                  >
-                    Add Spot
-                  </button>
                 </div>
                 <div className="space-y-2.5">
+                  <div ref={spotsListRef} className="space-y-2.5 max-h-[30vh] overflow-y-auto overscroll-contain pr-0.5">
                   {cities.map((city, i) => (
                     <div key={i} className="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-2">
                       <div className="flex items-center gap-2">
-                        <MapPin size={13} className="text-indigo-400 flex-shrink-0" />
                         <input
                           type="text"
                           value={city.name}
                           onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, name: e.target.value } : c))}
-                          placeholder="Spot name (e.g. Vagator Beach, Chapora Fort)"
+                          placeholder="Spot Name"
                           className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:border-indigo-400 placeholder-slate-300"
                         />
                         {cities.length > 1 && (
@@ -398,11 +423,22 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                         type="text"
                         value={city.notes || ''}
                         onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, notes: e.target.value } : c))}
-                        placeholder="Description (optional — e.g. sunset point, entry Rs.100)"
+                        placeholder="Description (Optional)"
                         className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-indigo-400 placeholder-slate-300"
                       />
                     </div>
                   ))}
+                  </div>
+                  <div className="flex justify-center">
+                  <button
+                    onClick={addSpot}
+                    disabled={lastSpotEmpty}
+                    title={lastSpotEmpty ? 'Fill the current spot name first' : 'Add another spot'}
+                    className="px-6 py-2 rounded-full bg-white border border-indigo-200 text-indigo-600 text-[11px] font-bold hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-sm active:scale-[0.98] transition-all"
+                  >
+                    <span className="text-sm leading-none font-extrabold">+ </span>Add Spot
+                  </button>
+                  </div>
                 </div>
               </div>
             </>
@@ -428,7 +464,7 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                         <div className="flex items-center gap-1">
                           <button
                             title="Edit member"
-                            onClick={() => { setEditingMemberId(m.id); setNewMemberName(m.name); setNewMemberPhone(m.phone || ''); }}
+                            onClick={() => { setEditingMemberId(m.id); setNewMemberName(m.name); setNewMemberPhone(m.phone || ''); setShowManualAdd(true); }}
                           >
                             <Pencil size={13} className="text-slate-300 hover:text-indigo-500 transition-colors" />
                           </button>
@@ -457,44 +493,53 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                   ))}
                 </div>
 
-                {/* Add contacts icon + Manual add */}
-                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{editingMemberId ? 'Edit Member' : 'Add Squad Member'}</p>
+                {/* Add contacts + Manual — pill style, manual click-pe-khule */}
+                <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 space-y-2.5">
+                  <div className="flex justify-center gap-2">
                     <button
                       onClick={openContactPicker}
-                      title="Pick from contacts"
-                      className="w-9 h-9 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-600 flex items-center justify-center transition-colors cursor-pointer"
+                      className="px-6 py-2 rounded-full bg-indigo-600 text-white text-[11px] font-bold hover:bg-indigo-700 cursor-pointer shadow-md active:scale-[0.98] transition-all"
                     >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                      Add Contacts
+                    </button>
+                    <button
+                      onClick={() => { setShowManualAdd(!showManualAdd); if (showManualAdd) { setEditingMemberId(null); setNewMemberName(''); setNewMemberPhone(''); } }}
+                      className="px-6 py-2 rounded-full bg-white border border-indigo-200 text-indigo-600 text-[11px] font-bold hover:bg-indigo-50 cursor-pointer shadow-sm active:scale-[0.98] transition-all"
+                    >
+                      <span className="text-sm leading-none font-extrabold">+ </span>
+                      {showManualAdd && !editingMemberId ? 'Hide Manual' : 'Add Manually'}
                     </button>
                   </div>
-                  <input
-                    type="text"
-                    value={newMemberName}
-                    onChange={e => setNewMemberName(e.target.value)}
-                    placeholder="Friend's name *"
-                    className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-slate-300"
-                  />
-                  <PhoneInput
-                    value={newMemberPhone}
-                    onChange={setNewMemberPhone}
-                    placeholder="Phone number"
-                  />
-                  <button
-                    onClick={handleAddCustomMember}
-                    disabled={!newMemberName.trim()}
-                    className="w-full bg-indigo-600 text-white font-semibold py-2.5 rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                  >
-                    {editingMemberId ? 'Save' : 'Add to Squad'}
-                  </button>
-                  {editingMemberId && (
-                    <button
-                      onClick={() => { setEditingMemberId(null); setNewMemberName(''); setNewMemberPhone(''); }}
-                      className="w-full text-[11px] text-slate-500 font-bold py-1 cursor-pointer"
-                    >
-                      Cancel edit
-                    </button>
+                  {(showManualAdd || editingMemberId) && (
+                    <>
+                      <input
+                        type="text"
+                        value={newMemberName}
+                        onChange={e => setNewMemberName(e.target.value)}
+                        placeholder="Friend's name *"
+                        className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                      />
+                      <PhoneInput
+                        value={newMemberPhone}
+                        onChange={setNewMemberPhone}
+                        placeholder="Phone number"
+                      />
+                      <div className="flex justify-center gap-2">
+                        <button
+                          onClick={handleAddCustomMember}
+                          disabled={!newMemberName.trim()}
+                          className="px-8 py-2 rounded-full bg-indigo-600 text-white text-[11px] font-bold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-md active:scale-[0.98] transition-all cursor-pointer"
+                        >
+                          {editingMemberId ? 'Save' : 'Add to Squad'}
+                        </button>
+                        <button
+                          onClick={() => { setEditingMemberId(null); setNewMemberName(''); setNewMemberPhone(''); setShowManualAdd(false); }}
+                          className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-500 text-[11px] font-bold hover:bg-slate-50 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
                 {contactError && (
@@ -505,20 +550,20 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
           )}
         </div>
 
-        {/* Footer Actions */}
-        <div className="border-t border-slate-200 px-5 py-4 bg-white flex-shrink-0">
+        {/* Footer Actions — pinned to visible bottom */}
+        <div className="sticky bottom-0 border-t border-slate-200 px-5 py-3 bg-white/95 backdrop-blur flex-shrink-0 flex justify-center">
           {step === 'details' ? (
             <button
               onClick={() => setStep('squad')}
               disabled={!canNext}
-              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] transition-all shadow-md cursor-pointer"
+              className="px-10 py-2.5 rounded-full bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] transition-all shadow-md cursor-pointer"
             >
               Next
             </button>
           ) : (
             <button
               onClick={handleSave}
-              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-md cursor-pointer"
+              className="px-10 py-2.5 rounded-full bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-md cursor-pointer"
             >
               {editingTrip ? 'Save' : 'Save Trip'}
             </button>

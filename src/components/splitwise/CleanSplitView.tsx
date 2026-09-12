@@ -60,7 +60,7 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
       </button>
       <div className="clean-card rounded-3xl p-6 sm:p-7 border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">Your Personal Group Balance</span>
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Your Personal Group Balance</span>
           <div className={`text-3xl sm:text-4xl font-extrabold font-display mt-1 tracking-tight ${myBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
             {myBalance >= 0 ? `+₹${myBalance.toLocaleString('en-IN')}` : `-₹${Math.abs(myBalance).toLocaleString('en-IN')}`}
           </div>
@@ -75,7 +75,7 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-extrabold text-slate-900 font-display">Suggested Transfers to Settle Up</h3>
+          <h3 className="text-sm font-bold text-slate-900 font-display">Suggested Transfers to Settle Up</h3>
           <span className="text-xs text-slate-500 font-medium">Simplified 1-on-1 Payments</span>
         </div>
         {debts.length === 0 ? (
@@ -96,7 +96,7 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
                       <MemberAvatar name={to.name} avatar={to.avatar} memberId={to.id} size="sm" />
                     </div>
                     <div>
-                      <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-900">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
                         <span>{from.name.split(' ')[0]}</span>
                         <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
                         <span>{to.name.split(' ')[0]}</span>
@@ -120,7 +120,7 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
       {/* Recorded pay-backs (balance ledger only — spend untouched) */}
       {settlementsMine.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-extrabold text-slate-900 font-display">Recorded Pay-backs ({settlementsMine.length})</h3>
+          <h3 className="text-sm font-bold text-slate-900 font-display">Recorded Pay-backs ({settlementsMine.length})</h3>
           {settlementsMine.map((s) => {
             const from = getMember(s.fromMemberId);
             const to = getMember(s.toMemberId);
@@ -145,7 +145,7 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
       {/* Group bills with add/edit/delete */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-extrabold text-slate-900 font-display">Shared Bills ({groupBills.length})</h3>
+          <h3 className="text-sm font-bold text-slate-900 font-display">Shared Bills ({groupBills.length})</h3>
           <button onClick={onOpenQuickAdd} className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold cursor-pointer">
             Add Bill
           </button>
@@ -165,7 +165,7 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
                 <div className="flex items-center gap-2.5 min-w-0">
                   <MemberAvatar name={payer.name} avatar={payer.avatar} memberId={payer.id} size="sm" />
                   <div className="min-w-0">
-                    <p className="text-xs font-extrabold text-slate-900 truncate">{e.title}</p>
+                    <p className="text-xs font-bold text-slate-900 truncate">{e.title}</p>
                     <p className="text-[11px] text-slate-500">Paid by {payer.name} • ₹{Number(e.amount).toLocaleString('en-IN')} • split {e.splits.length} ways{mySplit !== undefined ? ` • your share ₹${Number(mySplit).toLocaleString('en-IN')}` : ''}</p>
                   </div>
                 </div>
@@ -180,12 +180,12 @@ export const CleanSplitView: React.FC<CleanSplitViewProps> = ({
       </div>
 
       <div className="space-y-3 pt-1">
-        <h3 className="text-sm font-extrabold text-slate-900 font-display">Group Member Net Balances</h3>
+        <h3 className="text-sm font-bold text-slate-900 font-display">Group Member Net Balances</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {balances.map((b, i) => (
             <div key={b.memberId} className="clean-card rounded-2xl p-4 border border-slate-200 bg-white space-y-2 text-center shadow-2xs">
               <div className="flex justify-center"><MemberAvatar name={b.member.name} avatar={b.member.avatar} memberId={b.memberId} index={i} size="lg" /></div>
-              <span className="text-xs font-extrabold text-slate-900 block truncate">{b.member.name}</span>
+              <span className="text-xs font-bold text-slate-900 block truncate">{b.member.name}</span>
               <span className={`text-xs font-extrabold block px-2 py-0.5 rounded-full ${b.netBalance >= 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
                 {b.netBalance >= 0 ? `+₹${b.netBalance.toLocaleString('en-IN')}` : `-₹${Math.abs(b.netBalance).toLocaleString('en-IN')}`}
               </span>
