@@ -76,10 +76,10 @@ export function isAdminUser(): boolean {
   return cachedIsAdmin;
 }
 
-export async function authSignUp(email: string, password: string, name: string, phone: string): Promise<{ uid: string; isAdmin: boolean }> {
+export async function authSignUp(email: string, password: string, name: string, phone: string, cardNo?: string): Promise<{ uid: string; isAdmin: boolean }> {
   const { data, error } = await api('/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ email, password, name, phone }),
+    body: JSON.stringify({ email, password, name, phone, cardNo }),
   });
   if (error) throw new Error(error);
   setToken(data.token);
@@ -98,6 +98,15 @@ export async function authSignIn(email: string, password: string): Promise<{ uid
   cachedUid = data.user.id;
   cachedIsAdmin = email === ADMIN_EMAIL;
   return { uid: data.user.id, isAdmin: cachedIsAdmin };
+}
+
+export async function authUpdateProfile(patch: { name: string; phone: string; cardNo?: string }): Promise<{ name: string; phone: string; cardNo: string }> {
+  const { data, error } = await api('/auth/profile', {
+    method: 'POST',
+    body: JSON.stringify(patch),
+  });
+  if (error) throw new Error(error);
+  return data.user;
 }
 
 export async function authForgotPassword(email: string, newPassword: string): Promise<void> {
@@ -139,7 +148,7 @@ export async function authSignOutAll(): Promise<void> {
   await authSignOut();
 }
 
-export async function authGetUser(): Promise<{ uid: string; email: string; isAdmin: boolean; name: string; phone: string; role: string } | null> {
+export async function authGetUser(): Promise<{ uid: string; email: string; isAdmin: boolean; name: string; phone: string; role: string; cardNo: string } | null> {
   const token = getToken();
   if (!token) return null;
   const { data } = await api('/auth/user', { headers: { Authorization: `Bearer ${token}` } });
@@ -153,6 +162,7 @@ export async function authGetUser(): Promise<{ uid: string; email: string; isAdm
     name: data.user.name || '',
     phone: data.user.phone || '',
     role: data.user.role || 'user',
+    cardNo: data.user.cardNo || '',
   };
 }
 

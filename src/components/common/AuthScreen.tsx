@@ -5,7 +5,7 @@ import { PhoneInput, isValidPhone } from './PhoneInput';
 import { Logo } from './Logo';
 
 interface AuthScreenProps {
-  onAuth: (profile?: { name: string; phone: string; inviteCode?: string }) => void;
+  onAuth: (profile?: { name: string; phone: string; cardNo?: string; inviteCode?: string }) => void;
 }
 
 export function AuthScreen({ onAuth }: AuthScreenProps) {
@@ -54,10 +54,13 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
         await authSignIn(email.trim(), password);
         onAuth();
       } else {
-        await authSignUp(email.trim(), password, name.trim(), phone.trim());
+        const { mintCardNo, cardSeed } = await import('../../utils/cards');
+        const cardNo = mintCardNo(cardSeed(email.trim(), phone.trim()));
+        await authSignUp(email.trim(), password, name.trim(), phone.trim(), cardNo);
         onAuth({
           name: name.trim(),
           phone: phone.trim(),
+          cardNo,
           inviteCode: inviteCode.trim().toUpperCase() || undefined,
         });
       }

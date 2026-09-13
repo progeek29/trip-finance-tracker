@@ -1,4 +1,5 @@
 import { Trip, Expense, TransitReminder, DocumentVaultItem, SharedPhoto, PlaceRecommendation, TripTodo } from '../types';
+import { mintCardNo, cardSeed } from './cards';
 import { 
   INITIAL_TRIP, 
   INITIAL_EXPENSES, 
@@ -220,6 +221,8 @@ export interface UserProfile {
   role?: UserRole;
   /** ISO date the user first registered on this phone */
   joinedAt?: string;
+  /** Permanent WanderSync pass number (`WSXX XXXX XXXX XXXX`) — minted once */
+  cardNo?: string;
 }
 
 export function getAdminStatus(name: string, phone: string): boolean {
@@ -233,7 +236,7 @@ export function loadUserProfile(): UserProfile | null {
     const saved = localStorage.getItem(PROFILE_KEY);
     if (saved) {
       const p = JSON.parse(saved);
-      if (p && typeof p.name === 'string' && p.name.trim()) return { name: p.name.trim(), phone: String(p.phone || ''), role: p.role, joinedAt: p.joinedAt };
+      if (p && typeof p.name === 'string' && p.name.trim()) return { name: p.name.trim(), phone: String(p.phone || ''), role: p.role, joinedAt: p.joinedAt, cardNo: typeof p.cardNo === 'string' ? p.cardNo : undefined };
     }
   } catch (e) {
     console.error(e);
@@ -242,6 +245,11 @@ export function loadUserProfile(): UserProfile | null {
 }
 
 export function saveUserProfile(profile: UserProfile): void {
+  // Mint the permanent pass number on first save so every user (new +
+  // existing) owns one even before the server round-trip completes.
+  if (!profile.cardNo) {
+    profile = { ...profile, cardNo: mintCardNo(cardSeed(profile.phone, profile.name)) };
+  }
   safeSet(PROFILE_KEY, JSON.stringify(profile));
 }
 

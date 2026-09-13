@@ -56,6 +56,7 @@ const STMTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_settlements_trip ON settlements("tripId")`,
   `CREATE INDEX IF NOT EXISTS idx_expense_events_trip ON expense_events("tripId")`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS "cardNo" text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS pinned boolean DEFAULT false`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS "_deleted" boolean DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS message_reads (

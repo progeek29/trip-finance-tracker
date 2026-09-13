@@ -324,6 +324,60 @@ async function fanOutChat({ tripId, senderId, senderName, type, text }) {
   }
 }
 
+// ─── Pass number (cardNo) — permanent per-user `WSXX XXXX XXXX XXXX` ────
+// Same deterministic hash as src/utils/cards.ts: every device derives the
+// same number, so display never flaps. Stored in users."cardNo" (see
+// migrate.cjs); every read tolerates a DB where the column is missing.
+function mintCardNo(seed) {
+  const s = String(seed || '').trim().toLowerCase() || 'wandersync-guest';
+  let h1 = 0, h2 = 0;
+  for (let i = 0; i < s.length; i++) {
+    h1 = (h1 * 31 + s.charCodeAt(i)) >>> 0;
+    h2 = (h2 * 37 + s.charCodeAt(i) * 7) >>> 0;
+  }
+  const d = (String(h1).padStart(10, '0') + String(h2).padStart(10, '0')).slice(0, 14);
+  return `WS${d.slice(0, 2)} ${d.slice(2, 6)} ${d.slice(6, 10)} ${d.slice(10, 14)}`;
+}
+function cleanCardNo(v, fallbackSeed) {
+  const s = String(v || '').trim().toUpperCase();
+  if (/^WS\d{2}( \d{4}){3}$/.test(s)) return s;
+  return mintCardNo(fallbackSeed);
+}
+async function insertUser(row) {
+  try {
+    await pool.query(
+      'INSERT INTO users (id, email, name, phone, role, password_hash, "cardNo") VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [row.id, row.email, row.name, row.phone, row.role, row.hash, row.cardNo]
+    );
+  } catch (e) {
+    if (e && /cardno/i.test(e.message || '')) {
+      // Column not migrated yet — legacy insert keeps signup working.
+      await pool.query(
+        'INSERT INTO users (id, email, name, phone, role, password_hash) VALUES ($1, $2, $3, $4, $5, $6)',
+        [row.id, row.email, row.name, row.phone, row.role, row.hash]
+      );
+    } else throw e;
+  }
+}
+async function userByToken(token) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT u.id, u.email, u.name, u.phone, u.role, u."cardNo" FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
+      [token]
+    );
+    return rows[0] || null;
+  } catch (e) {
+    if (e && /cardno/i.test(e.message || '')) {
+      const { rows } = await pool.query(
+        'SELECT u.id, u.email, u.name, u.phone, u.role FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
+        [token]
+      );
+      return rows[0] || null;
+    }
+    throw e;
+  }
+}
+
 // Auth: signup — email + phone unique (case/format-proof), validated.
 app.post('/api/auth/signup', async (req, res) => {
   try {
@@ -358,14 +412,12 @@ app.post('/api/auth/signup', async (req, res) => {
     const id = 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
     const hash = await bcrypt.hash(password, 10);
     const role = email === 'admin@wandersync.com' ? 'admin' : 'user';
+    const cardNo = cleanCardNo(req.body?.cardNo, email);
 
-    await pool.query(
-      'INSERT INTO users (id, email, name, phone, role, password_hash) VALUES ($1, $2, $3, $4, $5, $6)',
-      [id, email, name, phone, role, hash]
-    );
+    await insertUser({ id, email, name, phone, role, hash, cardNo });
 
     const token = await createSession(id);
-    res.json({ data: { user: { id, email }, token }, error: null });
+    res.json({ data: { user: { id, email, cardNo }, token }, error: null });
   } catch (e) {
     // Race-proof backstop: DB unique constraint hit between check and insert.
     if (e && (e.code === '23505' || String(e.message || '').toLowerCase().includes('unique'))) {
@@ -392,7 +444,7 @@ app.post('/api/auth/signin', async (req, res) => {
     if (!valid) return fail(res, 401, 'Invalid email or password');
 
     const token = await createSession(user.id);
-    res.json({ data: { user: { id: user.id, email: user.email }, token }, error: null });
+    res.json({ data: { user: { id: user.id, email: user.email, cardNo: user.cardNo || mintCardNo(user.email) }, token }, error: null });
   } catch (e) {
     console.error('Signin error:', e.message);
     res.json({ data: null, error: e.message });
@@ -405,15 +457,60 @@ app.get('/api/auth/user', async (req, res) => {
     const token = bearerToken(req);
     if (!token) return res.json({ data: { user: null }, error: null });
 
-    const { rows } = await pool.query(
-      'SELECT u.id, u.email, u.name, u.phone, u.role FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
-      [token]
-    );
-    if (rows.length === 0) return res.json({ data: { user: null }, error: null });
+    const user = await userByToken(token);
+    if (!user) return res.json({ data: { user: null }, error: null });
+    if (!user.cardNo) user.cardNo = mintCardNo(user.email);
 
-    res.json({ data: { user: rows[0] }, error: null });
+    res.json({ data: { user }, error: null });
   } catch (e) {
     res.json({ data: { user: null }, error: e.message });
+  }
+});
+
+// POST /api/auth/profile — update OWN name/phone/cardNo (session required).
+// This is what makes Profile → Save Changes survive the next login: name
+// and phone used to live in localStorage only, and the login restore
+// overwrote them with stale DB values every time.
+app.post('/api/auth/profile', async (req, res) => {
+  try {
+    const token = bearerToken(req);
+    if (!token) return fail(res, 401, 'Login required');
+    const me = await userByToken(token);
+    if (!me) return fail(res, 401, 'Login required');
+
+    const name = String(req.body?.name || '').trim().slice(0, 80);
+    const phoneRaw = req.body?.phone;
+    const phone = phoneRaw === undefined || phoneRaw === '' ? '' : normPhone(phoneRaw);
+    if (!name) return fail(res, 400, 'Name required');
+    if (phoneRaw !== undefined && phoneRaw !== '' && !phone) {
+      return fail(res, 400, 'Enter a valid 10-digit mobile number');
+    }
+    if (phone) {
+      const { rows: hit } = await pool.query(
+        `SELECT id FROM users WHERE id <> $1 AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g'), 10) = $2`,
+        [me.id, phone]
+      );
+      if (hit.length > 0) return fail(res, 409, 'This mobile number is already registered.');
+    }
+    const incomingCard = String(req.body?.cardNo || '').trim().toUpperCase();
+    const wantCard = /^WS\d{2}( \d{4}){3}$/.test(incomingCard) ? incomingCard : null;
+    // cardNo is permanent: only fill it when the row has none yet.
+    const setCard = wantCard && !me.cardNo ? `, "cardNo" = $4` : '';
+    const vals = wantCard && !me.cardNo ? [name, phone, me.id, wantCard] : [name, phone, me.id];
+    try {
+      await pool.query(`UPDATE users SET name = $1, phone = $2${setCard} WHERE id = $3`, vals);
+    } catch (e) {
+      if (e && /cardno/i.test(e.message || '')) {
+        await pool.query('UPDATE users SET name = $1, phone = $2 WHERE id = $3', [name, phone, me.id]);
+      } else throw e;
+    }
+    const { rows } = await pool.query('SELECT id, email, name, phone, role FROM users WHERE id = $1', [me.id]);
+    const user = rows[0] || { id: me.id, email: me.email, name, phone, role: me.role };
+    user.cardNo = me.cardNo || wantCard || mintCardNo(user.email);
+    res.json({ data: { user }, error: null });
+  } catch (e) {
+    console.error('Profile update error:', e.message);
+    res.json({ data: null, error: e.message });
   }
 });
 
@@ -493,11 +590,9 @@ app.post('/api/admin/create-user', async (req, res) => {
 
     const id = 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
     const hash = await bcrypt.hash(password, 10);
-    await pool.query(
-      'INSERT INTO users (id, email, name, phone, role, password_hash) VALUES ($1, $2, $3, $4, $5, $6)',
-      [id, email, name || '', phone || '', safeRole, hash]
-    );
-    res.json({ data: [{ id, email, name: name || '', phone: phone || '', role: safeRole }], error: null });
+    const cardNo = cleanCardNo(req.body?.cardNo, email);
+    await insertUser({ id, email, name: name || '', phone: phone || '', role: safeRole, hash, cardNo });
+    res.json({ data: [{ id, email, name: name || '', phone: phone || '', role: safeRole, cardNo }], error: null });
   } catch (e) {
     res.json({ data: null, error: e.message });
   }

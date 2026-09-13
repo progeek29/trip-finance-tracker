@@ -6,6 +6,7 @@ interface PhoneInputProps {
   placeholder?: string;
   label?: string;
   autoFocus?: boolean;
+  icon?: React.ReactNode;
 }
 
 /** Digits only, max 10 (the +91 prefix is fixed). */
@@ -26,7 +27,7 @@ export function formatPhoneDisplay(value: string | undefined): string {
   return `+91 ${d.slice(0, 5)} ${d.slice(5)}`;
 }
 
-export const PhoneInput: React.FC<PhoneInputProps> = ({ value, onChange, placeholder, label, autoFocus }) => {
+export const PhoneInput: React.FC<PhoneInputProps> = ({ value, onChange, placeholder, label, autoFocus, icon }) => {
   const digits = phoneDigits(value);
   const showError = digits.length > 0 && digits.length !== 10;
 
@@ -38,7 +39,8 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({ value, onChange, placeho
           showError ? 'border-rose-300' : 'border-slate-200 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100'
         }`}
       >
-        <span className="pl-3.5 pr-2 py-2.5 text-sm font-semibold text-slate-500 select-none">+91</span>
+        {icon && <span className="pl-3.5 flex items-center text-slate-400">{icon}</span>}
+        <span className={`py-2.5 text-sm font-semibold text-slate-500 select-none ${icon ? 'pl-1.5 pr-2' : 'pl-3.5 pr-2'}`}>+91</span>
         <input
           type="tel"
           inputMode="numeric"

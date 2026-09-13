@@ -343,7 +343,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
-              <Logo size={36} />
+              <Logo size={36} tone="white" />
               <div>
                 <p className="text-indigo-200 text-xs font-medium uppercase tracking-widest">WanderSync</p>
               </div>

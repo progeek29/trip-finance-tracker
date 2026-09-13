@@ -1,9 +1,15 @@
 import React from 'react';
 
-/** WanderSync logo — animated compass, same everywhere in the app. */
-export const Logo: React.FC<{ size?: number }> = ({ size = 32 }) => (
+/** WanderSync logo — static PNG pair (the 1.8MB gif is retired).
+ * File naming = tile background: `on-indigo` is an indigo tile for
+ * white pages (`tone="indigo"`, default); `on-white` is a light tile
+ * for indigo headers (`tone="white"`). */
+export const Logo: React.FC<{ size?: number; tone?: 'indigo' | 'white' }> = ({
+  size = 32,
+  tone = 'indigo',
+}) => (
   <img
-    src="/wandersync-compass-loop-v3.gif"
+    src={tone === 'white' ? '/wandersync-logo-on-white.png' : '/wandersync-logo-on-indigo.png'}
     alt="WanderSync"
     width={size}
     height={size}

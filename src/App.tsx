@@ -574,6 +574,7 @@ export function App() {
             name: u.name.trim(),
             phone: u.phone || '',
             role: (u.role as UserProfile['role']) || (u.isAdmin ? 'admin' : undefined),
+            cardNo: u.cardNo || undefined,
             joinedAt: new Date().toISOString(),
           };
           setProfile(restored);
@@ -1512,7 +1513,7 @@ export function App() {
           setAppView('landing');
           if (signupProfile) {
             // Signup: save profile immediately so WelcomeScreen is skipped
-            handleSaveProfile({ name: signupProfile.name, phone: signupProfile.phone });
+            handleSaveProfile({ name: signupProfile.name, phone: signupProfile.phone, cardNo: signupProfile.cardNo });
             setTripsHydrating(false);
             // Handle invite code join after render — NEVER silent: a failed
             // join must tell the user (else: logged in, no trip, no clue).
@@ -1541,6 +1542,7 @@ export function App() {
                     name: u.name.trim(),
                     phone: u.phone || '',
                     role: (u.role as UserProfile['role']) || (u.isAdmin ? 'admin' : undefined),
+                    cardNo: u.cardNo || undefined,
                     joinedAt: profile?.joinedAt || new Date().toISOString(),
                   };
                   setProfile(restored);
