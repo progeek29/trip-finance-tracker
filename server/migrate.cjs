@@ -69,6 +69,44 @@ const STMTS = [
   `CREATE INDEX IF NOT EXISTS idx_reads_trip ON message_reads("tripId")`,
 ];
 
+// Pass-number hash — MUST match src/utils/cards.ts + index.cjs mintCardNo.
+function mintCardNo(seed) {
+  const s = String(seed || '').trim().toLowerCase() || 'wandersync-guest';
+  let h1 = 0, h2 = 0;
+  for (let i = 0; i < s.length; i++) {
+    h1 = (h1 * 31 + s.charCodeAt(i)) >>> 0;
+    h2 = (h2 * 37 + s.charCodeAt(i) * 7) >>> 0;
+  }
+  const d = (String(h1).padStart(10, '0') + String(h2).padStart(10, '0')).slice(0, 14);
+  return `WS${d.slice(0, 2)} ${d.slice(2, 6)} ${d.slice(6, 10)} ${d.slice(10, 14)}`;
+}
+
+// Backfill: every existing user gets a UNIQUE permanent pass number.
+// Deterministic per email, collision-proofed with a counter suffix.
+async function backfillCardNo(pool) {
+  const { rows: missing } = await pool.query(
+    `SELECT id, email FROM users WHERE "cardNo" IS NULL OR "cardNo" = ''`
+  );
+  if (missing.length === 0) {
+    console.log('BACKFILL cardNo: none missing');
+    return;
+  }
+  const { rows: taken } = await pool.query(
+    `SELECT "cardNo" FROM users WHERE "cardNo" IS NOT NULL AND "cardNo" <> ''`
+  );
+  const used = new Set(taken.map((r) => r.cardNo));
+  let n = 0;
+  for (const u of missing) {
+    const seed = (u.email || u.id || 'wandersync-guest');
+    let card = mintCardNo(seed);
+    for (let i = 1; used.has(card); i++) card = mintCardNo(`${seed}#${i}`);
+    used.add(card);
+    await pool.query('UPDATE users SET "cardNo" = $1 WHERE id = $2', [card, u.id]);
+    n++;
+  }
+  console.log(`BACKFILL cardNo: ${n} users`);
+}
+
 (async () => {
   for (const sql of STMTS) {
     try {
@@ -78,6 +116,14 @@ const STMTS = [
       console.error('FAIL:', sql, e.message);
       process.exitCode = 1;
     }
+  }
+  try {
+    await backfillCardNo(pool);
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cardno ON users("cardNo")');
+    console.log('OK: CREATE UNIQUE INDEX idx_users_cardno');
+  } catch (e) {
+    console.error('FAIL: cardNo backfill/index', e.message);
+    process.exitCode = 1;
   }
   await pool.end();
 })().catch((e) => {
