@@ -244,7 +244,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
       <div className="max-w-5xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 lg:gap-12">
         {/* LEFT: identity panel */}
-        <div className="flex flex-col items-center text-center bg-white border border-slate-200 rounded-3xl px-7 py-9 h-fit shadow-sm">
+        <div className="flex flex-col items-center text-center bg-white border border-slate-200 rounded-3xl px-4 py-6 sm:px-7 sm:py-9 h-fit shadow-sm">
           <div className="relative w-[110px] h-[110px] rounded-full p-[3px] bg-gradient-to-br from-indigo-600 to-indigo-300 mb-5">
             <div className="w-full h-full rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-4xl font-extrabold border-[3px] border-white">
               {name ? name.charAt(0).toUpperCase() : <User size={40} />}
@@ -257,12 +257,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               <Shield size={10} /> ADMIN
             </span>
           )}
-          <p className="text-[13px] text-slate-500 mt-1 mb-8">
+          <p className="text-[13px] text-slate-500 mt-1 mb-5 sm:mb-8">
             {profile?.joinedAt ? `Member since ${fmtDate(profile.joinedAt)}` : 'Welcome to WanderSync'}
           </p>
 
           {/* Join a Trip */}
-          <div className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-5 text-left mb-4">
+          <div className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 sm:p-5 text-left mb-4">
             <h3 className="text-sm font-bold text-slate-900 font-display mb-1.5">Join a Trip</h3>
             <p className="text-xs text-slate-500 leading-relaxed mb-3.5">
               Enter an invitation code to instantly sync itineraries with your travel group.

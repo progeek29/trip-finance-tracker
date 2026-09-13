@@ -13,7 +13,11 @@ export const Logo: React.FC<{ size?: number; tone?: 'indigo' | 'white' }> = ({
     alt="WanderSync"
     width={size}
     height={size}
-    className="rounded-[30%] object-cover"
+    className={
+      tone === 'white'
+        ? 'rounded-[30%] object-cover ring-1 ring-white/40 shadow-sm saturate-[1.3] contrast-[1.05]'
+        : 'rounded-[30%] object-cover ring-1 ring-indigo-900/10 shadow-sm'
+    }
     style={{ width: size, height: size }}
   />
 );

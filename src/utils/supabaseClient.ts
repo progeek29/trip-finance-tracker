@@ -68,7 +68,10 @@ export async function ensureCloudUser(): Promise<{ uid: string }> {
     claimDataOwner(data.user.id);
     return { uid: data.user.id };
   }
-  clearToken();
+  // NOTE: never wipe the token here — a transient server/DB failure would
+  // otherwise log the user out permanently on next launch. The token is
+  // cleared only on explicit logout. An invalid token simply keeps failing
+  // closed (login screen) until the user logs in again.
   throw new Error('NOT_LOGGED_IN');
 }
 
