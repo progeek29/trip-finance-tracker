@@ -9,6 +9,28 @@ interface AuthScreenProps {
 }
 
 export function AuthScreen({ onAuth }: AuthScreenProps) {
+  const auth = useAuthForm(onAuth);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        {/* Logo */}
+        <div className="text-center mb-6">
+          <div className="flex justify-center mb-4 drop-shadow-lg">
+            <Logo size={64} />
+          </div>
+          <h1 className="text-2xl font-extrabold text-slate-900 font-display">WanderSync</h1>
+          <p className="text-sm text-slate-500 mt-1">Trip finance, simplified</p>
+        </div>
+
+        <AuthForm {...auth} />
+      </div>
+    </div>
+  );
+}
+
+/** Shared login/signup/forgot state + logic for AuthScreen and LoginLanding. */
+export function useAuthForm(onAuth: AuthScreenProps['onAuth']): AuthFormProps {
   const [isLogin, setIsLogin] = useState(true);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -101,20 +123,55 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
 
   const hasInvite = inviteCode.trim().length >= 4;
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="text-center mb-6">
-          <div className="flex justify-center mb-4 drop-shadow-lg">
-            <Logo size={64} />
-          </div>
-          <h1 className="text-2xl font-extrabold text-slate-900">WanderSync</h1>
-          <p className="text-sm text-slate-500 mt-1">Trip finance, simplified</p>
-        </div>
+  return {
+    isLogin, setIsLogin, name, setName, email, setEmail, phone, setPhone,
+    password, setPassword, inviteCode, setInviteCode, loading, error, setError,
+    showForgot, setShowForgot, fNewPass, setFNewPass, fMsg, setFMsg,
+    successMessage, setSuccessMessage, fLoading, hasInvite,
+    onSubmit: handleSubmit, onForgot: handleForgot,
+  };
+}
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
+interface AuthFormProps {
+  isLogin: boolean;
+  setIsLogin: (v: boolean) => void;
+  name: string;
+  setName: (v: string) => void;
+  email: string;
+  setEmail: (v: string) => void;
+  phone: string;
+  setPhone: (v: string) => void;
+  password: string;
+  setPassword: (v: string) => void;
+  inviteCode: string;
+  setInviteCode: (v: string) => void;
+  loading: boolean;
+  error: string;
+  setError: (v: string) => void;
+  showForgot: boolean;
+  setShowForgot: (v: boolean) => void;
+  fNewPass: string;
+  setFNewPass: (v: string) => void;
+  fMsg: string;
+  setFMsg: (v: string) => void;
+  successMessage: string;
+  setSuccessMessage: (v: string) => void;
+  fLoading: boolean;
+  hasInvite: boolean;
+  onSubmit: (e: React.FormEvent) => void;
+  onForgot: (e: React.FormEvent) => void;
+}
+
+/** The real login/signup/forgot form — shared by AuthScreen and LoginLanding. */
+export function AuthForm(props: AuthFormProps) {
+  const {
+    isLogin, setIsLogin, name, setName, email, setEmail, phone, setPhone,
+    password, setPassword, inviteCode, setInviteCode, loading, error, setError,
+    showForgot, setShowForgot, fNewPass, setFNewPass, fMsg, setFMsg, successMessage,
+    setSuccessMessage, fLoading, hasInvite, onSubmit, onForgot,
+  } = props;
+  return (
+        <form onSubmit={onSubmit} className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
           {showForgot ? (
             <div className="space-y-3 rounded-2xl bg-slate-50 border border-slate-200 p-3">
               <div>
@@ -148,7 +205,7 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
               )}
               <button
                 type="button"
-                onClick={handleForgot}
+                onClick={onForgot}
                 disabled={fLoading}
                 className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold text-sm cursor-pointer"
               >
@@ -231,7 +288,7 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
               {!isLogin && (
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Invite code
+                    Invite code <span className="font-medium text-slate-400">(optional)</span>
                   </label>
                   <input
                     value={inviteCode}
@@ -281,7 +338,5 @@ export function AuthScreen({ onAuth }: AuthScreenProps) {
             </>
           )}
         </form>
-      </div>
-    </div>
   );
 }

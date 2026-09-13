@@ -60,7 +60,7 @@ import { CleanVaultView } from './components/vault/CleanVaultView';
 import { QuickAddModal } from './components/sms/QuickAddModal';
 import { TripEditorModal } from './components/trip/TripEditorModal';
 import { AdminActivity } from './components/admin/AdminActivity';
-import { AuthScreen } from './components/common/AuthScreen';
+import { LoginLanding } from './components/common/LoginLanding';
 import { ProfilePage } from './components/common/ProfilePage';
 
   type AppView = 'landing' | 'trip_dashboard' | 'admin_activity' | 'profile' | 'coming_soon';
@@ -1506,7 +1506,7 @@ export function App() {
 
   if (!authed) {
     return (
-      <AuthScreen
+      <LoginLanding
         onAuth={(signupProfile) => {
           setTripsHydrating(true);
           setAuthed(true);
