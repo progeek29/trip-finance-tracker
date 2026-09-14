@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { PlaceRecommendation, Trip } from '../../types';
 import { 
   Compass, 
@@ -14,13 +14,16 @@ import {
   Utensils,
   Hotel,
   Compass as CompassIcon,
-  Sparkles
+  Sparkles,
+  Newspaper
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
+import { SponsoredCard } from './SponsoredCard';
 
 interface CommunityExploreViewProps {
   recommendations: PlaceRecommendation[];
-  trip: Trip;
+  /** Active trip for author attribution — optional (landing feed has none). */
+  trip?: Trip | null;
   onAddRecommendation: (rec: PlaceRecommendation) => void;
 }
 
@@ -29,7 +32,7 @@ export const CommunityExploreView: React.FC<CommunityExploreViewProps> = ({
   trip,
   onAddRecommendation,
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [channel, setChannel] = useState<'all' | 'itineraries' | 'ledgers' | 'journals' | 'news'>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
 
@@ -45,8 +48,25 @@ export const CommunityExploreView: React.FC<CommunityExploreViewProps> = ({
   const [newTips, setNewTips] = useState('');
   const [newTime, setNewTime] = useState('');
 
+  /** Feed channels over the trip's real recommendations — badges are live counts, never mock numbers. */
+  const channelOf = (rec: PlaceRecommendation): Array<'itineraries' | 'ledgers' | 'journals'> => {
+    const out: Array<'itineraries' | 'ledgers' | 'journals'> = [];
+    if (['must_visit', 'adventure', 'hidden_gem'].includes(rec.category)) out.push('itineraries');
+    if (Number(rec.estimatedFareOrCost) > 0) out.push('ledgers');
+    if (rec.tips && rec.tips.trim()) out.push('journals');
+    return out;
+  };
+  const counts = useMemo(() => {
+    const c = { all: recommendations.length, itineraries: 0, ledgers: 0, journals: 0 };
+    for (const rec of recommendations) {
+      for (const ch of channelOf(rec)) c[ch]++;
+    }
+    return c;
+  }, [recommendations]);
+
   const filtered = recommendations.filter((rec) => {
-    if (selectedCategory !== 'all' && rec.category !== selectedCategory) return false;
+    if (channel === 'news') return false;
+    if (channel !== 'all' && !channelOf(rec).includes(channel)) return false;
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
       const matchTitle = rec.title.toLowerCase().includes(q);
@@ -70,7 +90,7 @@ export const CommunityExploreView: React.FC<CommunityExploreViewProps> = ({
     e.preventDefault();
     if (!newTitle || !newFare) return;
 
-    const currentMember = trip.members.find(m => m.isCurrentUser) || trip.members[0];
+    const currentMember = trip?.members.find(m => m.isCurrentUser) || trip?.members[0] || { name: 'You', avatar: '😎' };
     const created: PlaceRecommendation = {
       id: 'rec_' + Date.now(),
       title: newTitle,
@@ -126,22 +146,37 @@ export const CommunityExploreView: React.FC<CommunityExploreViewProps> = ({
         </div>
       </div>
 
-      {/* Filter Tabs & Search */}
+      {/* Channel Tabs & Search */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-          {['all', 'must_visit', 'food_cafe', 'stay', 'adventure'].map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-medium capitalize transition-all ${
-                selectedCategory === cat
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'bg-slate-900/60 text-slate-400 hover:text-white'
-              }`}
-            >
-              {cat === 'all' ? 'All Places' : cat.replace('_', ' & ')}
-            </button>
-          ))}
+          {([
+            { id: 'all', label: 'All Feeds' },
+            { id: 'itineraries', label: 'Itineraries' },
+            { id: 'ledgers', label: 'Shared Ledgers' },
+            { id: 'journals', label: 'Journals' },
+            { id: 'news', label: 'Global News' },
+          ] as const).map((tab) => {
+            const n = tab.id === 'news' ? 0 : counts[tab.id as keyof typeof counts];
+            const active = channel === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setChannel(tab.id)}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium capitalize transition-all whitespace-nowrap ${
+                  active
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'bg-slate-900/60 text-slate-400 hover:text-white'
+                }`}
+              >
+                {tab.label}
+                {tab.id !== 'news' && (
+                  <span className={`text-[10px] font-bold rounded-full px-1.5 py-px ${active ? 'bg-white/20 text-white' : 'bg-white/5 text-slate-500'}`}>
+                    {n}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         <div className="relative">
@@ -158,9 +193,9 @@ export const CommunityExploreView: React.FC<CommunityExploreViewProps> = ({
 
       {/* Recommendations Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-        {filtered.map((rec) => (
+        {filtered.map((rec, idx) => (
+          <React.Fragment key={rec.id}>
           <div
-            key={rec.id}
             className="glass-card rounded-3xl overflow-hidden border border-white/10 flex flex-col md:flex-row hover:border-indigo-500/40 transition-all shadow-xl group"
           >
             {/* Image Thumbnail (Left) */}
@@ -228,10 +263,26 @@ export const CommunityExploreView: React.FC<CommunityExploreViewProps> = ({
                     <span className="text-xs font-medium text-slate-200">{rec.authorName}</span>
                   </div>
                 </div>
+                </div>
               </div>
             </div>
-          </div>
+            {idx === 3 && <SponsoredCard />}
+          </React.Fragment>
         ))}
+        {filtered.length > 0 && filtered.length <= 3 && <SponsoredCard />}
+        {filtered.length === 0 && channel !== 'news' && (
+          <div className="col-span-full rounded-3xl border border-white/10 bg-slate-900/60 p-8 text-center">
+            <p className="text-sm font-bold text-white font-display">No places match this filter</p>
+            <p className="text-xs text-slate-400 mt-1">Try another search, or be the first to share a tip.</p>
+          </div>
+        )}
+        {channel === 'news' && (
+          <div className="col-span-full rounded-3xl border border-white/10 bg-slate-900/60 p-8 text-center">
+            <Newspaper size={22} className="mx-auto text-indigo-300 mb-3" />
+            <p className="text-sm font-bold text-white font-display">Global News lands next</p>
+            <p className="text-xs text-slate-400 mt-1">Live travel news will stream here on a 12-hour refresh — no stale mock articles in the meantime.</p>
+          </div>
+        )}
       </div>
 
       {/* Add Recommendation Modal */}

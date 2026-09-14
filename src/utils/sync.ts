@@ -1,5 +1,5 @@
 import { supabase, ensureCloudUser } from './supabaseClient';
-import { resolveMedia } from './mediaStore';
+import { resolveMediaBlob } from './mediaStore';
 import type { Trip, Expense, DocumentVaultItem, TripTodo, Settlement, ExpenseEvent } from '../types';
 import { tripOwnerUid } from './budget';
 
@@ -140,19 +140,22 @@ export async function pushTripShared(
     const src = d.previewUrl || d.fileUrl || '';
     if (src) {
       try {
-        const dataUrl = await resolveMedia(src);
-        if (dataUrl.startsWith('data:')) {
-          const ext = dataUrl.startsWith('data:image/png')
+        // Blob path (new records) or legacy text (old records) — same bytes either way.
+        const blob = await resolveMediaBlob(src);
+        if (blob && blob.size > 0) {
+          const t = blob.type || '';
+          const ext = t.includes('png')
             ? 'png'
-            : dataUrl.startsWith('data:application/pdf')
-              ? 'pdf'
-              : 'jpg';
-          const bin = atob(dataUrl.split(',')[1]);
-          const bytes = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            : t.includes('webp')
+              ? 'webp'
+              : t.includes('avif')
+                ? 'avif'
+                : t.includes('pdf')
+                  ? 'pdf'
+                  : 'jpg';
           const path = `trips/${trip.id}/docs/${d.id}.${ext}`;
-          await supabase.storage.from('vault').upload(path, bytes, {
-            contentType: dataUrl.split(';')[0].split(':')[1],
+          await supabase.storage.from('vault').upload(path, blob, {
+            contentType: t || 'image/jpeg',
             upsert: true,
           });
           const { data: urlData } = supabase.storage.from('vault').getPublicUrl(path);

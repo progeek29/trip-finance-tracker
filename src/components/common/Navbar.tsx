@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Compass, Wallet, ListChecks, Plus, ArrowLeft, MessageCircle, Bell } from 'lucide-react';
+import React from 'react';
+import { Compass, Wallet, History, Plus, ArrowLeft, MessagesSquare, Bell, Home } from 'lucide-react';
 import { Logo } from './Logo';
 
 export type CleanTab = 'trip' | 'todo' | 'expenses' | 'chat' | 'split' | 'vault';
@@ -32,26 +32,17 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const tabs = [
     { id: 'trip' as CleanTab, label: 'Trip', icon: Compass },
-    { id: 'todo' as CleanTab, label: 'Todo', icon: ListChecks },
+    { id: 'todo' as CleanTab, label: 'Timeline', icon: History },
     { id: 'expenses' as CleanTab, label: 'Expenses', icon: Wallet },
-    { id: 'chat' as CleanTab, label: 'Chat', icon: MessageCircle },
+    { id: 'chat' as CleanTab, label: 'Chat', icon: MessagesSquare },
     // VAULT DISABLED (temp) — data + views intact, button hidden. Re-add:
     // { id: 'vault' as CleanTab, label: 'Vault', icon: FolderOpen },
   ];
 
   const spentPct = totalBudget > 0 ? Math.min(100, Math.round((totalSpent / totalBudget) * 100)) : 0;
 
-  // New notification → bell jiggles red ~2s + vibrates (size never changes)
-  const [ringing, setRinging] = useState(false);
-  useEffect(() => {
-    if (!bellPulse) return;
-    setRinging(true);
-    try {
-      navigator.vibrate?.([70, 50, 70]);
-    } catch { /* vibrate unsupported */ }
-    const t = window.setTimeout(() => setRinging(false), 2000);
-    return () => window.clearTimeout(t);
-  }, [bellPulse]);
+  // Bell is static — red dot only when unreadCount > 0. Opening panel clears it.
+  void bellPulse;
 
   return (
     <>
@@ -106,7 +97,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="relative w-8 h-8 flex items-center justify-center text-slate-600 hover:text-indigo-600 transition-colors cursor-pointer"
               title="Notifications"
             >
-              <span className={`inline-flex ${ringing ? 'bell-jiggle' : ''}`}>
+              <span className="inline-flex">
                 <Bell size={19} />
               </span>
               {(unreadCount || 0) > 0 && (
@@ -126,37 +117,51 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </header>
 
-      {activeTab !== 'chat' && (
-        /* Airbnb-style bottom bar: white, top border, icon-over-label, indigo active */
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 shadow-[0_-8px_30px_rgba(0,0,0,0.03)] [transform:translateZ(0)]">
-          <nav className="max-w-3xl mx-auto px-4 pt-1.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex justify-around items-center">
-            {tabs.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
+      {activeTab !== 'chat' && (() => {
+        const barItems = [
+          ...tabs.slice(0, 2).map((tab) => ({
+            id: tab.id,
+            label: tab.label,
+            Icon: tab.icon,
+            active: activeTab === tab.id,
+            onClick: () => onTabChange(tab.id),
+          })),
+          ...(onBackToTrips
+            ? [{ id: 'home', label: 'Home', Icon: Home, active: false, onClick: onBackToTrips }]
+            : []),
+          ...tabs.slice(2).map((tab) => ({
+            id: tab.id,
+            label: tab.label,
+            Icon: tab.icon,
+            active: activeTab === tab.id,
+            onClick: () => onTabChange(tab.id),
+          })),
+        ];
+        return (
+          <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200/80 shadow-[0_-8px_30px_rgba(0,0,0,0.06)] [transform:translateZ(0)]">
+            <nav className="max-w-3xl mx-auto px-4 pt-1.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex justify-around items-center">
+              {barItems.map(({ id, label, Icon, active, onClick }) => (
                 <button
-                  key={tab.id}
-                  onClick={() => onTabChange(tab.id)}
-                  className="flex flex-col items-center justify-center bg-transparent border-0 gap-0.5 flex-1 py-0.5 transition-all duration-200 ease-out active:scale-95 focus:outline-none cursor-pointer"
+                  key={id}
+                  onClick={onClick}
+                  aria-label={label}
+                  title={label}
+                  className="flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-colors cursor-pointer"
                 >
                   <Icon
-                    size={20}
-                    strokeWidth={2}
-                    className={`transition-colors duration-200 ${isActive ? 'text-[#4f46e5]' : 'text-gray-400'}`}
+                    size={22}
+                    strokeWidth={active ? 2.2 : 1.8}
+                    className={active ? 'text-indigo-600' : 'text-slate-400'}
                   />
-                  <span
-                    className={`text-[9px] leading-tight tracking-tight transition-colors duration-200 ${
-                      isActive ? 'text-[#4f46e5] font-bold' : 'text-gray-500 font-medium'
-                    }`}
-                  >
-                    {tab.label}
+                  <span className={`text-[10px] leading-tight ${active ? 'text-indigo-600 font-bold' : 'text-slate-400 font-medium'}`}>
+                    {label}
                   </span>
                 </button>
-              );
-            })}
-          </nav>
-        </div>
-      )}
+              ))}
+            </nav>
+          </div>
+        );
+      })()}
     </>
   );
 };

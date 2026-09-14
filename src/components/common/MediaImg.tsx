@@ -3,6 +3,22 @@ import { resolveMedia } from '../../utils/mediaStore';
 
 const urlCache = new Map<string, string>();
 
+/** Drop a cached URL (call on delete so dead blob: URLs free memory). */
+export function dropCachedMediaUrl(ref: string | undefined): void {
+  if (!ref) return;
+  const hit = urlCache.get(ref);
+  if (hit) {
+    urlCache.delete(ref);
+    if (hit.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(hit);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+}
+
 /** Resolve an `idb:` pointer (or plain URL) for rendering. */
 export function useMediaUrl(ref: string | undefined): string {
   const [url, setUrl] = useState(() => {

@@ -278,7 +278,7 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
                         <button type="button" onClick={() => setCoverImage(DEFAULT_COVERS[0])} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold cursor-pointer">Reset</button>
                       )}
                     </div>
-                    <input ref={coverFileRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setCoverImage(await readFileAsDataUrl(f)); }} />
+                    <input ref={coverFileRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) { try { const { compressImage } = await import('../../utils/image'); setCoverImage((await compressImage(f)).url); } catch { setCoverImage(await readFileAsDataUrl(f)); } } }} />
                   </>
                 )}
               </div>

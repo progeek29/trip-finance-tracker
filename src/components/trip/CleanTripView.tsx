@@ -307,14 +307,16 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
         )}
         <div className="space-y-2">
           {trip.cities.map((city, idx) => (
-            <div key={city.id} className="clean-card rounded-2xl px-4 py-3 border border-slate-200 bg-white flex items-center gap-3">
-              <span className="w-7 h-7 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-extrabold flex items-center justify-center flex-shrink-0">{idx + 1}</span>
+            <div key={city.id} className="clean-card rounded-2xl px-4 py-3 border border-slate-200 bg-white flex items-start gap-3">
+              <span className="w-7 h-7 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-extrabold flex items-center justify-center flex-shrink-0 mt-0.5">{idx + 1}</span>
               <span className="flex-1 min-w-0">
-                <span className="block text-sm font-bold text-slate-900 truncate">{city.name}</span>
-                {city.notes ? <span className="block text-[11px] text-slate-500 truncate">{city.notes}</span> : null}
+                <span className="block text-sm font-bold text-slate-900 break-words">{city.name}</span>
+                {city.notes ? <span className="block text-[11px] text-slate-500 break-words whitespace-pre-wrap mt-0.5">{city.notes}</span> : null}
               </span>
+              <span className="flex items-center gap-1 flex-shrink-0">
               <button onClick={() => setStopModal({ open: true, editing: city })} className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
               <button onClick={() => deleteStop(city.id, city.name)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+              </span>
             </div>
           ))}
         </div>
@@ -388,12 +390,13 @@ function StopFormModal({ editing, onClose, onSave }: { editing: CityStop | null;
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
-      <form onSubmit={submit} className="bg-white max-w-md w-full rounded-3xl p-6 space-y-3 shadow-2xl">
+      <form onSubmit={submit} className="bg-white max-w-lg w-full rounded-3xl p-6 sm:p-7 space-y-4 shadow-2xl max-h-[88vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-bold text-slate-900">{editing ? 'Edit Spot' : 'Add Spot'}</h4>
+          <h4 className="text-sm font-bold text-slate-900 font-display">{editing ? 'Edit Spot' : 'Add Spot'}</h4>
           <button type="button" onClick={onClose} className="p-1 text-slate-400 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
         <div>
+          <label className="ui-label block mb-1.5">Spot name *</label>
           <input
             value={name}
             onChange={(e) => {
@@ -401,13 +404,16 @@ function StopFormModal({ editing, onClose, onSave }: { editing: CityStop | null;
               if (nameError && e.target.value.trim()) setNameError(false);
             }}
             placeholder="Spot name *"
-            className={`w-full rounded-xl border px-3 py-2 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-100 ${
+            className={`w-full rounded-xl border px-3.5 py-2.5 text-sm font-bold text-slate-800 focus:outline-none focus:bg-white focus:ring-2 focus:ring-indigo-100 placeholder-slate-300 ${
               nameError ? 'bg-rose-50 border-rose-400 placeholder-rose-300 focus:border-rose-400' : 'bg-slate-50 border-slate-200 focus:border-indigo-500'
             }`}
           />
         </div>
-        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Description (optional)" rows={2} className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs" />
-        <button className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer">Save</button>
+        <div>
+          <label className="ui-label block mb-1.5">Description</label>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Write as much as you like — directions, timings, costs, anything…" rows={6} className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 resize-y min-h-[150px] max-h-[40vh] overflow-y-auto" />
+        </div>
+        <button className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer">Save</button>
       </form>
     </div>
   );

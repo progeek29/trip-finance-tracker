@@ -8,7 +8,7 @@ import { StorageCard } from './StorageCard';
 import { MediaImg } from '../common/MediaImg';
 import { Lightbox } from '../common/Lightbox';
 import { ConfirmDialog } from '../common/ConfirmDialog';
-import { storePickedFile, resolveMedia, isMediaRef } from '../../utils/mediaStore';
+import { storePickedFile, resolveMedia, resolveMediaBlob, blobToDataUrl, isMediaRef } from '../../utils/mediaStore';
 import { saveToPhoneFolder, deleteManyFromPhoneFolder } from '../../utils/phoneFolder';
 import { Eye, MapPin, X, Edit2, Trash2, Copy, Check, Camera, Upload, ImagePlus } from 'lucide-react';
 
@@ -472,11 +472,13 @@ function DocumentFormModal({ trip, editing, onClose, onSave }: { trip: Trip; edi
     const docId = editing?.id || `doc_${Date.now()}`;
     // Phone folder mirror (old mirror cleaned first)
     await deleteManyFromPhoneFolder([...(editing?.phonePaths || []), editing?.phonePath]);
-    const mainData = previewUrl ? await resolveMedia(previewUrl) : '';
+    const mainBlob = previewUrl ? await resolveMediaBlob(previewUrl) : null;
+    const mainData = mainBlob ? await blobToDataUrl(mainBlob) : '';
     const phonePath = mainData.startsWith('data:') ? await saveToPhoneFolder(trip.title, docId, mainData, fileName) : null;
     const phonePaths: string[] = [];
     for (let i = 0; i < stayPhotos.length; i++) {
-      const d = await resolveMedia(stayPhotos[i]);
+      const stayBlob = await resolveMediaBlob(stayPhotos[i]);
+      const d = stayBlob ? await blobToDataUrl(stayBlob) : '';
       if (d.startsWith('data:')) {
         const p = await saveToPhoneFolder(trip.title, `${docId}_stay_${i}`, d);
         if (p) phonePaths.push(p);
@@ -630,7 +632,9 @@ function PhotoFormModal({ trip, editing, onClose, onSaveOne, onSaveMany }: { tri
     const finalImages = images.length > 0 ? images : [DEFAULT_PHOTO];
     const me = trip.members.find((m) => m.isCurrentUser) || trip.members[0];
     const mirrorOne = async (id: string, ref: string) => {
-      const dataUrl = await resolveMedia(ref);
+      const blob = await resolveMediaBlob(ref);
+      if (!blob) return null;
+      const dataUrl = await blobToDataUrl(blob);
       if (!dataUrl.startsWith('data:')) return null;
       return saveToPhoneFolder(trip.title, id, dataUrl);
     };
@@ -744,7 +748,8 @@ function PlaceFormModal({ tripId, tripTitle, editing, existingLocations, onClose
     await deleteManyFromPhoneFolder(editing?.phonePaths || []);
     const phonePaths: string[] = [];
     for (let i = 0; i < finalImages.length; i++) {
-      const d = await resolveMedia(finalImages[i]);
+      const placeBlob = await resolveMediaBlob(finalImages[i]);
+      const d = placeBlob ? await blobToDataUrl(placeBlob) : '';
       if (d.startsWith('data:')) {
         const p = await saveToPhoneFolder(tripTitle, `${placeId}_${i}`, d);
         if (p) phonePaths.push(p);

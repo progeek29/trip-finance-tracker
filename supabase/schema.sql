@@ -87,6 +87,25 @@ create table if not exists documents (
   "createdAt" timestamptz default now()
 );
 
+-- ─── MOMENT PHOTOS (trip timeline — Supabase is source of truth) ──
+-- Bytes live in the `vault` storage bucket (no new bucket needed):
+--   trips/<tripId>/moments/<photoId>.<ext>
+create table if not exists photos (
+  id text primary key,
+  "tripId" text references trips(id) on delete cascade,
+  url text default '',
+  caption text default '',
+  "locationTag" text default '',
+  "uploadedByMemberId" text,
+  "uploadedByName" text default '',
+  "uploadedAt" text default '',
+  "likesCount" numeric default 0,
+  "storagePath" text default '',
+  "_deleted" boolean default false,
+  "updatedAt" bigint,
+  "updatedBy" text,
+  "createdAt" timestamptz default now()
+);
 -- ─── CHAT MESSAGES ──────────────────────────────────────────
 create table if not exists chat_messages (
   id text primary key,
@@ -186,6 +205,7 @@ create table if not exists message_reads (
 create index if not exists idx_expenses_trip on expenses("tripId");
 create index if not exists idx_todos_trip on todos("tripId");
 create index if not exists idx_documents_trip on documents("tripId");
+create index if not exists idx_photos_trip on photos("tripId");
 create index if not exists idx_chat_trip on chat_messages("tripId");
 create index if not exists idx_chat_created on chat_messages("tripId", "createdAt");
 create index if not exists idx_signals_trip on signals("tripId");
@@ -198,6 +218,7 @@ create index if not exists idx_reads_trip on message_reads("tripId");
 
 -- ─── REALTIME (Supabase-only, skip for local PostgreSQL) ─────
 -- alter publication supabase_realtime add table chat_messages;
+-- alter publication supabase_realtime add table photos;
 -- alter publication supabase_realtime add table signals;
 -- alter publication supabase_realtime add table presence;
 
@@ -235,6 +256,7 @@ DO $$ BEGIN
   ALTER TABLE expenses DISABLE ROW LEVEL SECURITY;
   ALTER TABLE todos DISABLE ROW LEVEL SECURITY;
   ALTER TABLE documents DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE photos DISABLE ROW LEVEL SECURITY;
   ALTER TABLE chat_messages DISABLE ROW LEVEL SECURITY;
   ALTER TABLE signals DISABLE ROW LEVEL SECURITY;
   ALTER TABLE presence DISABLE ROW LEVEL SECURITY;

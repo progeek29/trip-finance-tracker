@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Trip, Expense } from '../../types';
+import { Trip, Expense, PlaceRecommendation } from '../../types';
 import { MemberAvatar } from '../common/MemberAvatar';
 import { Logo } from '../common/Logo';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { CommunityExploreView } from '../discovery/CommunityExploreView';
+import { ChatHubView } from '../chat/ChatHubView';
 import { BUILD_TAG } from '../../utils/version';
 import { viewerBudget } from '../../utils/budget';
 import { tripOwnerUid } from '../../utils/budget';
@@ -10,7 +12,7 @@ import { MediaImg } from '../common/MediaImg';
 import {
   MapPin, Calendar, Users, User, Wallet, ChevronRight,
   MoreVertical, Edit2, Trash2, Plane, CheckCircle2,
-  Clock, Zap, Star, Share2, Globe, Plus, Bell
+  Clock, Zap, Star, Share2, Search, Plus, Bell, Home, MessagesSquare
 } from 'lucide-react';
 
 interface TripLandingViewProps {
@@ -31,6 +33,19 @@ interface TripLandingViewProps {
   onBellClick?: () => void;
   /** Bumps on every new notification → bell jiggles + vibrates (same as trip header). */
   bellPulse?: number;
+  /** Landing bottom-bar tab (trips list vs explore feed vs chat hub). */
+  landingTab?: 'trips' | 'explore' | 'chat';
+  onLandingTabChange?: (t: 'trips' | 'explore' | 'chat') => void;
+  /** Shortcut → most-recent trip's chat (chat needs a trip room). */
+  onOpenChat?: () => void;
+  /** Open a specific trip's chat room (from Chat hub). */
+  onOpenTripChat?: (trip: Trip) => void;
+  /** Skeleton-action toast (call/video/new-chat dummies). */
+  onDummyAction?: (msg: string) => void;
+  /** Unread badge per trip for the Chat hub. */
+  unreadByTrip?: Record<string, number>;
+  recommendations?: PlaceRecommendation[];
+  onAddRecommendation?: (rec: PlaceRecommendation) => void;
 }
 
 const STATUS_META = {
@@ -289,22 +304,13 @@ function TripCard({
   );
 }
 
-export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange, unreadCount, onBellClick, bellPulse = 0 }: TripLandingViewProps) {
+export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange, unreadCount, onBellClick, bellPulse = 0, landingTab = 'trips', onLandingTabChange, onOpenChat, onOpenTripChat, onDummyAction, unreadByTrip, recommendations = [], onAddRecommendation }: TripLandingViewProps) {
   const [filter, setFilter] = useState<'all' | 'inprogress' | 'upcoming' | 'completed'>('all');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'owned' | 'joined'>(ownerFilterProp || 'all');
   const [confirmTrip, setConfirmTrip] = useState<Trip | null>(null);
 
-  // New notification → bell jiggles ~2s + vibrates (same as trip header bell)
-  const [ringing, setRinging] = useState(false);
-  useEffect(() => {
-    if (!bellPulse) return;
-    setRinging(true);
-    try {
-      navigator.vibrate?.([70, 50, 70]);
-    } catch { /* vibrate unsupported */ }
-    const t = window.setTimeout(() => setRinging(false), 2000);
-    return () => window.clearTimeout(t);
-  }, [bellPulse]);
+  // Bell is static — red dot only when unreadCount > 0. Opening panel clears it (App sets notifSeenAt/lastSeen).
+  void bellPulse;
 
   const inProgress = trips.filter(t => liveTripStatus(t) === 'inprogress');
   const upcoming = trips.filter(t => liveTripStatus(t) === 'upcoming');
@@ -354,7 +360,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
                 className="relative w-8 h-8 flex items-center justify-center text-white hover:text-indigo-200 transition-colors cursor-pointer"
                 title="Notifications"
               >
-                <span className={`inline-flex ${ringing ? 'bell-jiggle' : ''}`}>
+                <span className="inline-flex">
                   <Bell size={28} strokeWidth={2} />
                 </span>
                 {(unreadCount || 0) > 0 && (
@@ -395,6 +401,17 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
       </div>
 
       {/* Filter chips + separate create button */}
+      {landingTab === 'chat' ? (
+        <ChatHubView
+          trips={trips}
+          myUid={myUid}
+          myName={userName || 'Me'}
+          unreadByTrip={unreadByTrip}
+          onOpenTripChat={(trip) => (onOpenTripChat ? onOpenTripChat(trip) : onOpenChat?.())}
+          onDummyAction={(msg) => onDummyAction?.(msg)}
+        />
+      ) : landingTab === 'trips' ? (
+      <>
       <div className="max-w-2xl mx-auto px-4 pt-5 pb-1 flex items-center gap-2.5">
         <div className="flex-1 min-w-0">
         {/* Ownership tabs */}
@@ -466,6 +483,16 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
           </div>
         )}
       </div>
+      </>
+      ) : (
+      <div className="max-w-2xl mx-auto px-4 pt-5 pb-32">
+        <CommunityExploreView
+          recommendations={recommendations}
+          trip={null}
+          onAddRecommendation={onAddRecommendation || (() => {})}
+        />
+      </div>
+      )}
 
       {confirmTrip && (
         <ConfirmDialog
@@ -474,7 +501,35 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
           onClose={() => setConfirmTrip(null)}
         />
       )}
-      <p className="text-center text-[10px] text-slate-300 font-mono pb-6">build {BUILD_TAG}</p>
+      <p className="text-center text-[10px] text-slate-300 font-mono pb-24">build {BUILD_TAG}</p>
+
+      {/* Landing bottom bar — full-width sticky (Trips / Explore / Chat) */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200/80 shadow-[0_-8px_30px_rgba(0,0,0,0.06)] [transform:translateZ(0)]">
+        <nav className="max-w-2xl mx-auto px-4 pt-1.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex justify-around items-center">
+          {([
+            { id: 'trips', label: 'Trips', Icon: Home, active: landingTab === 'trips', onClick: () => onLandingTabChange?.('trips') },
+            { id: 'explore', label: 'Explore', Icon: Search, active: landingTab === 'explore', onClick: () => onLandingTabChange?.('explore') },
+            { id: 'chat', label: 'Chat', Icon: MessagesSquare, active: landingTab === 'chat', onClick: () => onLandingTabChange?.('chat') },
+          ] as const).map(({ id, label, Icon, active, onClick }) => (
+            <button
+              key={id}
+              onClick={onClick}
+              aria-label={label}
+              title={label}
+              className="flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-colors cursor-pointer"
+            >
+              <Icon
+                size={22}
+                strokeWidth={active ? 2.2 : 1.8}
+                className={active ? 'text-indigo-600' : 'text-slate-400'}
+              />
+              <span className={`text-[10px] leading-tight ${active ? 'text-indigo-600 font-bold' : 'text-slate-400 font-medium'}`}>
+                {label}
+              </span>
+            </button>
+          ))}
+        </nav>
+      </div>
     </div>
   );
 }

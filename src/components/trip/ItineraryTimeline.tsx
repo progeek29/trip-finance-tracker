@@ -23,6 +23,17 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
         </div>
       </div>
 
+      {trip.cities.length === 0 ? (
+        <div className="text-center py-10 px-4">
+          <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto mb-3">
+            <MapPin size={24} className="text-indigo-400" />
+          </div>
+          <p className="text-sm font-bold text-slate-700">No stops yet</p>
+          <p className="text-[11px] text-slate-400 font-medium mt-1 max-w-[240px] mx-auto">
+            Add cities from trip edit — your day-wise trail will appear here.
+          </p>
+        </div>
+      ) : (
       <div className="relative border-l-2 border-indigo-500/30 ml-4 pl-6 space-y-6 my-4">
         {trip.cities.map((city, idx) => {
           const cityExpenses = expenses.filter(e => e.cityId === city.id);
@@ -95,6 +106,7 @@ export const ItineraryTimeline: React.FC<ItineraryTimelineProps> = ({
           );
         })}
       </div>
+      )}
     </div>
   );
 };

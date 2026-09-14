@@ -40,10 +40,11 @@ import { Navbar, CleanTab } from './components/common/Navbar';
 import { AtSign, Bell, Check, MapPin, MessageCircle, Radio } from 'lucide-react';
 import { WelcomeScreen } from './components/trip/WelcomeScreen';
 import { ChatView } from './components/chat/ChatView';
-import { TodoView } from './components/todo/TodoView';
+import { TripMomentsView } from './components/trip/TripMomentsView';
 import { publishTripInvite, lookupInvite, joinTripById, shareMessage } from './utils/invites';
 import { ensureCloudUser, authGetUser, authSignOut, supabase } from './utils/supabaseClient';
 import { pushTripShared, subscribeTripShared, pushTombstone, deleteTripFromFirestore, deleteInviteByCode, type RemoteSnapshot } from './utils/sync';
+import { subscribeMoments } from './utils/momentsSync';
 import { joinTripRoom } from './utils/socket';
 import { playReceiverSiren, playChime as playChimeSoft } from './utils/chime';
 import { registerPushToken } from './utils/push';
@@ -166,6 +167,7 @@ export function App() {
   const [expenseEvents, setExpenseEvents] = useState<ExpenseEvent[]>(loadExpenseEventsData);
 
   const [activeTab, setActiveTab] = useState<CleanTab>(loadSessionTab);
+  const [landingTab, setLandingTab] = useState<'trips' | 'explore' | 'chat'>('trips');
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [isTripEditorOpen, setIsTripEditorOpen] = useState(false);
@@ -264,17 +266,6 @@ export function App() {
   const tripExpenses = activeTrip ? expenses.filter((e) => e.tripId === activeTrip.id) : [];
   const tripDocuments = activeTrip ? documents.filter((d) => d.tripId === activeTrip.id) : documents;
   const tripPhotos = activeTrip ? photos.filter((p) => p.tripId === activeTrip.id) : photos;
-  const tripTodos = activeTrip ? todos.filter((t) => t.tripId === activeTrip.id) : [];
-  // Each user's TODOs are separate: only your own todos are shown.
-  // (checks both ownerUid and updatedBy — legacy unattributed todos stay visible to all, transitional)
-  const myTripTodos = activeTrip
-    ? tripTodos.filter((t) => {
-        if (!myUid) return true;
-        if (t.ownerUid) return t.ownerUid === myUid;
-        if (t.updatedBy && t.updatedBy !== 'local') return t.updatedBy === myUid;
-        return true;
-      })
-    : [];
   const tripSettlements = activeTrip ? settlements.filter((s) => s.tripId === activeTrip.id) : [];
   const tripExpenseEvents = activeTrip
     ? expenseEvents.filter((e) => e.tripId === activeTrip.id).sort((a, b) => b.at - a.at)
@@ -476,23 +467,6 @@ export function App() {
     setPhotos((prev) => prev.filter((p) => p.id !== id));
   };
 
-  // Trip checklist — one per user (medicine, bakery, itinerary...)
-  const handleAddTodo = (text: string) => {
-    if (!activeTrip || !text.trim()) return;
-    setTodos((prev) => [
-      { id: `todo_${Date.now()}`, tripId: activeTrip.id, text: text.trim().slice(0, 120), done: false, createdAt: new Date().toISOString(), ownerUid: myUid || undefined, updatedAt: Date.now(), updatedBy: myUid || 'local' },
-      ...prev,
-    ]);
-  };
-  const handleToggleTodo = (id: string) => {
-    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done, updatedAt: Date.now(), updatedBy: myUid || 'local' } : t)));
-  };
-  const handleDeleteTodo = (id: string) => {
-    if (activeTrip?.inviteCode) {
-      pushTombstone(activeTrip.id, 'todos', id).catch(() => undefined);
-    }
-    setTodos((prev) => prev.filter((t) => t.id !== id));
-  };
   // Places
   const handleAddPlace = (p: PlaceRecommendation) => setRecommendations((prev) => [p, ...prev]);
   const handleUpdatePlace = (p: PlaceRecommendation) => setRecommendations((prev) => prev.map((x) => (x.id === p.id ? p : x)));
@@ -932,6 +906,34 @@ export function App() {
     return () => {
       cancelled = true;
       leave();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTrip?.id, appView]);
+
+  // Timeline moments: Supabase is truth (any device), local Blob copies stay for instant render
+  useEffect(() => {
+    if (!activeTrip || appView !== 'trip_dashboard') return;
+    const tripId = activeTrip.id;
+    let cancelled = false;
+    const unsub = subscribeMoments(tripId, (rows) => {
+      if (cancelled) return;
+      setPhotos((prev) => {
+        const remoteById = new Map(rows.map((r) => [r.id, r]));
+        const merged = prev.map((p) => {
+          const r = remoteById.get(p.id);
+          if (!r) return p; // local-only (offline post) — keep
+          remoteById.delete(p.id);
+          return { ...r, localRef: p.localRef };
+        });
+        const fresh = [...remoteById.values()]
+          .filter((r) => r.tripId === tripId)
+          .sort((a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt));
+        return [...fresh, ...merged];
+      });
+    });
+    return () => {
+      cancelled = true;
+      unsub();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrip?.id, appView]);
@@ -1606,12 +1608,19 @@ export function App() {
         <div className="max-w-lg mx-auto px-4 h-14 flex items-center gap-3 sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200/80">
           <button
             onClick={() => setAppView('landing')}
-            className="flex items-center justify-center p-1 text-slate-700 hover:text-indigo-600 transition-colors cursor-pointer"
+            aria-label="Back"
+            className="flex items-center justify-center p-1.5 -ml-1 rounded-full text-slate-700 hover:text-indigo-600 hover:bg-slate-100 transition-colors cursor-pointer"
             title="Back"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
           </button>
-          <h1 className="font-extrabold text-slate-900 text-sm tracking-tight font-display">Notifications</h1>
+          <span className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center flex-shrink-0">
+            <Bell size={18} className="text-white" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h1 className="font-extrabold text-slate-900 text-sm tracking-tight font-display leading-tight">Notifications</h1>
+            <p className="text-[11px] text-slate-500 font-medium leading-tight">All trips · latest first</p>
+          </div>
         </div>
         <div className="max-w-lg mx-auto px-4 py-16 text-center">
           <div className="w-20 h-20 rounded-3xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto mb-5">
@@ -1652,6 +1661,31 @@ export function App() {
           onBellClick={() => {
             setAppView('coming_soon');
           }}
+          landingTab={landingTab}
+          onLandingTabChange={setLandingTab}
+          onOpenChat={() => {
+            setLandingTab('chat');
+          }}
+          onOpenTripChat={(trip) => {
+            setActiveTripId(trip.id);
+            setActiveTab('chat');
+            setAppView('trip_dashboard');
+          }}
+          onDummyAction={(msg) => showNotifFlash(msg)}
+          unreadByTrip={Object.fromEntries(
+            trips.map((t) => [
+              t.id,
+              chatFeed.filter(
+                (m) =>
+                  (m as unknown as { tripId?: string }).tripId === t.id &&
+                  msgTimeMs(m.createdAt) > lastSeen &&
+                  m.senderId !== myUid &&
+                  m.type !== 'system'
+              ).length,
+            ])
+          )}
+          recommendations={recommendations}
+          onAddRecommendation={handleAddPlace}
         />
         <TripCreateModal
           isOpen={isTripCreateOpen}
@@ -1781,13 +1815,38 @@ export function App() {
         };
         return (
           <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col panel-enter">
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white">
-              <button onClick={() => setNotifOpen(false)} className="p-1 text-slate-700 hover:text-indigo-600 cursor-pointer">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+            <div className="sticky top-0 z-10 flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white/95 backdrop-blur">
+              <button onClick={() => setNotifOpen(false)} aria-label="Back" title="Back" className="p-1.5 -ml-1 rounded-full text-slate-700 hover:text-indigo-600 hover:bg-slate-100 active:scale-95 transition-all cursor-pointer">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
               </button>
-              <h4 className="text-sm font-extrabold text-slate-900">
-                Notifications{unreadCount > 0 ? ` — ${unreadCount} unread` : ''}
-              </h4>
+              <span className="relative w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center flex-shrink-0">
+                <Bell size={18} className="text-white" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 border-2 border-white text-white text-[9px] font-extrabold flex items-center justify-center">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <h4 className="text-sm font-extrabold text-slate-900 leading-tight">Notifications</h4>
+                <p className="text-[11px] text-slate-500 font-medium leading-tight">
+                  {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
+                </p>
+              </div>
+              {unreadCount > 0 && (
+                <button
+                  onClick={() => {
+                    const now = Date.now();
+                    setNotifSeenAt(now);
+                    try { localStorage.setItem('ws_notif_seen_v1', String(now)); } catch { /* private mode */ }
+                    setLastSeen(now);
+                    try { if (activeTrip) localStorage.setItem(`ws_chat_seen_${activeTrip.id}`, String(now)); } catch { /* private mode */ }
+                  }}
+                  className="flex-shrink-0 px-3 h-8 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold transition-colors cursor-pointer"
+                >
+                  Mark all read
+                </button>
+              )}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto bg-white overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
               {unreadCount > 0 && (
@@ -1864,11 +1923,20 @@ export function App() {
           />
         )}
         {activeTab === 'todo' && (
-          <TodoView
-            todos={myTripTodos}
-            onAddTodo={handleAddTodo}
-            onToggleTodo={handleToggleTodo}
-            onDeleteTodo={handleDeleteTodo}
+          <TripMomentsView
+            trip={activeTrip}
+            photos={tripPhotos}
+            myName={profile?.name || 'Me'}
+            myUid={myUid}
+            myMemberId={
+              activeTrip.members.find((m) => (myUid && m.uid === myUid) || m.isCurrentUser)?.id ??
+              activeTrip.members[0]?.id ??
+              ''
+            }
+            onAddPhoto={handleAddPhoto}
+            onUpdatePhoto={handleUpdatePhoto}
+            onDeletePhoto={handleDeletePhoto}
+            notify={(msg) => showNotifFlash(msg)}
           />
         )}
         {activeTab === 'expenses' && (

@@ -9,7 +9,8 @@ function socketHost(): string {
   } catch { /* ignore */ }
   try {
     const h = typeof window !== 'undefined' ? window.location.hostname : '';
-    if (h && h !== 'localhost' && h !== '127.0.0.1') return `http://${h}:3001`;
+    // Same guard as API: never point sockets at the frontend host.
+    if (h && h !== 'localhost' && h !== '127.0.0.1') return 'https://wandersync-app.duckdns.org';
   } catch { /* SSR */ }
   return 'http://localhost:3001';
 }

@@ -67,6 +67,27 @@ const STMTS = [
     PRIMARY KEY ("messageId", uid)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_reads_trip ON message_reads("tripId")`,
+  // Timeline moments: metadata + compressed bytes IN the DB (single store —
+  // visible from any device, counted in live DB usage). ~80KB/photo.
+  `CREATE TABLE IF NOT EXISTS photos (
+    id text primary key,
+    "tripId" text references trips(id) on delete cascade,
+    url text default '',
+    caption text default '',
+    "locationTag" text default '',
+    "uploadedByMemberId" text,
+    "uploadedByName" text default '',
+    "uploadedAt" text default '',
+    "likesCount" numeric default 0,
+    "storagePath" text default '',
+    mime text default 'image/jpeg',
+    data bytea,
+    "_deleted" boolean default false,
+    "updatedAt" bigint,
+    "updatedBy" text,
+    "createdAt" timestamptz default now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_photos_trip ON photos("tripId")`,
 ];
 
 // Pass-number hash — MUST match src/utils/cards.ts + index.cjs mintCardNo.

@@ -17,6 +17,7 @@ function extFor(dataUrl: string, fallbackName?: string): string {
   if (dataUrl.startsWith('data:image/jpeg')) return '.jpg';
   if (dataUrl.startsWith('data:image/png')) return '.png';
   if (dataUrl.startsWith('data:image/webp')) return '.webp';
+  if (dataUrl.startsWith('data:image/avif')) return '.avif';
   if (dataUrl.startsWith('data:application/pdf')) return '.pdf';
   if (dataUrl.startsWith('data:text/csv')) return '.csv';
   return '.bin';

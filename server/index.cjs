@@ -640,9 +640,179 @@ app.post('/api/admin/delete-user', async (req, res) => {
 
 // ─── Generic table CRUD (AFTER specific routes) ────────────
 
-app.use('/api/:table', requireSession);
+app.use('/api/:table', (req, res, next) => {
+  // Public reads (registered below, but the gate runs first in file order):
+  // moment rows/bytes + usage are fetched by <img> tags and logged-out
+  // viewers, which can't send Authorization headers. Writes stay authed.
+  if (req.method === 'GET' && (req.params.table === 'moments' || req.params.table === 'storage-usage')) {
+    return next();
+  }
+  return requireSession(req, res, next);
+});
 
 // GET /api/:table — list rows with optional filters
+// ─── Timeline moments: bytes live IN Postgres (any device sees them) ───
+// ~80KB/photo. Rows list WITHOUT data (bytea never rides along); bytes come
+// from /bytes with immutable caching. Registered BEFORE /:table on purpose.
+const MOMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+function momentBytesUrl(req, id) {
+  return `${req.protocol}://${req.get('host')}/api/moments/${id}/bytes`;
+}
+
+// POST /api/moments — upsert metadata (+ optional base64 bytes)
+app.post('/api/moments', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const id = String(b.id || '');
+    const tripId = String(b.tripId || '');
+    if (!MOMENT_ID.test(id) || !tripId) return fail(res, 400, 'id and tripId required');
+    let buf = null;
+    const mime = String(b.mime || 'image/jpeg').slice(0, 64);
+    if (typeof b.data === 'string' && b.data.length > 0) {
+      const b64 = b.data.includes(',') ? b.data.split(',').pop() : b.data;
+      if (b64.length > 15 * 1024 * 1024) return fail(res, 413, 'Photo too large');
+      buf = Buffer.from(b64, 'base64');
+      if (buf.length === 0 || buf.length > 12 * 1024 * 1024) return fail(res, 400, 'Bad image data');
+    }
+    await pool.query(
+      `INSERT INTO photos (id, "tripId", caption, "locationTag", "uploadedByMemberId",
+        "uploadedByName", "uploadedAt", "likesCount", mime, data,
+        "_deleted", "updatedAt", "updatedBy")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,$11,$12)
+       ON CONFLICT (id) DO UPDATE SET
+         caption = EXCLUDED.caption,
+         "locationTag" = EXCLUDED."locationTag",
+         "likesCount" = EXCLUDED."likesCount",
+         mime = EXCLUDED.mime,
+         data = COALESCE(EXCLUDED.data, photos.data),
+         "_deleted" = EXCLUDED."_deleted",
+         "updatedAt" = EXCLUDED."updatedAt",
+         "updatedBy" = EXCLUDED."updatedBy"`,
+      [
+        id, tripId,
+        String(b.caption || '').slice(0, 500),
+        String(b.locationTag || '').slice(0, 120),
+        String(b.uploadedByMemberId || '').slice(0, 128),
+        String(b.uploadedByName || '').slice(0, 128),
+        String(b.uploadedAt || new Date().toISOString()).slice(0, 64),
+        Number(b.likesCount || 0) || 0,
+        mime, buf,
+        Date.now(),
+        String(b.updatedBy || b.uploadedByMemberId || '').slice(0, 128),
+      ]
+    );
+    res.json({ data: { id, url: buf ? momentBytesUrl(req, id) : null, bytes: buf ? buf.length : 0 }, error: null });
+  } catch (e) {
+    console.error('POST /api/moments error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/moments?tripId= — rows with computed URLs, never bytea
+// PUBLIC on purpose (registered before the /:table auth gate): <img> tags
+// can't send Authorization headers, same reason voice-clips are public.
+app.get('/api/moments', async (req, res) => {
+  try {
+    const tripId = String(req.query.tripId || '');
+    if (!tripId) return fail(res, 400, 'tripId required');
+    const { rows } = await pool.query(
+      `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
+        "uploadedByName", "uploadedAt", "likesCount", mime,
+        octet_length(data) AS bytes, "updatedAt"
+       FROM photos WHERE "tripId" = $1 AND NOT COALESCE("_deleted", false)
+       ORDER BY "uploadedAt" ASC LIMIT 500`,
+      [tripId]
+    );
+    res.json({
+      data: rows.map((r) => ({
+        id: r.id,
+        tripId: r.tripId,
+        url: r.bytes > 0 ? momentBytesUrl(req, r.id) : '',
+        caption: r.caption || '',
+        locationTag: r.locationTag || '',
+        uploadedByMemberId: r.uploadedByMemberId || '',
+        uploadedByName: r.uploadedByName || '',
+        uploadedAt: r.uploadedAt || '',
+        likesCount: Number(r.likesCount || 0),
+        bytes: Number(r.bytes || 0),
+      })),
+      error: null,
+    });
+  } catch (e) {
+    console.error('GET /api/moments error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/moments/:id/bytes — the actual pixels (immutable, cached 1yr)
+app.get('/api/moments/:id/bytes', async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!MOMENT_ID.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query(
+      'SELECT data, mime FROM photos WHERE id = $1 AND NOT COALESCE("_deleted", false)',
+      [id]
+    );
+    const row = rows[0];
+    if (!row || !row.data) return fail(res, 404, 'Gone');
+    res.set('Content-Type', row.mime || 'image/jpeg');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(row.data);
+  } catch (e) {
+    console.error('GET /api/moments bytes error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// DELETE /api/moments/:id — tombstone + bytes freed immediately
+app.delete('/api/moments/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!MOMENT_ID.test(id)) return fail(res, 400, 'Bad id');
+    await pool.query(
+      'UPDATE photos SET "_deleted" = true, data = NULL, "updatedAt" = $2 WHERE id = $1',
+      [id, Date.now()]
+    );
+    res.json({ data: { id }, error: null });
+  } catch (e) {
+    console.error('DELETE /api/moments error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/storage-usage — LIVE server DB numbers (total + per-table + trip)
+app.get('/api/storage-usage', async (req, res) => {
+  try {
+    const tripId = String(req.query.tripId || '');
+    const db = await pool.query('SELECT pg_database_size(current_database()) AS bytes');
+    const tables = await pool.query(
+      `SELECT relname AS name, pg_total_relation_size(oid) AS bytes FROM pg_class
+       WHERE relkind = 'r' AND relname IN
+       ('trips','expenses','todos','documents','settlements','expense_events',
+        'chat_messages','photos','signals','presence','members_joined',
+        'push_tokens','invites','message_reads','users','auth_sessions')`
+    );
+    let trip = { photos: 0, photoBytes: 0 };
+    if (tripId) {
+      const t = await pool.query(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(octet_length(data)), 0) AS b FROM photos
+         WHERE "tripId" = $1 AND NOT COALESCE("_deleted", false) AND data IS NOT NULL`,
+        [tripId]
+      );
+      trip = { photos: Number(t.rows[0]?.n || 0), photoBytes: Number(t.rows[0]?.b || 0) };
+    }
+    const tableMap = {};
+    for (const r of tables.rows) tableMap[r.name] = Number(r.bytes || 0);
+    res.json({
+      data: { dbBytes: Number(db.rows[0]?.bytes || 0), tables: tableMap, trip },
+      error: null,
+    });
+  } catch (e) {
+    console.error('GET /api/storage-usage error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
 app.get('/api/:table', async (req, res) => {
   try {
     const { table } = req.params;

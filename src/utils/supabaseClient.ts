@@ -8,7 +8,10 @@ function apiHost(): string {
   } catch { /* ignore */ }
   try {
     const h = typeof window !== 'undefined' ? window.location.hostname : '';
-    if (h && h !== 'localhost' && h !== '127.0.0.1') return `http://${h}:3001`;
+    // Never talk to the FRONTEND host on port 3001 (a Vercel build without
+    // VITE_API_URL did exactly that and broke all logins). Prod backend is
+    // fixed infrastructure (see RUNBOOK): use it unless developing locally.
+    if (h && h !== 'localhost' && h !== '127.0.0.1') return 'https://wandersync-app.duckdns.org';
   } catch { /* SSR */ }
   return 'http://localhost:3001';
 }

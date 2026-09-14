@@ -244,7 +244,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
       <div className="max-w-5xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 lg:gap-12">
         {/* LEFT: identity panel */}
-        <div className="flex flex-col items-center text-center bg-white border border-slate-200 rounded-3xl px-7 py-9 h-fit shadow-sm">
+        <div className="flex flex-col items-center text-center bg-white border border-slate-200 rounded-3xl px-4 py-6 sm:px-7 sm:py-9 h-fit shadow-sm">
           <div className="relative w-[110px] h-[110px] rounded-full p-[3px] bg-gradient-to-br from-indigo-600 to-indigo-300 mb-5">
             <div className="w-full h-full rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-4xl font-extrabold border-[3px] border-white">
               {name ? name.charAt(0).toUpperCase() : <User size={40} />}
@@ -257,12 +257,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               <Shield size={10} /> ADMIN
             </span>
           )}
-          <p className="text-[13px] text-slate-500 mt-1 mb-8">
+          <p className="text-[13px] text-slate-500 mt-1 mb-5 sm:mb-8">
             {profile?.joinedAt ? `Member since ${fmtDate(profile.joinedAt)}` : 'Welcome to WanderSync'}
           </p>
 
-          {/* Join a Trip */}
-          <div className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-5 text-left mb-4">
+          {/* Join a Trip — flat section, no nested box */}
+          <div className="w-full border-t border-slate-100 pt-4 sm:pt-5 mt-1 mb-2 text-left">
             <h3 className="text-sm font-bold text-slate-900 font-display mb-1.5">Join a Trip</h3>
             <p className="text-xs text-slate-500 leading-relaxed mb-3.5">
               Enter an invitation code to instantly sync itineraries with your travel group.
@@ -321,20 +321,20 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
         {/* RIGHT: premium pass + editor */}
         <div className="flex flex-col min-w-0">
-          {/* WanderSync membership pass */}
+          {/* WanderSync membership pass — fixed ATM ratio on sm+, natural height on phones so the footer never clips */}
           <div
             onClick={scrollToEditor}
-            className="relative w-full aspect-[1.586/1] rounded-3xl p-6 sm:p-10 cursor-pointer overflow-hidden transition-transform duration-300 hover:-translate-y-1"
+            className="relative w-full sm:aspect-[1.586/1] rounded-3xl p-6 sm:p-10 cursor-pointer overflow-hidden transition-transform duration-300 hover:-translate-y-1 border border-slate-300/70"
             style={{
-              background: 'linear-gradient(135deg, #ffffff 0%, #f3f6fc 55%, #e2e7f5 100%)',
-              boxShadow: '0 35px 70px rgba(79, 70, 229, 0.12), inset 0 0 0 1px rgba(255,255,255,0.8)',
+              background: 'linear-gradient(135deg, #ffffff 0%, #edf1f9 28%, #d7deee 50%, #f2f5fb 72%, #dde3f2 100%)',
+              boxShadow: '0 25px 50px -12px rgba(30, 41, 59, 0.28), 0 12px 24px rgba(79, 70, 229, 0.12), inset 0 1px 0 #ffffff',
             }}
           >
             <div
-              className="absolute top-0 h-full w-[60%]"
+              className="absolute top-0 h-full w-[45%]"
               style={{
                 left: '-150%',
-                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent)',
+                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.95), transparent)',
                 transform: 'skewX(-20deg)',
                 animation: 'ws-gleam 8.5s infinite ease-in-out',
               }}
@@ -348,22 +348,26 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 <span className="text-slate-900">Wander</span><span className="text-slate-400">Sync</span>
               </div>
 
-              {/* Glossy EMV smart chip */}
+              {/* EMV smart chip — layered metal with cut contact lines */}
               <div
-                className="relative w-[46px] h-[35px] rounded-md border border-black/10 overflow-hidden mt-6 sm:mt-8 mb-4 sm:mb-5"
-                style={{ background: 'linear-gradient(135deg, #eef1f7 0%, #c9d1e2 50%, #dde3ef 100%)' }}
+                className="relative w-[54px] h-[41px] rounded-[8px] overflow-hidden mt-6 sm:mt-8 mb-4 sm:mb-5 flex-shrink-0"
+                style={{
+                  background: 'linear-gradient(135deg, #f7f9fd 0%, #b7c1d6 35%, #e6ebf4 52%, #a9b4cc 70%, #dbe1ee 100%)',
+                  border: '1px solid rgba(71, 85, 105, 0.65)',
+                  boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.95), inset 0 -2px 3px rgba(71,85,105,0.35), 0 1px 3px rgba(15,23,42,0.25)',
+                }}
               >
-                <div className="absolute inset-0" style={{ background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.75) 45%, transparent 60%)' }} />
-                <div className="absolute left-0 right-0 top-1/2 h-px bg-slate-500/40" />
-                <div className="absolute top-0 bottom-0 left-[30%] w-px bg-slate-500/40" />
-                <div className="absolute top-0 bottom-0 right-[30%] w-px bg-slate-500/40" />
-                <div className="absolute left-[30%] right-[30%] top-0 h-[35%] border-x border-b border-slate-500/40 rounded-b-sm" />
-                <div className="absolute left-[30%] right-[30%] bottom-0 h-[35%] border-x border-t border-slate-500/40 rounded-t-sm" />
+                <div className="absolute inset-0" style={{ background: 'linear-gradient(105deg, transparent 25%, rgba(255,255,255,0.85) 42%, transparent 60%)' }} />
+                <div className="absolute left-[6%] right-[6%] top-1/2 h-[1.5px] -translate-y-1/2 bg-slate-600/60" />
+                <div className="absolute top-[8%] bottom-[8%] left-[32%] w-[1.5px] bg-slate-600/60" />
+                <div className="absolute top-[8%] bottom-[8%] right-[32%] w-[1.5px] bg-slate-600/60" />
+                <div className="absolute left-[32%] right-[32%] top-[8%] h-[30%] border-x-[1.5px] border-b-[1.5px] border-slate-600/60 rounded-b-[3px]" />
+                <div className="absolute left-[32%] right-[32%] bottom-[8%] h-[30%] border-x-[1.5px] border-t-[1.5px] border-slate-600/60 rounded-t-[3px]" />
               </div>
 
               {/* Card number + copy + secure */}
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-base sm:text-2xl tracking-[0.14em] text-slate-900">{cardNo}</span>
+              <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                <span className="font-mono text-[13px] sm:text-2xl tracking-[0.08em] sm:tracking-[0.14em] text-slate-900 whitespace-nowrap">{cardNo}</span>
                 <button
                   onClick={(e) => { e.stopPropagation(); copyCardNo(); }}
                   title="Copy card number"

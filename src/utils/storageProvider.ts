@@ -5,7 +5,7 @@ import {
   loadDocumentsData,
   loadPhotosData,
 } from './storage';
-import { resolveMedia } from './mediaStore';
+import { resolveMediaDataUrl } from './mediaStore';
 
 /**
  * Storage abstraction (local-first).
@@ -33,29 +33,29 @@ export function formatMB(bytes: number): string {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-/** Full trip bundle with REAL bytes (pointers resolved) as a backup file. */
+/** Full trip bundle with REAL bytes (pointers resolved to text) as a backup file. */
 export async function buildTripBundle(tripId: string): Promise<string> {
   const trip = loadTripsData().find((t) => t.id === tripId);
   const photos = await Promise.all(
     loadPhotosData()
       .filter((p) => p.tripId === tripId)
-      .map(async (p) => ({ ...p, url: await resolveMedia(p.url) }))
+      .map(async (p) => ({ ...p, url: await resolveMediaDataUrl(p.url) }))
   );
   const documents = await Promise.all(
     loadDocumentsData()
       .filter((d) => d.tripId === tripId)
       .map(async (d) => ({
         ...d,
-        previewUrl: d.previewUrl ? await resolveMedia(d.previewUrl) : d.previewUrl,
-        fileUrl: d.fileUrl ? await resolveMedia(d.fileUrl) : d.fileUrl,
-        stayPhotos: d.stayPhotos ? await Promise.all(d.stayPhotos.map((s) => resolveMedia(s))) : d.stayPhotos,
+        previewUrl: d.previewUrl ? await resolveMediaDataUrl(d.previewUrl) : d.previewUrl,
+        fileUrl: d.fileUrl ? await resolveMediaDataUrl(d.fileUrl) : d.fileUrl,
+        stayPhotos: d.stayPhotos ? await Promise.all(d.stayPhotos.map((s) => resolveMediaDataUrl(s))) : d.stayPhotos,
       }))
   );
   const bundle = {
     app: 'WanderSync',
     version: 2,
     exportedAt: new Date().toISOString(),
-    trip: trip ? { ...trip, coverImage: await resolveMedia(trip.coverImage) } : trip,
+    trip: trip ? { ...trip, coverImage: await resolveMediaDataUrl(trip.coverImage) } : trip,
     expenses: loadExpensesData().filter((e) => e.tripId === tripId),
     reminders: loadRemindersData().filter((r) => r.tripId === tripId),
     documents,

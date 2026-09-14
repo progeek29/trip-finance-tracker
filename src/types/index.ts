@@ -159,6 +159,10 @@ export interface SharedPhoto {
   isPublicHighlight?: boolean;
   /** Phone folder mirror path (native only) */
   phonePath?: string;
+  /** On-device Blob pointer (offline/instant copy — never synced, device-only) */
+  localRef?: string;
+  /** Supabase storage path (trips/<tripId>/moments/<id>.<ext>) for delete */
+  storagePath?: string;
 }
 
 export interface PlaceRecommendation {
