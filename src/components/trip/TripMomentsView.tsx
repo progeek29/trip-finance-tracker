@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Plus,
   Heart,
   MessageCircle,
   Bookmark,
@@ -84,10 +83,13 @@ interface TripMomentsViewProps {
 }
 
 /**
- * Trip timeline moments: clean composer (circle +), upload with a live
+ * Trip timeline moments: clean composer (single share button), upload with a live
  * progress bar (real original → compressed sizes), like/comment/save for
- * trip members, share to Instagram, and a live on-device storage meter.
+ * trip members, share to Instagram. The server DB meter below is local-dev only.
  */
+
+/** Local-dev only (true under `npm run dev`, false in prod builds) — gates the DB meter. */
+const SHOW_DEBUG_METER = import.meta.env.DEV;
 export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
   trip,
   photos,
@@ -116,8 +118,9 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
   const [editingCaption, setEditingCaption] = useState<{ id: string; text: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  // LIVE server DB numbers (total + this trip) — refreshes with the feed.
+  // LIVE server DB numbers (local-dev only — skipped entirely in prod builds).
   useEffect(() => {
+    if (!SHOW_DEBUG_METER) return;
     let live = true;
     const load = () => {
       fetchStorageUsage(trip.id).then((u) => {
@@ -281,19 +284,13 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
     <div className="space-y-3 max-w-3xl mx-auto">
       {/* Storage meter + composer */}
       <div className="bg-white rounded-2xl border border-slate-200 p-3.5">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setComposerOpen((v) => !v)}
-            aria-label="Add moment"
-            title="Add moment"
-            className="w-11 h-11 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center flex-shrink-0 shadow-md shadow-indigo-200 transition-all active:scale-95 cursor-pointer"
-          >
-            <Plus size={20} strokeWidth={2.5} />
-          </button>
-          <button onClick={() => setComposerOpen((v) => !v)} className="flex-1 h-11 px-4 rounded-full bg-slate-100 hover:bg-slate-200/70 text-left text-xs font-medium text-slate-400 transition-colors cursor-pointer">
-            Share a trip moment…
-          </button>
-        </div>
+        <button
+          onClick={() => setComposerOpen((v) => !v)}
+          aria-label="Share a trip moment"
+          className="w-full h-11 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center text-xs font-bold shadow-md shadow-indigo-200 transition-all active:scale-[0.98] cursor-pointer"
+        >
+          Like to share anything…
+        </button>
 
         {composerOpen && (
           <div className="mt-3 space-y-2">
@@ -371,7 +368,8 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
           </div>
         )}
 
-        {/* Live server DB meter (developer view) */}
+        {/* Live server DB meter (local-dev only — never rendered in prod) */}
+        {SHOW_DEBUG_METER && (
         <div className="mt-3 pt-3 border-t border-slate-100">
           <div className="flex items-center gap-2">
             <Database size={13} className="text-slate-400 flex-shrink-0" />
@@ -413,6 +411,7 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
             </details>
           )}
         </div>
+        )}
       </div>
 
       {/* Moments feed */}
@@ -592,7 +591,7 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
             <ImagePlus size={22} className="text-indigo-400" />
           </div>
           <p className="text-xs font-bold text-slate-700">No moments yet</p>
-          <p className="text-[11px] text-slate-400 font-medium mt-1">Tap + to post the first photo of this trip.</p>
+          <p className="text-[11px] text-slate-400 font-medium mt-1">Tap the button above to post the first photo of this trip.</p>
         </div>
       )}
     </div>

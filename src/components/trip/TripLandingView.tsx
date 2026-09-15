@@ -509,7 +509,8 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
           {([
             { id: 'trips', label: 'Trips', Icon: Home, active: landingTab === 'trips', onClick: () => onLandingTabChange?.('trips') },
             { id: 'explore', label: 'Explore', Icon: Search, active: landingTab === 'explore', onClick: () => onLandingTabChange?.('explore') },
-            { id: 'chat', label: 'Chat', Icon: MessagesSquare, active: landingTab === 'chat', onClick: () => onLandingTabChange?.('chat') },
+            // CHAT HIDDEN (temp) — feature in progress, code intact. Re-enable by uncommenting:
+            // { id: 'chat', label: 'Chat', Icon: MessagesSquare, active: landingTab === 'chat', onClick: () => onLandingTabChange?.('chat') },
           ] as const).map(({ id, label, Icon, active, onClick }) => (
             <button
               key={id}

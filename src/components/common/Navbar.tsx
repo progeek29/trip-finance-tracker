@@ -34,7 +34,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'trip' as CleanTab, label: 'Trip', icon: Compass },
     { id: 'todo' as CleanTab, label: 'Timeline', icon: History },
     { id: 'expenses' as CleanTab, label: 'Expenses', icon: Wallet },
-    { id: 'chat' as CleanTab, label: 'Chat', icon: MessagesSquare },
+    // CHAT HIDDEN (temp) — feature in progress, code intact. Re-enable by uncommenting:
+    // { id: 'chat' as CleanTab, label: 'Chat', icon: MessagesSquare },
     // VAULT DISABLED (temp) — data + views intact, button hidden. Re-add:
     // { id: 'vault' as CleanTab, label: 'Vault', icon: FolderOpen },
   ];
