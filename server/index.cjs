@@ -764,7 +764,9 @@ app.get('/api/moments/:id/bytes', async (req, res) => {
   }
 });
 
-// DELETE /api/moments/:id — tombstone + bytes freed immediately
+// DELETE /api/moments/:id — tombstone + bytes freed immediately.
+// Plain VACUUM after (non-blocking, ms on this tiny table): reclaims the dead
+// TOAST bytes right away so the DB-size meter drops instead of going stale.
 app.delete('/api/moments/:id', async (req, res) => {
   try {
     const id = String(req.params.id || '');
@@ -773,6 +775,11 @@ app.delete('/api/moments/:id', async (req, res) => {
       'UPDATE photos SET "_deleted" = true, data = NULL, "updatedAt" = $2 WHERE id = $1',
       [id, Date.now()]
     );
+    try {
+      await pool.query('VACUUM photos');
+    } catch (e) {
+      console.error('VACUUM photos after delete failed (delete itself ok):', e.message);
+    }
     res.json({ data: { id }, error: null });
   } catch (e) {
     console.error('DELETE /api/moments error:', e.message);
