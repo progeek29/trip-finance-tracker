@@ -33,6 +33,18 @@ async function requireSession(req, res, next) {
     res.status(500).json({ data: null, error: e.message });
   }
 }
+
+// Admin gate: role comes from the SESSION (never from body adminId —
+// trusting the body let anyone borrow admin rights). Use on every
+// /api/admin/* route. This is the master-key foundation.
+function requireAdminSession(req, res, next) {
+  requireSession(req, res, () => {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ data: null, error: 'Admin access required' });
+    }
+    next();
+  });
+}
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
@@ -620,18 +632,21 @@ function normPhone(p) {
   return String(p || '').replace(/\D/g, '').slice(-10);
 }
 
-async function requireAdmin(adminId) {
-  if (!adminId) return null;
-  const { rows } = await pool.query('SELECT id, email, role FROM users WHERE id = $1', [adminId]);
-  const admin = rows[0];
-  if (!admin || admin.role !== 'admin') return null;
-  return admin;
-}
+// (Deleted legacy helper requireAdmin(adminId): trusting a body-supplied id
+// for admin rights was the takeover hole. Use requireAdminSession.)
 
-// GET /api/users — user directory WITHOUT password hashes
+// GET /api/users — admin: full directory (no hashes, master-key tool).
+// Non-admin: own row only (kills user/email/phone enumeration).
 // (must stay before the generic /:table route)
 app.get('/api/users', requireSession, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      const { rows } = await pool.query(
+        'SELECT id, email, name, phone, role, "createdAt" FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      return res.json({ data: rows, error: null });
+    }
     const { rows } = await pool.query(
       'SELECT id, email, name, phone, role, "createdAt" FROM users ORDER BY email'
     );
@@ -641,28 +656,17 @@ app.get('/api/users', requireSession, async (req, res) => {
   }
 });
 
-// POST /api/auth/forgot-password — self-service reset for the current account.
-// MVP flow: email + new password only. OTP/mobile verification is planned later.
+// POST /api/auth/forgot-password — DISABLED (was: email-only reset with zero
+// verification = anyone could take over anyone's account). Recovery path:
+// admin resets via /api/admin/reset-password (session-verified). OTP-based
+// self-service returns as its own module later — do NOT re-enable this
+// endpoint without a verification step.
 app.post('/api/auth/forgot-password', async (req, res) => {
-  try {
-    const rawEmail = String(req.body?.email ?? req.body?.id ?? '').trim();
-    const rawPassword = req.body?.newPassword ?? req.body?.password;
-    const email = rawEmail.toLowerCase();
-
-    if (!email) return fail(res, 400, 'Email is required');
-    if (!rawPassword || String(rawPassword).trim().length < 6) {
-      return fail(res, 400, 'New password must be at least 6 characters');
-    }
-
-    const { rows } = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-    if (rows.length === 0) return fail(res, 404, 'No account found with this email');
-
-    const hash = await bcrypt.hash(String(rawPassword), 10);
-    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, rows[0].id]);
-    res.json({ data: { ok: true }, error: null });
-  } catch (e) {
-    res.json({ data: null, error: e.message });
-  }
+  return fail(
+    res,
+    503,
+    'Password reset is handled by support right now. Ask the admin to reset it for you.'
+  );
 });
 
 // POST /api/auth/logout-all — kill EVERY session for this user, all devices/tabs.
@@ -676,11 +680,11 @@ app.post('/api/auth/logout-all', requireSession, async (req, res) => {
   }
 });
 
-// POST /api/admin/create-user — admin creates a login-ready user (hashed server-side)
-app.post('/api/admin/create-user', async (req, res) => {
+// POST /api/admin/create-user — admin creates a login-ready user (hashed server-side).
+// Session-gated: the admin is req.user, never a body adminId.
+app.post('/api/admin/create-user', requireAdminSession, async (req, res) => {
   try {
-    const { adminId, email, password, name, phone, role } = req.body;
-    if (!await requireAdmin(adminId)) return res.json({ data: null, error: 'Admin access required' });
+    const { email, password, name, phone, role } = req.body;
     if (!email || !password) return res.json({ data: null, error: 'Email and password required' });
     if (password.length < 6) return res.json({ data: null, error: 'Password must be at least 6 characters' });
 
@@ -699,11 +703,11 @@ app.post('/api/admin/create-user', async (req, res) => {
 });
 
 // POST /api/admin/reset-password — admin sets a new password for any user
-// (passwords are bcrypt hashes: nobody, not even admin, can SEE a password)
-app.post('/api/admin/reset-password', async (req, res) => {
+// (passwords are bcrypt hashes: nobody, not even admin, can SEE a password).
+// Session-gated recovery path (forgot-password is disabled until OTP exists).
+app.post('/api/admin/reset-password', requireAdminSession, async (req, res) => {
   try {
-    const { adminId, userId, newPassword } = req.body;
-    if (!await requireAdmin(adminId)) return res.json({ data: null, error: 'Admin access required' });
+    const { userId, newPassword } = req.body;
     if (!userId || !newPassword || newPassword.length < 6) {
       return res.json({ data: null, error: 'Valid user and 6+ character password required' });
     }
@@ -718,12 +722,12 @@ app.post('/api/admin/reset-password', async (req, res) => {
   }
 });
 
-// POST /api/admin/delete-user — admin deletes a user + their owned trips (refuses self-delete)
-app.post('/api/admin/delete-user', async (req, res) => {
+// POST /api/admin/delete-user — admin deletes a user + their owned trips (refuses self-delete).
+// Session-gated: the admin is req.user, never a body adminId.
+app.post('/api/admin/delete-user', requireAdminSession, async (req, res) => {
   try {
-    const { adminId, userId } = req.body;
-    const admin = await requireAdmin(adminId);
-    if (!admin) return res.json({ data: null, error: 'Admin access required' });
+    const { userId } = req.body;
+    const admin = req.user;
     if (!userId) return res.json({ data: null, error: 'User required' });
     if (userId === admin.id) return res.json({ data: null, error: 'You cannot delete your own admin account' });
 
