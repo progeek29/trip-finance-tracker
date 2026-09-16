@@ -88,6 +88,8 @@ const STMTS = [
     "createdAt" timestamptz default now()
   )`,
   `CREATE INDEX IF NOT EXISTS idx_photos_trip ON photos("tripId")`,
+  // Feed frame aspect (w/h) saved at post — frame matches crop exactly.
+  `ALTER TABLE photos ADD COLUMN IF NOT EXISTS aspect numeric`,
 ];
 
 // Pass-number hash — MUST match src/utils/cards.ts + index.cjs mintCardNo.

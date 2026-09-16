@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { FreeCropper, type CropPct } from './FreeCropper';
+import { MomentPhoto } from './MomentPhoto';
+import { DandelionLike } from './DandelionLike';
 import {
-  Heart,
   MessageCircle,
   Bookmark,
   Share2,
@@ -90,6 +92,7 @@ interface TripMomentsViewProps {
 
 /** Local-dev only (true under `npm run dev`, false in prod builds) — gates the DB meter. */
 const SHOW_DEBUG_METER = import.meta.env.DEV;
+
 export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
   trip,
   photos,
@@ -135,15 +138,57 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
     };
   }, [trip.id, photos.length]);
 
-  const stageFile = (files: FileList | null) => {
+  /** Pick → NORMALIZED file (EXIF orientation baked into pixels, max 2048px).
+   *  Phone photos carry EXIF rotate flags: the editor, the crop math and the
+   *  encoder must all see the SAME pixels. Normalizing once at pick kills the
+   *  whole "dikha kuch, upload hua kuch" class — downstream is EXIF-free. */
+  const stageFile = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       notify('Please pick an image file');
       return;
     }
-    if (staged) URL.revokeObjectURL(staged.preview);
-    setStaged({ file, preview: URL.createObjectURL(file) });
+    const stageOriginal = () => {
+      if (staged) URL.revokeObjectURL(staged.preview);
+      resetCrop();
+      setStaged({ file, preview: URL.createObjectURL(file) });
+      setCropModalOpen(true);
+    };
+    try {
+      // imageOrientation:'from-image' = EXIF applied during decode (old browsers throw → fallback below).
+      const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      const scale = Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
+      const cw = Math.max(1, Math.round(bmp.width * scale));
+      const ch = Math.max(1, Math.round(bmp.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        bmp.close();
+        stageOriginal();
+        return;
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bmp, 0, 0, cw, ch);
+      bmp.close();
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, 'image/jpeg', 0.92)
+      );
+      if (!blob) {
+        stageOriginal();
+        return;
+      }
+      if (staged) URL.revokeObjectURL(staged.preview);
+      resetCrop();
+      const norm = new File([blob], 'photo.jpg', { type: 'image/jpeg' });
+      setStaged({ file: norm, preview: URL.createObjectURL(norm) });
+      setCropModalOpen(true);
+    } catch {
+      stageOriginal();
+    }
   };
 
   const clearComposer = () => {
@@ -151,6 +196,89 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
     setStaged(null);
     setCaption('');
     setComposerOpen(false);
+    resetCrop();
+  };
+
+  // ── Free crop state (POPUP modal, photo centered — custom cropper, no library) ──
+  const [crop, setCrop] = useState<CropPct | undefined>(undefined);
+  const [completedCropPct, setCompletedCropPct] = useState<CropPct | null>(null);
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  // Confirmed cut (exact upload pixels) — composer thumbnail + Post use THIS.
+  const [croppedFile, setCroppedFile] = useState<File | null>(null);
+  const [croppedPreview, setCroppedPreview] = useState<string | null>(null);
+  const [croppedAspect, setCroppedAspect] = useState<number | null>(null);
+
+  const resetCrop = () => {
+    // NOTE: never revokes croppedPreview here — the upload progress card may
+    // still show it (its timeout revokes). Revoke only on explicit remove.
+    setCrop(undefined);
+    setCompletedCropPct(null);
+    setCropModalOpen(false);
+    setCroppedFile(null);
+    setCroppedPreview(null);
+    setCroppedAspect(null);
+  };
+
+  /** Remove staged photo entirely (composer + modal + confirmed cut). */
+  const removeStaged = () => {
+    if (staged) URL.revokeObjectURL(staged.preview);
+    if (croppedPreview) URL.revokeObjectURL(croppedPreview);
+    setStaged(null);
+    resetCrop();
+  };
+
+  /** Done (modal) → cut once, show EXACT upload pixels in composer. */
+  const confirmCrop = async () => {
+    const cut = await cropStagedToFile();
+    if (cut) {
+      if (croppedPreview) URL.revokeObjectURL(croppedPreview);
+      setCroppedFile(cut.file);
+      setCroppedPreview(URL.createObjectURL(cut.file));
+      setCroppedAspect(cut.aspect);
+    }
+    setCropModalOpen(false);
+  };
+
+  /** Cut the confirmed box out (max 1080px) as LOSSLESS PNG → {file, aspect} → existing compress ladder.
+   *  PNG on purpose: JPEG intermediate khata quality (wahi 66KB-mushy bug) — ladder ko clean pixels milte hain, pehle jaisi sharpness wapas.
+   *  Aspect (canvas ground truth) is saved with the post — feed frame matches it exactly. */
+  const cropStagedToFile = async (): Promise<{ file: File; aspect: number } | null> => {
+    const src = staged;
+    const pc = completedCropPct;
+    if (!src || !pc || !pc.width || !pc.height) return null;
+    try {
+      const full = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = reject;
+        el.src = src.preview;
+      });
+      if (!full.naturalWidth || !full.naturalHeight) return null;
+      const sx = (pc.x / 100) * full.naturalWidth;
+      const sy = (pc.y / 100) * full.naturalHeight;
+      const sw = Math.max(1, Math.round((pc.width / 100) * full.naturalWidth));
+      const sh = Math.max(1, Math.round((pc.height / 100) * full.naturalHeight));
+      // Cap the cut at 1080px on the long edge — the compress ladder never sees a giant bitmap.
+      const scale = Math.min(1, 1080 / Math.max(sw, sh));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(sw * scale));
+      canvas.height = Math.max(1, Math.round(sh * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(full, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, 'image/png')
+      );
+      if (!blob) return null;
+      return {
+        file: new File([blob], 'crop.png', { type: 'image/png' }),
+        aspect: canvas.width / Math.max(1, canvas.height),
+      };
+    } catch {
+      return null;
+    }
   };
 
   const canPost = !posting && (!!caption.trim() || !!staged);
@@ -172,15 +300,29 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
   const postMoment = async () => {
     if (!canPost) return;
     const text = caption.trim();
-    const file = staged?.file ?? null;
-    const preview = staged?.preview ?? '';
+    // Confirmed cut first (modal Done already cut it) → then the existing compress ladder. Option A: no backend change.
+    let file = croppedFile ?? staged?.file ?? null;
+    let aspect = croppedAspect ?? null;
+    // Progress card shows WHAT WILL UPLOAD (the confirmed cut), never the full original.
+    let preview = croppedPreview ?? staged?.preview ?? '';
+    let cropUrl: string | null = null;
+    if (staged && !croppedFile) {
+      const cut = await cropStagedToFile();
+      if (cut) {
+        file = cut.file;
+        aspect = cut.aspect;
+        cropUrl = URL.createObjectURL(cut.file);
+        preview = cropUrl;
+      }
+    }
     setPosting(true);
     if (file) setUpload({ stage: 'compressing', progress: 8, originalBytes: file.size, finalBytes: 0, preview });
     try {
       let ref = '';
       let finalBytes = 0;
       if (file) {
-        const stats = await compressImage(file);
+        // 1080px lock (Option A): timeline output max 1080px wide — Insta standard, feed sizes pe 1600 jaisa hi dikhta hai, bytes kam.
+        const stats = await compressImage(file, { maxDim: 1080 });
         setUpload((u) => (u ? { ...u, stage: 'saving', progress: 62, finalBytes: stats.bytes } : u));
         ref = await putMedia(trip.id, 'image', stats.url, { fileName: file.name, mime: file.type });
         finalBytes = stats.bytes;
@@ -197,6 +339,7 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
         uploadedByName: me?.name ?? myName,
         uploadedAt: new Date().toISOString(),
         likesCount: 0,
+        ...(aspect ? { aspect } : {}),
       };
       onAddPhoto(created);
       // Background: same bytes → Supabase (visible from any device).
@@ -214,10 +357,13 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
           URL.revokeObjectURL(preview);
         }, 2200);
       }
+      if (staged) URL.revokeObjectURL(staged.preview);
       setStaged(null);
+      resetCrop();
       setCaption('');
       setComposerOpen(false);
     } catch {
+      if (cropUrl) URL.revokeObjectURL(cropUrl);
       setUpload(null);
       notify('Post failed — please try again');
     } finally {
@@ -302,15 +448,41 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
               className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 resize-none"
             />
             {staged && (
-              <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-slate-200">
-                <img src={staged.preview} alt="" className="w-full h-full object-cover" />
+              <div className="flex items-center gap-3 rounded-xl border border-slate-200 p-2.5 bg-slate-50">
                 <button
-                  onClick={() => { URL.revokeObjectURL(staged.preview); setStaged(null); }}
-                  aria-label="Remove photo"
-                  className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white hover:bg-rose-600 cursor-pointer"
+                  type="button"
+                  onClick={() => setCropModalOpen(true)}
+                  title="Edit crop"
+                  className="flex-shrink-0 rounded-lg overflow-hidden border border-slate-200 cursor-pointer"
                 >
-                  <X size={12} />
+                  <img
+                    src={croppedPreview ?? staged.preview}
+                    alt=""
+                    className="w-16 h-16 object-cover"
+                  />
                 </button>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-bold text-slate-700">
+                    {croppedFile ? 'Cropped — ready to post' : 'Photo attached'}
+                  </p>
+                  <div className="flex gap-2 mt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCropModalOpen(true)}
+                      className="px-3 h-8 rounded-lg text-[11px] font-bold bg-white border border-slate-200 text-indigo-600 hover:border-indigo-300 transition-colors cursor-pointer"
+                    >
+                      Edit crop
+                    </button>
+                    <button
+                      type="button"
+                      onClick={removeStaged}
+                      aria-label="Remove photo"
+                      className="px-3 h-8 rounded-lg text-[11px] font-bold text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
             <div className="flex gap-2">
@@ -413,6 +585,42 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
         </div>
         )}
       </div>
+
+      {/* Crop POPUP — Apple-dark skin, photo centered + big, custom cropper (no library) */}
+      {staged && cropModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-neutral-950/80">
+          <div className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl overflow-hidden shadow-[0_32px_64px_-12px_rgba(0,0,0,0.6)]">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-neutral-800">
+              <button
+                type="button"
+                onClick={removeStaged}
+                className="text-sm font-medium text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <h4 className="text-base font-semibold text-neutral-100 tracking-tight">Crop photo</h4>
+              <button
+                type="button"
+                onClick={() => void confirmCrop()}
+                className="px-5 py-1.5 bg-white hover:bg-neutral-200 text-neutral-950 text-sm font-semibold rounded-full active:scale-95 transition-all cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+            <div className="flex items-center justify-center bg-neutral-950 p-4 select-none" style={{ minHeight: 320 }}>
+              <FreeCropper
+                src={staged.preview}
+                value={crop}
+                onChange={setCrop}
+                onComplete={setCompletedCropPct}
+              />
+            </div>
+            <p className="text-center text-[11px] font-medium uppercase tracking-[0.12em] text-neutral-500 px-4 py-3 border-t border-neutral-800">
+              Drag the box to adjust — what you see is what uploads
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Moments feed */}
       {photos.map((photo) => {
@@ -517,14 +725,19 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
               )}
             </div>
             {(photo.localRef || photo.url) ? (
-              <MediaImg srcRef={photo.localRef || photo.url} alt={photo.caption || 'Trip moment'} className="w-full max-h-[420px] object-cover bg-slate-100" />
+              <MomentPhoto
+                srcRef={photo.localRef || photo.url}
+                alt={photo.caption || 'Trip moment'}
+                aspect={photo.aspect}
+              />
             ) : null}
             <div className="px-3.5 py-3">
               <div className="flex items-center gap-4">
-                <button onClick={() => toggleLike(photo.id)} aria-label="Like" className={`${iconBtn} ${isLiked ? 'text-rose-500' : ''}`}>
-                  <Heart size={19} fill={isLiked ? 'currentColor' : 'none'} />
-                  <span className="text-[11px] font-bold">{photo.likesCount + (isLiked ? 1 : 0)}</span>
-                </button>
+                <DandelionLike
+                  liked={isLiked}
+                  count={photo.likesCount + (isLiked ? 1 : 0)}
+                  onToggle={() => toggleLike(photo.id)}
+                />
                 <button onClick={() => setOpenComments(commentsOpen ? null : photo.id)} aria-label="Comments" className={iconBtn}>
                   <MessageCircle size={19} />
                   <span className="text-[11px] font-bold">{photoComments.length}</span>

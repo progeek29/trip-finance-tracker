@@ -207,18 +207,21 @@ export async function compressImage(
   file: File,
   opts?: { maxDim?: number; targetKB?: number }
 ): Promise<CompressStats> {
-  const raw = () => readAsDataUrl(file).then((url) => ({ url, bytes: file.size, format: 'raw' as const }));
-  if (!file.type.startsWith('image/')) return raw();
+  const raw = (reason: string) => {
+    // A raw fallback means the whole ladder failed — log WHY so it's diagnosable, never silent.
+    console.warn(`[compress] raw fallback (${reason}): ${(file.size / 1024).toFixed(0)}KB ${file.type}`);
+    return readAsDataUrl(file).then((url) => ({ url, bytes: file.size, format: 'raw' as const }));
+  };
+  if (!file.type.startsWith('image/')) return raw('not-an-image');
   // Small files are already harmless — keep original bytes (no quality loss).
-  if (file.size < 150 * 1024) return raw();
-
+  if (file.size < 150 * 1024) return raw('already-small');
   const startDim = opts?.maxDim ?? 1600;
   const targetBytes = (opts?.targetKB ?? 70) * 1024;
   try {
     const bmp = await decodeImage(file);
-    if (!bmp) return raw();
+    if (!bmp) return raw('decode-failed');
     const { w, h } = imageDims(bmp);
-    if (!w || !h) return raw();
+    if (!w || !h) return raw('zero-dims');
 
     // Resolution-first: biggest dimensions at the highest fitting quality wins.
     const dims = [startDim, 1280, 1080, 960].filter((d, i, a) => d <= Math.max(w, h) && a.indexOf(d) === i);
@@ -230,7 +233,7 @@ export async function compressImage(
     // Request P3; unsupported browsers ignore it and fall back to sRGB.
     const ctxOptions = { willReadFrequently: true, colorSpace: 'display-p3' } as CanvasRenderingContext2DSettings;
     const ctx = canvas.getContext('2d', ctxOptions) ?? canvas.getContext('2d');
-    if (!ctx) return raw();
+    if (!ctx) return raw('no-ctx');
     // THE fix for soft faces: default smoothing is 'low' (bilinear mush).
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
@@ -364,9 +367,9 @@ export async function compressImage(
     if (bmp instanceof ImageBitmap) bmp.close();
     // Smallest VALID encode wins; if nothing valid, original bytes (big but correct).
     if (smallest && (await verifyDecodable(smallest.url))) return smallest;
-    return raw();
+    return raw('no-valid-encode');
   } catch {
-    return raw();
+    return raw('exception');
   }
 }
 

@@ -73,6 +73,7 @@ export async function saveMoment(
       mime: blob?.type || 'image/jpeg',
       updatedBy: uid,
       ...(data ? { data } : {}),
+      ...(photo.aspect ? { aspect: photo.aspect } : {}),
     }),
   });
 }

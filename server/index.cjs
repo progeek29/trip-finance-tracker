@@ -668,6 +668,7 @@ app.post('/api/moments', async (req, res) => {
     if (!MOMENT_ID.test(id) || !tripId) return fail(res, 400, 'id and tripId required');
     let buf = null;
     const mime = String(b.mime || 'image/jpeg').slice(0, 64);
+    const aspect = Number(b.aspect) > 0 ? Number(b.aspect) : null;
     if (typeof b.data === 'string' && b.data.length > 0) {
       const b64 = b.data.includes(',') ? b.data.split(',').pop() : b.data;
       if (b64.length > 15 * 1024 * 1024) return fail(res, 413, 'Photo too large');
@@ -676,15 +677,16 @@ app.post('/api/moments', async (req, res) => {
     }
     await pool.query(
       `INSERT INTO photos (id, "tripId", caption, "locationTag", "uploadedByMemberId",
-        "uploadedByName", "uploadedAt", "likesCount", mime, data,
+        "uploadedByName", "uploadedAt", "likesCount", mime, data, aspect,
         "_deleted", "updatedAt", "updatedBy")
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,$11,$12)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,$12,$13)
        ON CONFLICT (id) DO UPDATE SET
          caption = EXCLUDED.caption,
          "locationTag" = EXCLUDED."locationTag",
          "likesCount" = EXCLUDED."likesCount",
          mime = EXCLUDED.mime,
          data = COALESCE(EXCLUDED.data, photos.data),
+         aspect = COALESCE(EXCLUDED.aspect, photos.aspect),
          "_deleted" = EXCLUDED."_deleted",
          "updatedAt" = EXCLUDED."updatedAt",
          "updatedBy" = EXCLUDED."updatedBy"`,
@@ -696,7 +698,7 @@ app.post('/api/moments', async (req, res) => {
         String(b.uploadedByName || '').slice(0, 128),
         String(b.uploadedAt || new Date().toISOString()).slice(0, 64),
         Number(b.likesCount || 0) || 0,
-        mime, buf,
+        mime, buf, aspect,
         Date.now(),
         String(b.updatedBy || b.uploadedByMemberId || '').slice(0, 128),
       ]
@@ -717,7 +719,7 @@ app.get('/api/moments', async (req, res) => {
     if (!tripId) return fail(res, 400, 'tripId required');
     const { rows } = await pool.query(
       `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
-        "uploadedByName", "uploadedAt", "likesCount", mime,
+        "uploadedByName", "uploadedAt", "likesCount", mime, aspect,
         octet_length(data) AS bytes, "updatedAt"
        FROM photos WHERE "tripId" = $1 AND NOT COALESCE("_deleted", false)
        ORDER BY "uploadedAt" ASC LIMIT 500`,
@@ -735,6 +737,7 @@ app.get('/api/moments', async (req, res) => {
         uploadedAt: r.uploadedAt || '',
         likesCount: Number(r.likesCount || 0),
         bytes: Number(r.bytes || 0),
+        ...(r.aspect ? { aspect: Number(r.aspect) } : {}),
       })),
       error: null,
     });

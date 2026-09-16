@@ -101,6 +101,7 @@ create table if not exists photos (
   "uploadedAt" text default '',
   "likesCount" numeric default 0,
   "storagePath" text default '',
+  aspect numeric,
   "_deleted" boolean default false,
   "updatedAt" bigint,
   "updatedBy" text,

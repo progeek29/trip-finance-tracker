@@ -157,6 +157,8 @@ export interface SharedPhoto {
   likesCount: number;
   locationTag?: string;
   isPublicHighlight?: boolean;
+  /** Crop aspect (w/h) saved at post — feed frame matches it exactly (Insta rule). */
+  aspect?: number;
   /** Phone folder mirror path (native only) */
   phonePath?: string;
   /** On-device Blob pointer (offline/instant copy — never synced, device-only) */
