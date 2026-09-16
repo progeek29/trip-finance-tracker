@@ -942,6 +942,13 @@ app.get('/api/:table', async (req, res) => {
       vals.push(val);
       i++;
     }
+    // Users directory is NOT public: non-admins always scoped to self
+    // (prevents full user/email/phone enumeration).
+    if (table === 'users' && !isAdminReq(req)) {
+      conds.push(`"id" = $${i}`);
+      vals.push(req.user.id);
+      i++;
+    }
     if (conds.length) sql += ` WHERE ${conds.join(' AND ')}`;
     if (order) sql += ` ORDER BY "${order}" ${ascending === 'false' ? 'DESC' : 'ASC'}`;
     if (single === 'true') sql += ` LIMIT 1`;
@@ -970,6 +977,15 @@ function checkIdents(names) {
   return names.every((n) => typeof n === 'string' && SAFE_IDENT.test(n));
 }
 
+// Users-table lockdown (account-takeover fix): generic endpoints are data
+// pipes, not auth endpoints. Non-admin callers can ONLY touch their OWN row,
+// and never role/username/cardNo (server-minted, permanent). Admins bypass
+// (master key). Email self-change keeps working via PUT (uniqueness-checked);
+// passwords only ever via auth/admin endpoints (bcrypt).
+function isAdminReq(req) {
+  return !!(req.user && req.user.role === 'admin');
+}
+
 // POST /api/:table — upsert
 app.post('/api/:table', async (req, res) => {
   try {
@@ -980,6 +996,17 @@ app.post('/api/:table', async (req, res) => {
     const rows = Array.isArray(body) ? body : [body];
     if (table === 'users') {
       for (const r of rows) delete r.password_hash;
+      if (!isAdminReq(req)) {
+        // Non-admin upsert: own row only, server-owned fields stripped.
+        // (Kills role-escalation + other-account overwrite via upsert.)
+        for (const r of rows) {
+          r.id = req.user.id;
+          delete r.role;
+          delete r.username;
+          delete r.cardNo;
+          delete r.email;
+        }
+      }
     }
     // Ghost-trip guard (Luxmi case): a trip without ownerUid is rejected by
     // NOT NULL and later wiped client-side = total data loss. The session is
@@ -1031,9 +1058,30 @@ app.put('/api/:table', async (req, res) => {
     // Password hashes can only be written through the auth/admin endpoints
     // (which bcrypt them) — never as plaintext via generic update.
     if (table === 'users') delete updates.password_hash;
-    const filters = _filters || {};
+    let filters = _filters || {};
     if (!checkIdents([...Object.keys(updates), ...Object.keys(filters)])) {
       return fail(res, 400, 'Invalid column');
+    }
+    if (table === 'users' && !isAdminReq(req)) {
+      // Own row only — client filter ignored (kills cross-account takeover).
+      // role/username/cardNo are server-owned: never writable here.
+      delete updates.role;
+      delete updates.username;
+      delete updates.cardNo;
+      // Email self-change (Profile flow): validated + stay-unique.
+      if (updates.email !== undefined) {
+        const em = String(updates.email || '').trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+          return fail(res, 400, 'Enter a valid email address');
+        }
+        const { rows: hit } = await pool.query(
+          'SELECT id FROM users WHERE id <> $1 AND LOWER(email) = LOWER($2)',
+          [req.user.id, em]
+        );
+        if (hit.length > 0) return fail(res, 409, 'This email is already registered.');
+        updates.email = em;
+      }
+      filters = { id: req.user.id };
     }
 
     const setClauses = [];
@@ -1073,6 +1121,11 @@ app.delete('/api/:table', async (req, res) => {
   try {
     const { table } = req.params;
     if (!checkTable(table)) return fail(res, 404, 'Unknown table');
+    // Accounts die only through the admin endpoint — never the generic pipe
+    // (otherwise anyone could delete anyone).
+    if (table === 'users' && !isAdminReq(req)) {
+      return fail(res, 403, 'Account deletion is not available here');
+    }
     const filters = req.query;
     if (!checkIdents(Object.keys(filters))) {
       return fail(res, 400, 'Invalid column');
