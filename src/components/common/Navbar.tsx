@@ -14,6 +14,8 @@ interface NavbarProps {
   totalBudget: number;
   tripTitle?: string;
   onBackToTrips?: () => void;
+  /** Bottom-bar Home — always lands on My Trips (never the Trip tab). */
+  onHomeClick?: () => void;
   unreadCount?: number;
   onBellClick?: () => void;
   /** Bumps on every new notification → bell jiggles red + vibrates (same size). */
@@ -29,6 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   totalBudget,
   tripTitle,
   onBackToTrips,
+  onHomeClick,
   unreadCount,
   onBellClick,
   bellPulse = 0,
@@ -137,7 +140,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               {onBackToTrips && (
                 <button
                   key="home"
-                  onClick={onBackToTrips}
+                  onClick={onHomeClick ?? onBackToTrips}
                   aria-label="Home"
                   title="Home"
                   className="flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-colors cursor-pointer"

@@ -1749,6 +1749,7 @@ export function App() {
           if (activeTab === 'trip') setAppView('landing');
           else setActiveTab('trip');
         }}
+        onHomeClick={() => setAppView('landing')}
         unreadCount={chatFeed.filter((m) => msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system').length}
         onBellClick={() => setNotifOpen((v) => !v)}
         bellPulse={bellPulse}

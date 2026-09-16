@@ -777,7 +777,30 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
               />
             ) : null}
             <div className="px-3.5 py-3">
-              <div className="flex items-center gap-4">
+              {photo.caption && !editing && <p className="text-xs text-slate-700 font-medium leading-relaxed">{photo.caption}</p>}
+              {editing && editingCaption && (
+                <span className="block">
+                  <textarea
+                    autoFocus
+                    value={editingCaption.text}
+                    onChange={(e) => setEditingCaption({ id: photo.id, text: e.target.value })}
+                    rows={2}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-indigo-300 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-indigo-100 resize-none"
+                  />
+                  <span className="flex justify-end gap-2 mt-1.5">
+                    <button onClick={() => setEditingCaption(null)} className="px-4 h-9 rounded-xl text-[11px] font-bold text-slate-500 hover:bg-slate-100 cursor-pointer">
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => { const updated = { ...photo, caption: editingCaption.text.trim() || photo.caption }; onUpdatePhoto(updated); if (myUid && updated.url.startsWith('http')) void saveMoment(updated, null, myUid).catch(() => undefined); setEditingCaption(null); }}
+                      className="px-4 h-9 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer"
+                    >
+                      Save
+                    </button>
+                  </span>
+                </span>
+              )}
+              <div className="flex items-center gap-4 mt-2">
                 <DandelionLike
                   liked={isLiked}
                   count={photo.likesCount + (isLiked ? 1 : 0)}
@@ -802,29 +825,6 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
                   <Bookmark size={19} fill={isSaved ? 'currentColor' : 'none'} />
                 </button>
               </div>
-              {photo.caption && !editing && <p className="text-xs text-slate-700 font-medium mt-2 leading-relaxed">{photo.caption}</p>}
-              {editing && editingCaption && (
-                <span className="block mt-2">
-                  <textarea
-                    autoFocus
-                    value={editingCaption.text}
-                    onChange={(e) => setEditingCaption({ id: photo.id, text: e.target.value })}
-                    rows={2}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-indigo-300 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-indigo-100 resize-none"
-                  />
-                  <span className="flex justify-end gap-2 mt-1.5">
-                    <button onClick={() => setEditingCaption(null)} className="px-4 h-9 rounded-xl text-[11px] font-bold text-slate-500 hover:bg-slate-100 cursor-pointer">
-                      Cancel
-                    </button>
-                    <button
-                      onClick={() => { const updated = { ...photo, caption: editingCaption.text.trim() || photo.caption }; onUpdatePhoto(updated); if (myUid && updated.url.startsWith('http')) void saveMoment(updated, null, myUid).catch(() => undefined); setEditingCaption(null); }}
-                      className="px-4 h-9 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer"
-                    >
-                      Save
-                    </button>
-                  </span>
-                </span>
-              )}
               {commentsOpen && (
                 <div className="mt-2.5 space-y-2">
                   {photoComments.map((c) => (
