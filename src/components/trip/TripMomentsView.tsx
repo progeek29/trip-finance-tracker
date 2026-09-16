@@ -1,11 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FreeCropper, type CropPct } from './FreeCropper';
 import { MomentPhoto } from './MomentPhoto';
-import { DandelionLike } from './DandelionLike';
+import { DandelionLike, formatCount } from './DandelionLike';
 import {
-  MessageCircle,
   Bookmark,
-  Share2,
   Check,
   X,
   Database,
@@ -82,6 +80,8 @@ interface TripMomentsViewProps {
   onUpdatePhoto: (photo: SharedPhoto) => void;
   onDeletePhoto: (id: string) => void;
   notify: (msg: string) => void;
+  /** Bumps when the bottom-bar + FAB is tapped — opens the composer. */
+  composerSignal?: number;
 }
 
 /**
@@ -103,10 +103,19 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
   onUpdatePhoto,
   onDeletePhoto,
   notify,
+  composerSignal = 0,
 }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [caption, setCaption] = useState('');
   const [composerOpen, setComposerOpen] = useState(false);
+  // Bottom-bar + FAB → jump here with the composer open (skips mount signal).
+  const signalSeen = useRef(composerSignal);
+  useEffect(() => {
+    if (composerSignal > signalSeen.current) {
+      signalSeen.current = composerSignal;
+      setComposerOpen(true);
+    }
+  }, [composerSignal]);
   const [staged, setStaged] = useState<{ file: File; preview: string } | null>(null);
   const [posting, setPosting] = useState(false);
   const [upload, setUpload] = useState<UploadState | null>(null);
@@ -316,6 +325,8 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
       }
     }
     setPosting(true);
+    // Post = back to Timeline feed instantly, progress runs in the top strip.
+    setComposerOpen(false);
     if (file) setUpload({ stage: 'compressing', progress: 8, originalBytes: file.size, finalBytes: 0, preview });
     try {
       let ref = '';
@@ -424,22 +435,61 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
   };
 
   const iconBtn =
-    'flex items-center gap-1.5 text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer';
+    'flex items-center justify-center gap-1.5 h-8 text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer';
 
   return (
     <div className="space-y-3 max-w-3xl mx-auto">
-      {/* Storage meter + composer */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-3.5">
-        <button
-          onClick={() => setComposerOpen((v) => !v)}
-          aria-label="Share a trip moment"
-          className="w-full h-11 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center text-xs font-bold shadow-md shadow-indigo-200 transition-all active:scale-[0.98] cursor-pointer"
-        >
-          Like to share anything…
-        </button>
-
-        {composerOpen && (
-          <div className="mt-3 space-y-2">
+      {/* Upload strip — Post dabate hi Timeline + upar progress, complete hote hi feed me */}
+      {upload && !composerOpen && (
+        <div className="bg-white rounded-2xl border border-slate-200 px-3.5 py-2.5 flex items-center gap-3">
+          <img src={upload.preview} alt="" className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-bold text-slate-700">
+              {upload.stage === 'done' ? (
+                <span className="flex items-center gap-1 text-emerald-600"><Check size={13} strokeWidth={3} /> Posted</span>
+              ) : upload.stage === 'compressing' ? (
+                `Uploading ${formatBytes(upload.originalBytes)}…`
+              ) : (
+                'Saving…'
+              )}
+            </p>
+            <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1.5">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${upload.stage === 'done' ? 'bg-emerald-500' : 'bg-indigo-500'}`}
+                style={{ width: `${upload.stage === 'done' ? 100 : upload.stage === 'saving' ? 72 : 30}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Composer NEW PAGE — + FAB opens this full screen (own header + Post). Timeline stays behind. */}
+      {composerOpen && (
+      <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col">
+        <div className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 flex-shrink-0">
+          <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setComposerOpen(false)}
+              aria-label="Back"
+              title="Back"
+              className="p-1.5 -ml-1 rounded-full text-slate-700 hover:text-indigo-600 hover:bg-slate-100 active:scale-95 transition-all cursor-pointer"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+            </button>
+            <h4 className="text-sm font-extrabold text-slate-900 flex-1">New moment</h4>
+            <button
+              type="button"
+              onClick={() => void postMoment()}
+              disabled={!canPost}
+              className="px-5 h-9 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs font-bold transition-all active:scale-[0.98] cursor-pointer"
+            >
+              {posting ? 'Posting…' : 'Post'}
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="max-w-3xl mx-auto w-full px-4 py-4">
+      <div className="bg-white rounded-2xl border border-slate-200 p-3.5 space-y-2">
             <textarea
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
@@ -490,21 +540,12 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
                 onClick={() => fileRef.current?.click()}
                 className="flex-1 h-11 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 text-slate-500 hover:text-indigo-600 text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
               >
-                <ImagePlus size={16} /> {staged ? 'Change' : 'Photo'}
-              </button>
-              <button
-                onClick={() => void postMoment()}
-                disabled={!canPost}
-                className="flex-1 h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs font-bold transition-all active:scale-[0.98] cursor-pointer"
-              >
-                {posting ? 'Posting…' : 'Post'}
+                <ImagePlus size={16} /> {staged ? 'Change photo' : 'Add photo'}
               </button>
             </div>
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { stageFile(e.target.files); e.target.value = ''; }} />
-          </div>
-        )}
 
-        {/* Upload progress → success */}
+        {/* Upload progress → success (runs inside the page; top strip covers closed state) */}
         {upload && (
           <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3">
             <div className="flex items-center gap-3">
@@ -539,10 +580,15 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
             </div>
           </div>
         )}
+      </div>
+          </div>
+        </div>
+      </div>
+      )}
 
-        {/* Live server DB meter (local-dev only — never rendered in prod) */}
-        {SHOW_DEBUG_METER && (
-        <div className="mt-3 pt-3 border-t border-slate-100">
+      {/* Live server DB meter (local-dev only — never rendered in prod, standalone) */}
+      {SHOW_DEBUG_METER && (
+      <div className="bg-white rounded-2xl border border-slate-200 p-3.5">
           <div className="flex items-center gap-2">
             <Database size={13} className="text-slate-400 flex-shrink-0" />
             <p className="text-[10px] text-slate-500 font-medium">
@@ -583,8 +629,7 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
             </details>
           )}
         </div>
-        )}
-      </div>
+      )}
 
       {/* Crop POPUP — Apple-dark skin, photo centered + big, custom cropper (no library) */}
       {staged && cropModalOpen && (
@@ -739,11 +784,18 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
                   onToggle={() => toggleLike(photo.id)}
                 />
                 <button onClick={() => setOpenComments(commentsOpen ? null : photo.id)} aria-label="Comments" className={iconBtn}>
-                  <MessageCircle size={19} />
-                  <span className="text-[11px] font-bold">{photoComments.length}</span>
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="block">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641l-.318 1.235c-.149.574.419 1.1 1.025.92l1.647-.489a1.692 1.692 0 011.53.284C10.42 20.106 11.2 20.25 12 20.25z" />
+                  </svg>
+                  {photoComments.length > 0 && (
+                    <span className="text-[11px] font-bold leading-none">{formatCount(photoComments.length)}</span>
+                  )}
                 </button>
                 <button onClick={() => shareToInstagram(photo)} aria-label="Share" className={iconBtn}>
-                  <Share2 size={18} />
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="block" style={{ transform: 'translateY(2px)' }}>
+                    <path d="m22 2-7 20-4-9-9-4Z" />
+                    <path d="M22 2 11 13" />
+                  </svg>
                 </button>
                 <span className="flex-1" />
                 <button onClick={() => toggleSave(photo.id)} aria-label="Save" className={`${iconBtn} ${isSaved ? 'text-indigo-600' : ''}`}>
@@ -788,8 +840,16 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
                       placeholder="Add a comment…"
                       className="flex-1 h-9 px-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] outline-none focus:border-indigo-400"
                     />
-                    <button onClick={() => addComment(photo.id)} className="px-4 h-9 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer">
-                      Post
+                    <button
+                      onClick={() => addComment(photo.id)}
+                      aria-label="Send comment"
+                      title="Send"
+                      className="w-9 h-9 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center flex-shrink-0 transition-colors cursor-pointer"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="block">
+                        <path d="m22 2-7 20-4-9-9-4Z" />
+                        <path d="M22 2 11 13" />
+                      </svg>
                     </button>
                   </div>
                 </div>
@@ -804,7 +864,7 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
             <ImagePlus size={22} className="text-indigo-400" />
           </div>
           <p className="text-xs font-bold text-slate-700">No moments yet</p>
-          <p className="text-[11px] text-slate-400 font-medium mt-1">Tap the button above to post the first photo of this trip.</p>
+          <p className="text-[11px] text-slate-400 font-medium mt-1">Tap + below to post the first photo of this trip.</p>
         </div>
       )}
     </div>

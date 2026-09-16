@@ -1,5 +1,5 @@
 import React from 'react';
-import { Compass, Wallet, History, Plus, ArrowLeft, MessagesSquare, Bell, Home } from 'lucide-react';
+import { Compass, Wallet, History, Plus, ArrowLeft, Bell, Home } from 'lucide-react';
 import { Logo } from './Logo';
 
 export type CleanTab = 'trip' | 'todo' | 'expenses' | 'chat' | 'split' | 'vault';
@@ -8,6 +8,8 @@ interface NavbarProps {
   activeTab: CleanTab;
   onTabChange: (tab: CleanTab) => void;
   onOpenQuickAdd: () => void;
+  /** Center + FAB — opens the Timeline moment composer (replaces its inline button). */
+  onOpenComposer: () => void;
   totalSpent: number;
   totalBudget: number;
   tripTitle?: string;
@@ -22,6 +24,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   onTabChange,
   onOpenQuickAdd,
+  onOpenComposer,
   totalSpent,
   totalBudget,
   tripTitle,
@@ -119,29 +122,62 @@ export const Navbar: React.FC<NavbarProps> = ({
       </header>
 
       {activeTab !== 'chat' && (() => {
-        const barItems = [
-          ...tabs.slice(0, 2).map((tab) => ({
-            id: tab.id,
-            label: tab.label,
-            Icon: tab.icon,
-            active: activeTab === tab.id,
-            onClick: () => onTabChange(tab.id),
-          })),
-          ...(onBackToTrips
-            ? [{ id: 'home', label: 'Home', Icon: Home, active: false, onClick: onBackToTrips }]
-            : []),
-          ...tabs.slice(2).map((tab) => ({
-            id: tab.id,
-            label: tab.label,
-            Icon: tab.icon,
-            active: activeTab === tab.id,
-            onClick: () => onTabChange(tab.id),
-          })),
-        ];
+        // Order: Home · Trip · [+] (moment composer) · Timeline · Expenses
+        const byId = (id: CleanTab) => tabs.find((t) => t.id === id)!;
+        const item = (tab: { id: CleanTab; label: string; icon: typeof Compass }) => ({
+          id: tab.id,
+          label: tab.label,
+          Icon: tab.icon,
+          active: activeTab === tab.id,
+          onClick: () => onTabChange(tab.id),
+        });
         return (
           <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200/80 shadow-[0_-8px_30px_rgba(0,0,0,0.06)] [transform:translateZ(0)]">
             <nav className="max-w-3xl mx-auto px-4 pt-1.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex justify-around items-center">
-              {barItems.map(({ id, label, Icon, active, onClick }) => (
+              {onBackToTrips && (
+                <button
+                  key="home"
+                  onClick={onBackToTrips}
+                  aria-label="Home"
+                  title="Home"
+                  className="flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-colors cursor-pointer"
+                >
+                  <Home size={22} strokeWidth={1.8} className="text-slate-400" />
+                  <span className="text-[10px] leading-tight text-slate-400 font-medium">
+                    Home
+                  </span>
+                </button>
+              )}
+              {[item(byId('trip'))].map(({ id, label, Icon, active, onClick }) => (
+                <button
+                  key={id}
+                  onClick={onClick}
+                  aria-label={label}
+                  title={label}
+                  className="flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-colors cursor-pointer"
+                >
+                  <Icon
+                    size={22}
+                    strokeWidth={active ? 2.2 : 1.8}
+                    className={active ? 'text-indigo-600' : 'text-slate-400'}
+                  />
+                  <span className={`text-[10px] leading-tight ${active ? 'text-indigo-600 font-bold' : 'text-slate-400 font-medium'}`}>
+                    {label}
+                  </span>
+                </button>
+              ))}
+              {/* Center + — new Timeline moment (sits in the row, not raised) */}
+              <span className="flex-1 flex flex-col items-center justify-center py-1">
+                <button
+                  onClick={onOpenComposer}
+                  aria-label="New moment"
+                  title="New moment"
+                  className="w-11 h-11 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center shadow-lg shadow-indigo-300 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Plus size={22} strokeWidth={2.5} />
+                </button>
+              </span>
+              {[item(byId('todo')), item(byId('expenses'))].map(({ id, label, Icon, active, onClick }) => (
                 <button
                   key={id}
                   onClick={onClick}

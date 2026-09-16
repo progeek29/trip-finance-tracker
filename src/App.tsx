@@ -167,6 +167,8 @@ export function App() {
   const [expenseEvents, setExpenseEvents] = useState<ExpenseEvent[]>(loadExpenseEventsData);
 
   const [activeTab, setActiveTab] = useState<CleanTab>(loadSessionTab);
+  // Center + FAB → Timeline composer: bumps to open it (Timeline mounts on tab switch).
+  const [composerSignal, setComposerSignal] = useState(0);
   const [landingTab, setLandingTab] = useState<'trips' | 'explore' | 'chat'>('trips');
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -1735,6 +1737,11 @@ export function App() {
           setNotifOpen(false);
         }}
         onOpenQuickAdd={() => { setEditingExpense(null); setIsQuickAddOpen(true); }}
+        onOpenComposer={() => {
+          setActiveTab('todo');
+          setNotifOpen(false);
+          setComposerSignal((n) => n + 1);
+        }}
         totalSpent={viewerBudget(activeTrip, tripExpenses, myUid, isAdmin).spent}
         totalBudget={viewerBudget(activeTrip, tripExpenses, myUid, isAdmin).budget}
         tripTitle={activeTrip.title}
@@ -1937,6 +1944,7 @@ export function App() {
             onUpdatePhoto={handleUpdatePhoto}
             onDeletePhoto={handleDeletePhoto}
             notify={(msg) => showNotifFlash(msg)}
+            composerSignal={composerSignal}
           />
         )}
         {activeTab === 'expenses' && (
