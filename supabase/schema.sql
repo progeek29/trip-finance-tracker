@@ -231,6 +231,8 @@ create table if not exists users (
   phone text default '',
   role text default 'user',
   password_hash text default '',
+  username text default '',
+  gender text default 'unspecified',
   "createdAt" timestamptz default now()
 );
 

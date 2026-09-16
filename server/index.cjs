@@ -343,15 +343,65 @@ function cleanCardNo(v, fallbackSeed) {
   if (/^WS\d{2}( \d{4}){3}$/.test(s)) return s;
   return mintCardNo(fallbackSeed);
 }
+
+// ─── Username (@handle) — `firstname(≤8)_xxxx`, permanent per user ──────
+// Same deterministic hash as src/utils/cards.ts mintUsername: every device
+// derives the SAME handle, so display never flaps. Uniqueness enforced by
+// idx_users_username_lower (migrate.cjs); collisions re-mint with a `#i`
+// seed suffix (format preserved, new suffix).
+function usernameSlug(name) {
+  return (
+    String(name || '').trim().toLowerCase().split(/\s+/)[0]
+      ?.replace(/[^a-z0-9]/g, '').slice(0, 8) || 'friend'
+  );
+}
+function mintUsername(name, seed) {
+  const slug = usernameSlug(name);
+  const s = `${slug}|${String(seed || '').trim().toLowerCase() || 'wandersync-guest'}`;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h * 31 + s.charCodeAt(i)) >>> 0);
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789'; // no 0/o/1/l — readable over a call
+  let suffix = '';
+  let n = h;
+  for (let i = 0; i < 4; i++) {
+    suffix += alphabet[n % alphabet.length];
+    n = Math.floor(n / alphabet.length);
+  }
+  return `${slug}_${suffix}`;
+}
+function isValidUsername(v) {
+  return !!v && /^[a-z0-9]{1,8}_[a-z0-9]{4}$/.test(String(v).trim().toLowerCase());
+}
+async function ensureUniqueUsername(name, seed) {
+  for (let i = 0; i < 8; i++) {
+    const candidate = mintUsername(name, i === 0 ? seed : `${seed}#${i}`);
+    try {
+      const { rows } = await pool.query(
+        'SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [candidate]
+      );
+      if (rows.length === 0) return candidate;
+    } catch (e) {
+      if (e && /username/i.test(e.message || '')) return mintUsername(name, seed); // column not migrated yet
+      throw e;
+    }
+  }
+  return `${usernameSlug(name)}_${Date.now().toString(36).slice(-4)}`;
+}
+function cleanGender(v) {
+  const s = String(v || '').trim().toLowerCase();
+  return s === 'male' || s === 'female' || s === 'other' ? s : 'unspecified';
+}
 async function insertUser(row) {
   try {
+    if (!row.username) row.username = await ensureUniqueUsername(row.name, row.id);
+    if (!row.gender) row.gender = 'unspecified';
     await pool.query(
-      'INSERT INTO users (id, email, name, phone, role, password_hash, "cardNo") VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [row.id, row.email, row.name, row.phone, row.role, row.hash, row.cardNo]
+      'INSERT INTO users (id, email, name, phone, role, password_hash, "cardNo", username, gender) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [row.id, row.email, row.name, row.phone, row.role, row.hash, row.cardNo, row.username, row.gender]
     );
   } catch (e) {
-    if (e && /cardno/i.test(e.message || '')) {
-      // Column not migrated yet — legacy insert keeps signup working.
+    if (e && /cardno|username|gender/i.test(e.message || '')) {
+      // Column(s) not migrated yet — legacy insert keeps signup working.
       await pool.query(
         'INSERT INTO users (id, email, name, phone, role, password_hash) VALUES ($1, $2, $3, $4, $5, $6)',
         [row.id, row.email, row.name, row.phone, row.role, row.hash]
@@ -362,12 +412,12 @@ async function insertUser(row) {
 async function userByToken(token) {
   try {
     const { rows } = await pool.query(
-      'SELECT u.id, u.email, u.name, u.phone, u.role, u."cardNo" FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
+      'SELECT u.id, u.email, u.name, u.phone, u.role, u."cardNo", u.username, u.gender FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
       [token]
     );
     return rows[0] || null;
   } catch (e) {
-    if (e && /cardno/i.test(e.message || '')) {
+    if (e && /cardno|username|gender/i.test(e.message || '')) {
       const { rows } = await pool.query(
         'SELECT u.id, u.email, u.name, u.phone, u.role FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
         [token]
@@ -413,11 +463,13 @@ app.post('/api/auth/signup', async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const role = email === 'admin@wandersync.com' ? 'admin' : 'user';
     const cardNo = cleanCardNo(req.body?.cardNo, email);
+    const gender = cleanGender(req.body?.gender);
 
-    await insertUser({ id, email, name, phone, role, hash, cardNo });
+    await insertUser({ id, email, name, phone, role, hash, cardNo, gender });
 
     const token = await createSession(id);
-    res.json({ data: { user: { id, email, cardNo }, token }, error: null });
+    const created = await userByToken(token);
+    res.json({ data: { user: { id, email, cardNo, username: created?.username || '', gender: created?.gender || gender }, token }, error: null });
   } catch (e) {
     // Race-proof backstop: DB unique constraint hit between check and insert.
     if (e && (e.code === '23505' || String(e.message || '').toLowerCase().includes('unique'))) {
@@ -444,7 +496,7 @@ app.post('/api/auth/signin', async (req, res) => {
     if (!valid) return fail(res, 401, 'Invalid email or password');
 
     const token = await createSession(user.id);
-    res.json({ data: { user: { id: user.id, email: user.email, cardNo: user.cardNo || mintCardNo(user.email) }, token }, error: null });
+    res.json({ data: { user: { id: user.id, email: user.email, cardNo: user.cardNo || mintCardNo(user.email), username: user.username || mintUsername(user.name, user.id), gender: cleanGender(user.gender) }, token }, error: null });
   } catch (e) {
     console.error('Signin error:', e.message);
     res.json({ data: null, error: e.message });
@@ -460,6 +512,25 @@ app.get('/api/auth/user', async (req, res) => {
     const user = await userByToken(token);
     if (!user) return res.json({ data: { user: null }, error: null });
     if (!user.cardNo) user.cardNo = mintCardNo(user.email);
+    if (!user.username) {
+      // Backfill-on-read (migrate covers existing rows; this is the legacy-DB path).
+      // Guarded fill: only when still empty. Race loser re-reads the winner.
+      user.username = mintUsername(user.name, user.id);
+      try {
+        await pool.query(
+          'UPDATE users SET username = $1 WHERE id = $2 AND (username IS NULL OR username = $3)',
+          [user.username, user.id, '']
+        );
+      } catch (e) {
+        if (e && e.code === '23505') {
+          const reread = await pool.query('SELECT username FROM users WHERE id = $1', [user.id]).catch(() => null);
+          if (reread?.rows?.[0]?.username) user.username = reread.rows[0].username;
+        } else if (!(e && /username/i.test(e.message || ''))) {
+          throw e;
+        }
+      }
+    }
+    if (!user.gender) user.gender = 'unspecified';
 
     res.json({ data: { user }, error: null });
   } catch (e) {
@@ -494,19 +565,48 @@ app.post('/api/auth/profile', async (req, res) => {
     }
     const incomingCard = String(req.body?.cardNo || '').trim().toUpperCase();
     const wantCard = /^WS\d{2}( \d{4}){3}$/.test(incomingCard) ? incomingCard : null;
-    // cardNo is permanent: only fill it when the row has none yet.
-    const setCard = wantCard && !me.cardNo ? `, "cardNo" = $4` : '';
-    const vals = wantCard && !me.cardNo ? [name, phone, me.id, wantCard] : [name, phone, me.id];
+    // Gender is freely updatable (validated). Username is permanent like cardNo:
+    // filled once from the SERVER mint only — never trusted from the client,
+    // because uniqueness is the whole point.
+    const gender = cleanGender(req.body?.gender ?? me.gender);
+    const params = [name, phone, gender];
+    let setExtra = '';
+    if (wantCard && !me.cardNo) {
+      setExtra += `, "cardNo" = $${params.length + 1}`;
+      params.push(wantCard);
+    }
+    if (!me.username) {
+      setExtra += `, username = $${params.length + 1}`;
+      params.push(await ensureUniqueUsername(name, me.id));
+    }
+    params.push(me.id);
     try {
-      await pool.query(`UPDATE users SET name = $1, phone = $2${setCard} WHERE id = $3`, vals);
+      await pool.query(
+        `UPDATE users SET name = $1, phone = $2, gender = $3${setExtra} WHERE id = $${params.length}`,
+        params
+      );
     } catch (e) {
-      if (e && /cardno/i.test(e.message || '')) {
+      if (e && /cardno|username|gender/i.test(e.message || '')) {
         await pool.query('UPDATE users SET name = $1, phone = $2 WHERE id = $3', [name, phone, me.id]);
+      } else if (e && e.code === '23505') {
+        return fail(res, 409, 'That handle just got taken. Try saving again.');
       } else throw e;
     }
-    const { rows } = await pool.query('SELECT id, email, name, phone, role FROM users WHERE id = $1', [me.id]);
-    const user = rows[0] || { id: me.id, email: me.email, name, phone, role: me.role };
+    let user;
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, email, name, phone, role, username, gender FROM users WHERE id = $1',
+        [me.id]
+      );
+      user = rows[0] || { id: me.id, email: me.email, name, phone, role: me.role };
+    } catch (e) {
+      if (!(e && /username|gender/i.test(e.message || ''))) throw e;
+      const { rows } = await pool.query('SELECT id, email, name, phone, role FROM users WHERE id = $1', [me.id]);
+      user = rows[0] || { id: me.id, email: me.email, name, phone, role: me.role };
+    }
     user.cardNo = me.cardNo || wantCard || mintCardNo(user.email);
+    if (!user.username) user.username = mintUsername(user.name, user.id);
+    user.gender = cleanGender(user.gender ?? gender);
     res.json({ data: { user }, error: null });
   } catch (e) {
     console.error('Profile update error:', e.message);

@@ -551,6 +551,8 @@ export function App() {
             phone: u.phone || '',
             role: (u.role as UserProfile['role']) || (u.isAdmin ? 'admin' : undefined),
             cardNo: u.cardNo || undefined,
+            username: u.username || undefined,
+            gender: (u.gender as UserProfile['gender']) || 'unspecified',
             joinedAt: new Date().toISOString(),
           };
           setProfile(restored);
@@ -1547,6 +1549,8 @@ export function App() {
                     phone: u.phone || '',
                     role: (u.role as UserProfile['role']) || (u.isAdmin ? 'admin' : undefined),
                     cardNo: u.cardNo || undefined,
+                    username: u.username || undefined,
+                    gender: (u.gender as UserProfile['gender']) || 'unspecified',
                     joinedAt: profile?.joinedAt || new Date().toISOString(),
                   };
                   setProfile(restored);

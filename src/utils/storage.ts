@@ -1,5 +1,5 @@
 import { Trip, Expense, TransitReminder, DocumentVaultItem, SharedPhoto, PlaceRecommendation, TripTodo } from '../types';
-import { mintCardNo, cardSeed } from './cards';
+import { mintCardNo, cardSeed, mintUsername, isValidUsername, cleanGender, type Gender } from './cards';
 import { 
   INITIAL_TRIP, 
   INITIAL_EXPENSES, 
@@ -223,6 +223,10 @@ export interface UserProfile {
   joinedAt?: string;
   /** Permanent WanderSync pass number (`WSXX XXXX XXXX XXXX`) — minted once */
   cardNo?: string;
+  /** Permanent @handle (`name_xxxx`) for search + QR — minted once, server-unique */
+  username?: string;
+  /** Gender for search/profile icons — 'unspecified' until the user picks */
+  gender?: Gender;
 }
 
 export function getAdminStatus(name: string, phone: string): boolean {
@@ -236,7 +240,7 @@ export function loadUserProfile(): UserProfile | null {
     const saved = localStorage.getItem(PROFILE_KEY);
     if (saved) {
       const p = JSON.parse(saved);
-      if (p && typeof p.name === 'string' && p.name.trim()) return { name: p.name.trim(), phone: String(p.phone || ''), role: p.role, joinedAt: p.joinedAt, cardNo: typeof p.cardNo === 'string' ? p.cardNo : undefined };
+      if (p && typeof p.name === 'string' && p.name.trim()) return { name: p.name.trim(), phone: String(p.phone || ''), role: p.role, joinedAt: p.joinedAt, cardNo: typeof p.cardNo === 'string' ? p.cardNo : undefined, username: typeof p.username === 'string' ? p.username : undefined, gender: p.gender };
     }
   } catch (e) {
     console.error(e);
@@ -249,6 +253,16 @@ export function saveUserProfile(profile: UserProfile): void {
   // existing) owns one even before the server round-trip completes.
   if (!profile.cardNo) {
     profile = { ...profile, cardNo: mintCardNo(cardSeed(profile.phone, profile.name)) };
+  }
+  // Same for the @handle: minted once from name (+uid when known), never
+  // re-minted on renames — server unique index is the final authority.
+  if (!isValidUsername(profile.username)) {
+    profile = { ...profile, username: mintUsername(profile.name, cardSeed(profile.phone, profile.name)) };
+  }
+  if (!profile.gender) {
+    profile = { ...profile, gender: 'unspecified' };
+  } else {
+    profile = { ...profile, gender: cleanGender(profile.gender) };
   }
   safeSet(PROFILE_KEY, JSON.stringify(profile));
 }

@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, Copy, LogOut, Mail, Phone, Shield, User } from 'lucide-react';
+import { ArrowLeft, AtSign, Check, Copy, LogOut, Mail, Phone, Shield, User } from 'lucide-react';
 import { PhoneInput, isValidPhone } from './PhoneInput';
 import { lookupInvite, joinTripById } from '../../utils/invites';
 import { authGetUser, authUpdateProfile, supabase } from '../../utils/supabaseClient';
-import { mintCardNo, cardSeed, isValidCardNo } from '../../utils/cards';
+import { mintCardNo, cardSeed, isValidCardNo, mintUsername, isValidUsername, cleanGender, type Gender } from '../../utils/cards';
 import type { UserProfile } from '../../utils/storage';
 import type { Trip } from '../../types';
 
@@ -38,6 +38,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [uid, setUid] = useState<string | null>(null);
   const [serverCardNo, setServerCardNo] = useState('');
   const [copied, setCopied] = useState(false);
+  const [serverUsername, setServerUsername] = useState('');
+  const [copiedHandle, setCopiedHandle] = useState(false);
+  const [gender, setGender] = useState<Gender>('unspecified');
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMsg, setEmailMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [code, setCode] = useState('');
@@ -57,10 +60,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   useEffect(() => {
     setName(profile?.name || '');
     setPhone(profile?.phone || '');
+    setGender(cleanGender(profile?.gender));
   }, [profile]);
 
   // Current login email (from DB) — change it here, updates the database.
-  // Also pulls the server-held pass number so every device shows the same one.
+  // Also pulls the server-held pass number + @handle so every device shows the same ones.
   useEffect(() => {
     authGetUser().then((u) => {
       if (u?.uid) {
@@ -68,6 +72,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         setEmail(u.email || '');
         setSavedEmail(u.email || '');
         if (isValidCardNo(u.cardNo)) setServerCardNo(u.cardNo.trim());
+        if (isValidUsername(u.username)) setServerUsername(u.username.trim().toLowerCase());
+        setGender((prev) => (prev !== 'unspecified' ? prev : cleanGender(u.gender)));
       }
     }).catch(() => { });
   }, []);
@@ -90,10 +96,34 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, serverCardNo, profile?.cardNo]);
 
+  // One-time @handle sync: server wins (unique authority); if the server has
+  // none yet, backfill it (existing users) so the scheme holds for everyone.
+  const handleSyncedRef = useRef(false);
+  useEffect(() => {
+    if (handleSyncedRef.current || !uid || !profile) return;
+    handleSyncedRef.current = true;
+    if (serverUsername) {
+      if (profile.username !== serverUsername) onSave({ ...profile, username: serverUsername });
+    } else if (profile.name?.trim()) {
+      authUpdateProfile({ name: profile.name.trim(), phone: profile.phone || '', gender: cleanGender(profile.gender) })
+        .then((u) => {
+          if (isValidUsername(u.username) && profile.username !== u.username) {
+            onSave({ ...profile, username: u.username, gender: cleanGender(u.gender) });
+          }
+          if (isValidUsername(u.username)) setServerUsername(u.username);
+        })
+        .catch(() => { });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid, serverUsername, profile?.username]);
+
   const isAdmin = profile?.role === 'admin';
   const cardNo = profile?.cardNo && isValidCardNo(profile.cardNo)
     ? profile.cardNo
     : serverCardNo || mintCardNo(cardSeed(savedEmail, uid, profile?.phone));
+  const username = profile?.username && isValidUsername(profile.username)
+    ? profile.username.trim().toLowerCase()
+    : serverUsername || mintUsername(profile?.name || name, cardSeed(savedEmail, uid, profile?.phone));
   const displayName = (name.trim() || 'Your Name').toUpperCase();
 
   const copyCardNo = async () => {
@@ -109,6 +139,21 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const copyUsername = async () => {
+    try {
+      await navigator.clipboard.writeText(`@${username}`);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = `@${username}`;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    setCopiedHandle(true);
+    setTimeout(() => setCopiedHandle(false), 2000);
   };
 
   const updateEmail = async (): Promise<boolean> => {
@@ -159,15 +204,23 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       const emailOk = await updateEmail();
       if (!emailOk) return;
     }
-    // Name/phone/cardNo persist to the DB — next login restores THESE values.
+    // Name/phone/cardNo/gender persist to the DB — next login restores THESE values.
     try {
       const updated = await authUpdateProfile({
         name: name.trim(),
         phone: phone.trim(),
         cardNo: isValidCardNo(profile?.cardNo) ? profile!.cardNo : cardNo,
+        gender,
       });
-      onSave({ name: updated.name || name.trim(), phone: updated.phone ?? phone.trim(), cardNo: updated.cardNo || cardNo });
+      onSave({
+        name: updated.name || name.trim(),
+        phone: updated.phone ?? phone.trim(),
+        cardNo: updated.cardNo || cardNo,
+        username: isValidUsername(updated.username) ? updated.username : username,
+        gender: cleanGender(updated.gender ?? gender),
+      });
       if (isValidCardNo(updated.cardNo)) setServerCardNo(updated.cardNo);
+      if (isValidUsername(updated.username)) setServerUsername(updated.username);
       setSaveMsg('Profile updated!');
       setTimeout(() => setSaveMsg(null), 2000);
     } catch (err) {
@@ -440,6 +493,43 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               <div className="flex flex-col gap-1.5">
                 <label className="ui-label">Mobile Number</label>
                 <PhoneInput value={phone} onChange={setPhone} icon={<Phone size={15} />} />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="ui-label">Username — how others find you</label>
+                <div className="flex items-center gap-2 rounded-xl bg-slate-50 border border-slate-200 pl-3.5 pr-2 py-3">
+                  <AtSign size={15} className="text-indigo-500 flex-shrink-0" />
+                  <span className="flex-1 min-w-0 text-sm font-bold text-slate-800 truncate">{username}</span>
+                  <button
+                    type="button"
+                    onClick={copyUsername}
+                    title="Copy username"
+                    className="p-1.5 rounded-lg text-indigo-500 hover:bg-indigo-50 transition-colors cursor-pointer flex-shrink-0"
+                  >
+                    {copiedHandle ? <Check size={15} className="text-emerald-500" /> : <Copy size={15} />}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium">Permanent & auto-generated — people search this to send you chat requests.</p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="ui-label">Gender <span className="normal-case font-medium text-slate-400">(shows as an icon in search)</span></label>
+                <div className="grid grid-cols-4 gap-2">
+                  {(['male', 'female', 'other', 'unspecified'] as const).map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => setGender(g)}
+                      className={`h-10 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                        gender === g
+                          ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-200'
+                          : 'bg-slate-50 border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600'
+                      }`}
+                    >
+                      {g === 'unspecified' ? 'Skip' : g[0].toUpperCase() + g.slice(1)}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {saveError && (

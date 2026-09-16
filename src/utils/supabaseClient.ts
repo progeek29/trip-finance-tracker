@@ -79,10 +79,10 @@ export function isAdminUser(): boolean {
   return cachedIsAdmin;
 }
 
-export async function authSignUp(email: string, password: string, name: string, phone: string, cardNo?: string): Promise<{ uid: string; isAdmin: boolean }> {
+export async function authSignUp(email: string, password: string, name: string, phone: string, cardNo?: string, gender?: string): Promise<{ uid: string; isAdmin: boolean }> {
   const { data, error } = await api('/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ email, password, name, phone, cardNo }),
+    body: JSON.stringify({ email, password, name, phone, cardNo, gender }),
   });
   if (error) throw new Error(error);
   setToken(data.token);
@@ -103,7 +103,7 @@ export async function authSignIn(email: string, password: string): Promise<{ uid
   return { uid: data.user.id, isAdmin: cachedIsAdmin };
 }
 
-export async function authUpdateProfile(patch: { name: string; phone: string; cardNo?: string }): Promise<{ name: string; phone: string; cardNo: string }> {
+export async function authUpdateProfile(patch: { name: string; phone: string; cardNo?: string; gender?: string }): Promise<{ name: string; phone: string; cardNo: string; username: string; gender: string }> {
   const { data, error } = await api('/auth/profile', {
     method: 'POST',
     body: JSON.stringify(patch),
@@ -151,7 +151,7 @@ export async function authSignOutAll(): Promise<void> {
   await authSignOut();
 }
 
-export async function authGetUser(): Promise<{ uid: string; email: string; isAdmin: boolean; name: string; phone: string; role: string; cardNo: string } | null> {
+export async function authGetUser(): Promise<{ uid: string; email: string; isAdmin: boolean; name: string; phone: string; role: string; cardNo: string; username: string; gender: string } | null> {
   const token = getToken();
   if (!token) return null;
   const { data } = await api('/auth/user', { headers: { Authorization: `Bearer ${token}` } });
@@ -166,6 +166,8 @@ export async function authGetUser(): Promise<{ uid: string; email: string; isAdm
     phone: data.user.phone || '',
     role: data.user.role || 'user',
     cardNo: data.user.cardNo || '',
+    username: data.user.username || '',
+    gender: data.user.gender || 'unspecified',
   };
 }
 

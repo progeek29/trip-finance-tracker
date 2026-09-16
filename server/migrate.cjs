@@ -57,6 +57,9 @@ const STMTS = [
   `CREATE INDEX IF NOT EXISTS idx_settlements_trip ON settlements("tripId")`,
   `CREATE INDEX IF NOT EXISTS idx_expense_events_trip ON expense_events("tripId")`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS "cardNo" text`,
+  // P1 identity: @handle for search/QR + gender for search icons/profile.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS username text`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS gender text DEFAULT 'unspecified'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS pinned boolean DEFAULT false`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS "_deleted" boolean DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS message_reads (
@@ -130,6 +133,51 @@ async function backfillCardNo(pool) {
   console.log(`BACKFILL cardNo: ${n} users`);
 }
 
+// Backfill: every existing user gets a UNIQUE permanent @handle.
+// Deterministic per (name, id), collision-proofed with a `#i` seed suffix
+// (same `name_xxxx` format, fresh suffix each try).
+function mintUsernameBackfill(name, seed) {
+  const slug =
+    String(name || '').trim().toLowerCase().split(/\s+/)[0]
+      ?.replace(/[^a-z0-9]/g, '').slice(0, 8) || 'friend';
+  const s = `${slug}|${String(seed || '').trim().toLowerCase() || 'wandersync-guest'}`;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h * 31 + s.charCodeAt(i)) >>> 0);
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let suffix = '';
+  let n = h;
+  for (let i = 0; i < 4; i++) {
+    suffix += alphabet[n % alphabet.length];
+    n = Math.floor(n / alphabet.length);
+  }
+  return `${slug}_${suffix}`;
+}
+async function backfillUsername(pool) {
+  const { rows: missing } = await pool.query(
+    `SELECT id, name FROM users WHERE username IS NULL OR username = ''`
+  );
+  if (missing.length === 0) {
+    console.log('BACKFILL username: none missing');
+    return;
+  }
+  const { rows: taken } = await pool.query(
+    `SELECT username FROM users WHERE username IS NOT NULL AND username <> ''`
+  );
+  const used = new Set(taken.map((r) => String(r.username).toLowerCase()));
+  let n = 0;
+  for (const u of missing) {
+    const seed = u.id || 'wandersync-guest';
+    let handle = mintUsernameBackfill(u.name, seed);
+    for (let i = 1; used.has(handle.toLowerCase()); i++) {
+      handle = mintUsernameBackfill(u.name, `${seed}#${i}`);
+    }
+    used.add(handle.toLowerCase());
+    await pool.query('UPDATE users SET username = $1 WHERE id = $2', [handle, u.id]);
+    n++;
+  }
+  console.log(`BACKFILL username: ${n} users`);
+}
+
 (async () => {
   for (const sql of STMTS) {
     try {
@@ -144,8 +192,12 @@ async function backfillCardNo(pool) {
     await backfillCardNo(pool);
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cardno ON users("cardNo")');
     console.log('OK: CREATE UNIQUE INDEX idx_users_cardno');
+    await backfillUsername(pool);
+    await pool.query('UPDATE users SET gender = $1 WHERE gender IS NULL OR gender = $2', ['unspecified', '']);
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username))');
+    console.log('OK: CREATE UNIQUE INDEX idx_users_username_lower');
   } catch (e) {
-    console.error('FAIL: cardNo backfill/index', e.message);
+    console.error('FAIL: cardNo/username backfill/index', e.message);
     process.exitCode = 1;
   }
   await pool.end();
