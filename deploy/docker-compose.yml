@@ -16,6 +16,12 @@ services:
       - ../supabase/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     networks:
       - internal
+    # Loopback-only DB access for SSH-tunnel pgAdmin (ssh -L 5433:localhost:5432).
+    # 127.0.0.1 = reachable from inside the VM only, NEVER public. Do NOT change
+    # to "5432:5432" (that exposes Postgres to the whole internet → brute-force).
+
+    ports:
+      - "127.0.0.1:5432:5432"
 
   api:
     build: ../server
