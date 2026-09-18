@@ -49,7 +49,7 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
 
 export async function searchPeople(q: string): Promise<PublicPerson[]> {
   const query = q.trim().slice(0, 24);
-  if (query.length < 2) return [];
+  if (query.length < 1) return [];
   return req<PublicPerson[]>(`/users/search?q=${encodeURIComponent(query)}`);
 }
 
@@ -132,6 +132,20 @@ export async function renameGroup(id: string, name: string): Promise<void> {
 
 export async function getMyGroups(): Promise<ChatGroup[]> {
   return req<ChatGroup[]>('/groups/mine');
+}
+
+/** Public profile bits (never email/phone) + that user's MAIN posts. */
+export async function getPublicPerson(uid: string): Promise<PublicPerson> {
+  return req<PublicPerson>(`/users/public/${encodeURIComponent(uid)}`);
+}
+
+export async function getUserMainPosts(uid: string): Promise<import('../types').SharedPhoto[]> {
+  const rows = await req<import('../types').SharedPhoto[]>(`/feed/user/${encodeURIComponent(uid)}`);
+  return Array.isArray(rows) ? rows : [];
+}
+
+export async function deleteGroup(id: string): Promise<void> {
+  await req(`/groups/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function updateGroupMembers(

@@ -1,19 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Trip, Expense, PlaceRecommendation } from '../../types';
+import { Trip, Expense, PlaceRecommendation, SharedPhoto } from '../../types';
 import { MemberAvatar } from '../common/MemberAvatar';
 import { ImpersonateBanner } from '../admin/ImpersonateBanner';
 import { Logo } from '../common/Logo';
 import { ConfirmDialog } from '../common/ConfirmDialog';
-import { CommunityExploreView } from '../discovery/CommunityExploreView';
-import { ChatHubView } from '../chat/ChatHubView';
+import { DiscoverView } from '../discovery/DiscoverView';
+import { MainTimelineView } from '../discovery/MainTimelineView';
 import { BUILD_TAG } from '../../utils/version';
 import { viewerBudget } from '../../utils/budget';
 import { tripOwnerUid } from '../../utils/budget';
 import { MediaImg } from '../common/MediaImg';
+import { systemShare } from '../../utils/share';
 import {
   MapPin, Calendar, Users, User, Wallet, ChevronRight,
   MoreVertical, Edit2, Trash2, Plane, CheckCircle2,
-  Clock, Zap, Star, Share2, Search, Plus, Bell, Home, MessagesSquare
+  Clock, Zap, Star, Share2, Plus, Bell, Compass,
+  Luggage, Newspaper
 } from 'lucide-react';
 
 interface TripLandingViewProps {
@@ -34,9 +36,9 @@ interface TripLandingViewProps {
   onBellClick?: () => void;
   /** Bumps on every new notification → bell jiggles + vibrates (same as trip header). */
   bellPulse?: number;
-  /** Landing bottom-bar tab (trips list vs explore feed vs chat hub). */
-  landingTab?: 'trips' | 'explore' | 'chat';
-  onLandingTabChange?: (t: 'trips' | 'explore' | 'chat') => void;
+  /** Landing bottom-bar tab (discover home vs trips vs timeline vs expenses vs chat hub). */
+  landingTab?: 'home' | 'trips' | 'timeline' | 'expenses' | 'chat';
+  onLandingTabChange?: (t: 'home' | 'trips' | 'timeline' | 'expenses' | 'chat') => void;
   /** Shortcut → most-recent trip's chat (chat needs a trip room). */
   onOpenChat?: () => void;
   /** Open a specific trip's chat room (from Chat hub). */
@@ -51,6 +53,10 @@ interface TripLandingViewProps {
   chatBadge?: number;
   recommendations?: PlaceRecommendation[];
   onAddRecommendation?: (rec: PlaceRecommendation) => void;
+  /** All-trip moments (for the Timeline tab). */
+  moments?: SharedPhoto[];
+  /** Open a user's public profile (Step 5) — fallback toasts until wired. */
+  onOpenAuthor?: (uid: string, name: string) => void;
 }
 
 const STATUS_META = {
@@ -64,6 +70,57 @@ const STATUS_LABEL: Record<'inprogress' | 'upcoming' | 'completed', string> = {
   upcoming: 'Upcoming',
   completed: 'Completed',
 };
+
+/** Expenses tab (P1 skeleton) — spend aggregated per trip + grand total. */
+function LandingExpenses({ trips, expenses, onSelectTrip }: {
+  trips: Trip[];
+  expenses: Expense[];
+  onSelectTrip: (trip: Trip) => void;
+}) {
+  const rows = trips
+    .map((trip) => {
+      const list = expenses.filter((e) => e.tripId === trip.id);
+      return { trip, count: list.length, total: list.reduce((n, e) => n + Number(e.amount || 0), 0) };
+    })
+    .filter((r) => r.count > 0)
+    .sort((a, b) => b.total - a.total);
+  const grand = rows.reduce((n, r) => n + r.total, 0);
+  if (rows.length === 0) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 pt-5 pb-32 text-center py-16">
+        <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <Wallet size={28} className="text-indigo-300" />
+        </div>
+        <h3 className="text-slate-700 font-semibold text-lg">No expenses yet</h3>
+        <p className="text-slate-400 text-sm mt-1">Log your first expense inside a trip.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="max-w-2xl mx-auto px-4 pt-5 pb-32">
+      <div className="rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-700 p-4 mb-3">
+        <p className="text-indigo-200 text-[11px] font-bold uppercase tracking-wider">Total across {rows.length} trip{rows.length === 1 ? '' : 's'}</p>
+        <p className="text-white text-2xl font-extrabold mt-0.5">₹{grand.toLocaleString('en-IN')}</p>
+      </div>
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        {rows.map(({ trip, count, total }) => (
+          <button
+            key={trip.id}
+            onClick={() => onSelectTrip(trip)}
+            className="w-full flex items-center gap-3 px-3.5 py-2.5 border-b border-slate-50 last:border-0 hover:bg-indigo-50/50 text-left cursor-pointer"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-xs font-bold text-slate-900 truncate">{trip.title}</span>
+              <span className="block text-[11px] text-slate-400 font-medium">{count} expense{count === 1 ? '' : 's'}</span>
+            </span>
+            <span className="text-sm font-extrabold text-slate-800">₹{total.toLocaleString('en-IN')}</span>
+            <ChevronRight size={17} className="text-slate-300 flex-shrink-0" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function formatDateRange(start: string, end: string) {
   const s = new Date(start);
@@ -309,7 +366,7 @@ function TripCard({
   );
 }
 
-export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange, unreadCount, onBellClick, bellPulse = 0, landingTab = 'trips', onLandingTabChange, onOpenChat, onOpenTripChat, onDummyAction, unreadByTrip, chatList, chatBadge = 0, recommendations = [], onAddRecommendation }: TripLandingViewProps) {
+export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange, unreadCount, onBellClick, bellPulse = 0, landingTab = 'home',   onLandingTabChange, onOpenChat, onOpenTripChat, onDummyAction, unreadByTrip, chatList, chatBadge = 0, recommendations = [], onAddRecommendation, moments = [], onOpenAuthor }: TripLandingViewProps) {
   const [filter, setFilter] = useState<'all' | 'inprogress' | 'upcoming' | 'completed'>('all');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'owned' | 'joined'>(ownerFilterProp || 'all');
   const [confirmTrip, setConfirmTrip] = useState<Trip | null>(null);
@@ -483,14 +540,30 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
         )}
       </div>
       </>
+      ) : landingTab === 'home' ? (
+      <DiscoverView
+        recommendations={recommendations}
+        onAddRecommendation={onAddRecommendation || (() => {})}
+        onEnquire={(msg) => onDummyAction?.(msg)}
+        onSharePackage={(pkg) => {
+          void systemShare(
+            `${pkg.title} — ${pkg.duration}`,
+            `${pkg.title} (${pkg.destination}, ${pkg.duration}) at ₹${pkg.price.toLocaleString('en-IN')} ${pkg.priceNote}. ${pkg.dates}. Highlights: ${pkg.highlights.join(', ')}.`
+          ).then((r) => onDummyAction?.(r === 'shared' ? 'Package shared.' : 'Package details copied.'));
+        }}
+      />
+      ) : landingTab === 'timeline' ? (
+      <MainTimelineView
+        myUid={myUid ?? null}
+        myName={userName || 'Me'}
+        trips={trips}
+        localMoments={moments}
+        onOpenTrip={onSelectTrip}
+        onOpenAuthor={(uid, name) => onOpenAuthor ? onOpenAuthor(uid, name) : onDummyAction?.(`Profiles coming next — ${name}`)}
+        notify={(msg) => onDummyAction?.(msg)}
+      />
       ) : (
-      <div className="max-w-2xl mx-auto px-4 pt-5 pb-32">
-        <CommunityExploreView
-          recommendations={recommendations}
-          trip={null}
-          onAddRecommendation={onAddRecommendation || (() => {})}
-        />
-      </div>
+      <LandingExpenses trips={trips} expenses={expenses} onSelectTrip={onSelectTrip} />
       )}
 
       {confirmTrip && (
@@ -506,9 +579,11 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200/80 shadow-[0_-8px_30px_rgba(0,0,0,0.06)] [transform:translateZ(0)]">
         <nav className="max-w-2xl mx-auto px-4 pt-1.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex justify-around items-center">
           {([
-            { id: 'trips', label: 'Trips', Icon: Home, active: landingTab === 'trips', onClick: () => onLandingTabChange?.('trips'), badge: 0 },
-            { id: 'explore', label: 'Explore', Icon: Search, active: landingTab === 'explore', onClick: () => onLandingTabChange?.('explore'), badge: 0 },
-            { id: 'chat', label: 'Chat', Icon: MessagesSquare, active: landingTab === 'chat', onClick: () => onLandingTabChange?.('chat'), badge: chatBadge || 0 },
+            { id: 'home', label: 'Discover', Icon: Compass, active: landingTab === 'home', onClick: () => onLandingTabChange?.('home'), badge: 0 },
+            { id: 'trips', label: 'My Trips', Icon: Luggage, active: landingTab === 'trips', onClick: () => onLandingTabChange?.('trips'), badge: 0 },
+            { id: 'timeline', label: 'Timeline', Icon: Newspaper, active: landingTab === 'timeline', onClick: () => onLandingTabChange?.('timeline'), badge: 0 },
+            { id: 'expenses', label: 'Expenses', Icon: Wallet, active: landingTab === 'expenses', onClick: () => onLandingTabChange?.('expenses'), badge: 0 },
+            { id: 'chat', label: 'Chat', Icon: Users, active: landingTab === 'chat', onClick: () => onLandingTabChange?.('chat'), badge: chatBadge || 0 },
           ] as const).map(({ id, label, Icon, active, onClick, badge }) => (
             <button
               key={id}

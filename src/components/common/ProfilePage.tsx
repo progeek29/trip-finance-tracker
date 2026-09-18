@@ -5,7 +5,10 @@ import { lookupInvite, joinTripById } from '../../utils/invites';
 import { authGetUser, authUpdateProfile, supabase } from '../../utils/supabaseClient';
 import { mintCardNo, cardSeed, isValidCardNo, mintUsername, isValidUsername, cleanGender, type Gender } from '../../utils/cards';
 import type { UserProfile } from '../../utils/storage';
-import type { Trip } from '../../types';
+import type { SharedPhoto, Trip } from '../../types';
+import { PostDetailModal } from '../discovery/PostDetailModal';
+import { MomentGridCell } from '../discovery/MomentGridCell';
+import { getUserMainPosts } from '../../utils/requests';
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '';
@@ -21,6 +24,11 @@ interface ProfilePageProps {
   onBack: () => void;
   onOpenAdmin?: () => void;
   onLogout?: () => void;
+  /** Own posts across both timelines (for the My-posts grid). */
+  myMoments?: SharedPhoto[];
+  allTrips?: Trip[];
+  notify?: (msg: string) => void;
+  onOpenTrip?: (trip: Trip) => void;
 }
 
 export const ProfilePage: React.FC<ProfilePageProps> = ({
@@ -30,6 +38,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   onBack,
   onOpenAdmin,
   onLogout,
+  myMoments = [],
+  allTrips = [],
+  notify,
+  onOpenTrip,
 }) => {
   const [name, setName] = useState(profile?.name || '');
   const [phone, setPhone] = useState(profile?.phone || '');
@@ -52,6 +64,36 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinMsg, setJoinMsg] = useState<string | null>(null);
   const [choices, setChoices] = useState<Trip[] | null>(null);
+  const [detailPhoto, setDetailPhoto] = useState<SharedPhoto | null>(null);
+  // Main-timeline posts never enter App photo state — fetch + merge here so
+  // My-posts shows EVERYTHING (trip + main), newest first, deduped by id.
+  const [mainPosts, setMainPosts] = useState<SharedPhoto[]>([]);
+  useEffect(() => {
+    if (!uid) return;
+    let live = true;
+    getUserMainPosts(uid)
+      .then((rows) => {
+        if (live) setMainPosts(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [uid]);
+  const allMyPosts = (() => {
+    const seen = new Set<string>();
+    const out: SharedPhoto[] = [];
+    // uid match first; legacy rows without uid fall back to author-name match.
+    const isMine = (p: SharedPhoto) =>
+      (!!p.uploadedByUid && !!uid && p.uploadedByUid === uid) ||
+      (!p.uploadedByUid && !!name && !!p.uploadedByName && p.uploadedByName === name);
+    for (const p of [...myMoments, ...mainPosts]) {
+      if (!isMine(p) || seen.has(p.id)) continue;
+      seen.add(p.id);
+      out.push(p);
+    }
+    return out.sort((a, b) => +new Date(b.uploadedAt || 0) - +new Date(a.uploadedAt || 0));
+  })();
 
   const editorRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -555,6 +597,46 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* My posts — trip + main timelines together (Instagram grid).
+          Main posts never enter App photo state, so they merge in here. */}
+      <div className="max-w-5xl mx-auto px-4 pb-4">
+        <h3 className="text-sm font-extrabold text-slate-900 mb-2.5">
+          My posts · {allMyPosts.length}
+        </h3>
+        {allMyPosts.length === 0 ? (
+          <p className="text-[11px] text-slate-400 text-center py-6 bg-white rounded-2xl border border-slate-200/70">
+            Nothing posted yet — moments you share will appear here.
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 gap-1.5">
+            {allMyPosts.map((p) => (
+              <MomentGridCell key={p.id} photo={p} onOpen={() => setDetailPhoto(p)} />
+            ))}
+          </div>
+        )}
+      </div>
+      {detailPhoto && (
+        <PostDetailModal
+          photo={detailPhoto}
+          trips={allTrips}
+          myUid={uid}
+          myName={name || profile?.name}
+          notify={(msg) => notify?.(msg)}
+          onClose={() => setDetailPhoto(null)}
+          onOpenTrip={(t) => {
+            setDetailPhoto(null);
+            onOpenTrip?.(t);
+          }}
+          onDeleted={(id) => setDetailPhoto(null)}
+          onLiked={(id, count, liked) => {
+            setDetailPhoto((d) => (d && d.id === id ? { ...d, likesCount: count, likedByMe: liked } : d));
+          }}
+          onEdited={(updated) => {
+            setDetailPhoto((d) => (d && d.id === updated.id ? { ...d, ...updated } : d));
+          }}
+        />
+      )}
 
       {/* Logout — end of page */}
       {onLogout && (

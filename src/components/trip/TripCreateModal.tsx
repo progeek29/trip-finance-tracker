@@ -459,7 +459,6 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                           <p className="text-sm font-semibold text-slate-800 truncate">
                             {displayMemberName(m)}
                           </p>
-                          {m.phone && <p className="text-xs text-slate-400 truncate">{formatPhoneDisplay(m.phone)}</p>}
                         </div>
                         <div className="flex items-center gap-1">
                           <button

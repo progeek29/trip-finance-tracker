@@ -1,5 +1,5 @@
 import React from 'react';
-import { Compass, Wallet, History, Plus, ArrowLeft, Bell, Home, MessagesSquare } from 'lucide-react';
+import { Compass, Wallet, Newspaper, Plus, ArrowLeft, Bell, MapPin, Users } from 'lucide-react';
 import { Logo } from './Logo';
 import { ImpersonateBanner } from '../admin/ImpersonateBanner';
 
@@ -9,12 +9,12 @@ interface NavbarProps {
   activeTab: CleanTab;
   onTabChange: (tab: CleanTab) => void;
   onOpenQuickAdd: () => void;
-  /** Center + FAB — opens the Timeline moment composer (replaces its inline button). */
-  onOpenComposer: () => void;
   totalSpent: number;
   totalBudget: number;
   tripTitle?: string;
   onBackToTrips?: () => void;
+  /** Bottom-bar Discover → always lands on the Discover feed (not just "back"). */
+  onGoDiscover?: () => void;
   unreadCount?: number;
   onBellClick?: () => void;
   /** Bumps on every new notification → bell jiggles red + vibrates (same size). */
@@ -25,22 +25,22 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   onTabChange,
   onOpenQuickAdd,
-  onOpenComposer,
   totalSpent,
   totalBudget,
   tripTitle,
   onBackToTrips,
+  onGoDiscover,
   unreadCount,
   onBellClick,
   bellPulse = 0,
 }) => {
   const tabs = [
-    { id: 'trip' as CleanTab, label: 'Trip', icon: Compass },
-    { id: 'todo' as CleanTab, label: 'Timeline', icon: History },
+    { id: 'trip' as CleanTab, label: 'Trip', icon: MapPin },
+    { id: 'todo' as CleanTab, label: 'Timeline', icon: Newspaper },
     { id: 'expenses' as CleanTab, label: 'Expenses', icon: Wallet },
     // Trip-internal Squadroom chat — VISIBLE (group per trip stays).
     // Landing-page global chat hub stays hidden (TripLandingView) until chat P2.
-    { id: 'chat' as CleanTab, label: 'Chat', icon: MessagesSquare },
+    { id: 'chat' as CleanTab, label: 'Chat', icon: Users },
     // VAULT DISABLED (temp) — data + views intact, button hidden. Re-add:
     // { id: 'vault' as CleanTab, label: 'Vault', icon: FolderOpen },
   ];
@@ -125,7 +125,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       </header>
 
       {activeTab !== 'chat' && (() => {
-        // Order: Home · Trip · [+] (moment composer) · Timeline · Expenses
+        // Order: Discover · Trip · [+] (moment composer) · Timeline · Expenses · Chat
         const byId = (id: CleanTab) => tabs.find((t) => t.id === id)!;
         const item = (tab: { id: CleanTab; label: string; icon: typeof Compass }) => ({
           id: tab.id,
@@ -137,17 +137,17 @@ export const Navbar: React.FC<NavbarProps> = ({
         return (
           <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200/80 shadow-[0_-8px_30px_rgba(0,0,0,0.06)] [transform:translateZ(0)]">
             <nav className="max-w-3xl mx-auto px-4 pt-1.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex justify-around items-center">
-              {onBackToTrips && (
+              {(onGoDiscover || onBackToTrips) && (
                 <button
                   key="home"
-                  onClick={onBackToTrips}
-                  aria-label="Home"
-                  title="Home"
+                  onClick={onGoDiscover || onBackToTrips}
+                  aria-label="Discover"
+                  title="Discover"
                   className="flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-colors cursor-pointer"
                 >
-                  <Home size={22} strokeWidth={1.8} className="text-slate-400" />
+                  <Compass size={22} strokeWidth={1.8} className="text-slate-400" />
                   <span className="text-[10px] leading-tight text-slate-400 font-medium">
-                    Home
+                    Discover
                   </span>
                 </button>
               )}
@@ -169,17 +169,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </span>
                 </button>
               ))}
-              {/* Center + — new Timeline moment (sits in the row, not raised) */}
-              <span className="flex-1 flex flex-col items-center justify-center py-1">
-                <button
-                  onClick={onOpenComposer}
-                  aria-label="New moment"
-                  title="New moment"
-                  className="w-11 h-11 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center shadow-lg shadow-indigo-300 active:scale-95 transition-all cursor-pointer"
-                >
-                  <Plus size={22} strokeWidth={2.5} />
-                </button>
-              </span>
               {[item(byId('todo')), item(byId('expenses')), item(byId('chat'))].map(({ id, label, Icon, active, onClick }) => (
                 <button
                   key={id}

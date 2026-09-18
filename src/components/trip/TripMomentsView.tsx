@@ -8,8 +8,11 @@ import {
   X,
   Database,
   ImagePlus,
+  LayoutGrid,
+  List,
   MoreVertical,
   Pencil,
+  Plus,
   Trash2,
   Cloud,
   CloudOff,
@@ -20,6 +23,9 @@ import { compressImage } from '../../utils/image';
 import { formatBytes } from '../chat/chatStore';
 import { putMedia, resolveMediaBlob } from '../../utils/mediaStore';
 import { saveMoment, deleteMomentRemote, queueTombstone, fetchStorageUsage, type StorageUsage } from '../../utils/momentsSync';
+import { togglePostLike } from '../../utils/mainFeed';
+import { MomentGridCell } from '../discovery/MomentGridCell';
+import { PostDetailModal } from '../discovery/PostDetailModal';
 import { sendPush } from '../../utils/push';
 
 interface MomentComment {
@@ -81,8 +87,6 @@ interface TripMomentsViewProps {
   onUpdatePhoto: (photo: SharedPhoto) => void;
   onDeletePhoto: (id: string) => void;
   notify: (msg: string) => void;
-  /** Bumps when the bottom-bar + FAB is tapped — opens the composer. */
-  composerSignal?: number;
 }
 
 /**
@@ -104,19 +108,10 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
   onUpdatePhoto,
   onDeletePhoto,
   notify,
-  composerSignal = 0,
 }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [caption, setCaption] = useState('');
   const [composerOpen, setComposerOpen] = useState(false);
-  // Bottom-bar + FAB → jump here with the composer open (skips mount signal).
-  const signalSeen = useRef(composerSignal);
-  useEffect(() => {
-    if (composerSignal > signalSeen.current) {
-      signalSeen.current = composerSignal;
-      setComposerOpen(true);
-    }
-  }, [composerSignal]);
   const [staged, setStaged] = useState<{ file: File; preview: string } | null>(null);
   const [posting, setPosting] = useState(false);
   const [upload, setUpload] = useState<UploadState | null>(null);
@@ -130,6 +125,8 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [editingCaption, setEditingCaption] = useState<{ id: string; text: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [feedView, setFeedView] = useState<'normal' | 'grid'>('normal');
+  const [detail, setDetail] = useState<SharedPhoto | null>(null);
 
   // LIVE server DB numbers (local-dev only — skipped entirely in prod builds).
   useEffect(() => {
@@ -393,12 +390,30 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
     }
   };
 
-  const toggleLike = (id: string) => {
+  // Relational like toggle (photo_likes table) — same toggle + same burst
+  // animation everywhere. Optimistic local flip, server confirms the count.
+  const toggleLike = (photo: SharedPhoto) => {
+    const currently = photo.likedByMe ?? liked.has(photo.id);
+    const toLiked = !currently;
     const next = new Set(liked);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    if (toLiked) next.add(photo.id);
+    else next.delete(photo.id);
     setLiked(next);
     writeSet(LIKED_KEY, next);
+    void (async () => {
+      const r = await togglePostLike(photo.id, toLiked);
+      if (r) {
+        onUpdatePhoto({ ...photo, likesCount: r.count, likedByMe: r.liked });
+      } else {
+        setLiked((prev) => {
+          const back = new Set(prev);
+          if (toLiked) back.delete(photo.id);
+          else back.add(photo.id);
+          return back;
+        });
+        notify('Could not update like. Check internet.');
+      }
+    })();
   };
 
   const toggleSave = (id: string) => {
@@ -450,6 +465,15 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
 
   return (
     <div className="space-y-3 max-w-3xl mx-auto">
+      {/* New Post — opens this trip's composer (posts stay in this trip) */}
+      {!composerOpen && (
+        <button
+          onClick={() => setComposerOpen(true)}
+          className="w-full h-11 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+        >
+          <Plus size={15} strokeWidth={2.5} /> New post
+        </button>
+      )}
       {/* Upload strip — Post dabate hi Timeline + upar progress, complete hote hi feed me */}
       {upload && !composerOpen && (
         <div className="bg-white rounded-2xl border border-slate-200 px-3.5 py-2.5 flex items-center gap-3">
@@ -678,9 +702,29 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
         </div>
       )}
 
-      {/* Moments feed */}
-      {photos.map((photo) => {
-        const isLiked = liked.has(photo.id);
+      {/* Moments feed — normal cards or Instagram grid (same toggle as main) */}
+      {photos.length > 0 && (
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-extrabold text-slate-900">Moments · {photos.length}</h3>
+          <button
+            onClick={() => setFeedView((v) => (v === 'normal' ? 'grid' : 'normal'))}
+            aria-label="Toggle view"
+            title={feedView === 'normal' ? 'Grid view' : 'Normal view'}
+            className="p-2 rounded-xl border border-slate-200 bg-white text-slate-500 hover:text-indigo-600 hover:border-indigo-300 cursor-pointer"
+          >
+            {feedView === 'normal' ? <LayoutGrid size={15} /> : <List size={15} />}
+          </button>
+        </div>
+      )}
+      {feedView === 'grid' ? (
+        <div className="grid grid-cols-3 gap-1.5">
+          {photos.map((p) => (
+            <MomentGridCell key={p.id} photo={p} onOpen={() => setDetail(p)} />
+          ))}
+        </div>
+      ) : (
+      photos.map((photo) => {
+        const isLiked = photo.likedByMe ?? liked.has(photo.id);
         const isSaved = saved.has(photo.id);
         const isOwner = photo.uploadedByMemberId === myMemberId;
         // LIVE display name: resolve from current trip members (uid first),
@@ -800,8 +844,8 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
               <div className="flex items-center gap-4">
                 <DandelionLike
                   liked={isLiked}
-                  count={photo.likesCount + (isLiked ? 1 : 0)}
-                  onToggle={() => toggleLike(photo.id)}
+                  count={Number(photo.likesCount || 0)}
+                  onToggle={() => toggleLike(photo)}
                 />
                 <button onClick={() => setOpenComments(commentsOpen ? null : photo.id)} aria-label="Comments" className={iconBtn}>
                   <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="block">
@@ -877,14 +921,38 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
             </div>
           </article>
         );
-      })}
+        })
+      )}
+      {detail && (
+        <PostDetailModal
+          photo={detail}
+          trips={[trip]}
+          myUid={myUid}
+          myName={myName}
+          notify={notify}
+          onClose={() => setDetail(null)}
+          onOpenTrip={() => setDetail(null)}
+          onDeleted={(id) => {
+            onDeletePhoto(id);
+            setDetail(null);
+          }}
+          onLiked={(id, count, likedByMe) => {
+            onUpdatePhoto({ ...detail, id, likesCount: count, likedByMe });
+            setDetail((d) => (d && d.id === id ? { ...d, likesCount: count, likedByMe } : d));
+          }}
+          onEdited={(updated) => {
+            onUpdatePhoto(updated);
+            setDetail((d) => (d && d.id === updated.id ? { ...d, ...updated } : d));
+          }}
+        />
+      )}
       {photos.length === 0 && !composerOpen && (
         <div className="text-center py-10">
           <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto mb-3">
             <ImagePlus size={22} className="text-indigo-400" />
           </div>
           <p className="text-xs font-bold text-slate-700">No moments yet</p>
-          <p className="text-[11px] text-slate-400 font-medium mt-1">Tap + below to post the first photo of this trip.</p>
+          <p className="text-[11px] text-slate-400 font-medium mt-1">Tap New post above to share the first moment of this trip.</p>
         </div>
       )}
     </div>

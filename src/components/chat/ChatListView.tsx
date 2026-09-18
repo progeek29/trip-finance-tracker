@@ -96,11 +96,11 @@ export const ChatListView: React.FC<ChatListViewProps> = ({
   const [groupName, setGroupName] = useState('');
   const queryTimer = useRef<number | null>(null);
 
-  // Debounced @handle search (2+ chars).
+  // Debounced @handle/name search (1+ chars — "Z" finds Zon + all matches).
   useEffect(() => {
     if (queryTimer.current) window.clearTimeout(queryTimer.current);
     const q = query.trim();
-    if (q.length < 2) {
+    if (q.length < 1) {
       setResults([]);
       setSearching(false);
       return;

@@ -36,6 +36,10 @@ interface ChatViewProps {
   /** Embedded in DM/group screens (App renders its own header) — hides the
    *  built-in Squadroom header so no duplicate title shows. */
   bare?: boolean;
+  /** Room access revoked (unfriended/removed): composer replaced by a notice,
+   *  sends blocked. History stays visible. */
+  disabled?: boolean;
+  disabledNote?: string;
 }
 
 function fmtTime(createdAt: unknown): string {
@@ -157,7 +161,7 @@ function renderRichText(
   );
 }
 
-export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadIds, bare }) => {
+export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadIds, bare, disabled, disabledNote }) => {
   const [msgs, setMsgs] = useState<RichMsg[]>([]);
   const [pending, setPending] = useState<ChatMessage[]>(() => {
     try {
@@ -452,7 +456,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
       { id: '__squad__', name: 'squad', sub: 'Everyone in this trip' },
       ...trip.members
         .filter((x) => !x.isCurrentUser)
-        .map((x) => ({ id: x.id, name: x.name.replace(/\(You\)/g, '').trim() || 'Friend', sub: x.phone || 'Squad member' })),
+        .map((x) => ({ id: x.id, name: x.name.replace(/\(You\)/g, '').trim() || 'Friend', sub: 'Squad member' })),
     ];
     return all.filter((c) => !q || c.name.toLowerCase().includes(q)).slice(0, 6);
   })();
@@ -507,6 +511,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
   };
 
   const send = async () => {
+    if (disabled) return;
     const t = text.trim();
     if (!t || sendingRef.current) return;
     sendingRef.current = true;
@@ -1134,7 +1139,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
         </div>
       )}
 
-      {/* Input pinned at bottom */}
+      {/* Input pinned at bottom — or the disabled notice when access revoked */}
+      {disabled ? (
+        <div className="flex-shrink-0 pt-1 pb-1.5">
+          <p className="text-center text-[11px] font-bold text-slate-400 bg-slate-100 rounded-xl px-3 py-2.5">
+            {disabledNote || 'You can no longer send messages here.'}
+          </p>
+        </div>
+      ) : (
       <div className="flex items-end gap-2 pt-1 pb-1.5 flex-shrink-0">
         <button
           type="button"
@@ -1187,6 +1199,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
           <Send size={16} />
         </button>
       </div>
+      )}
       {/* Emergency rings live at App root (every screen) — nothing local here. */}
     </div>
   );

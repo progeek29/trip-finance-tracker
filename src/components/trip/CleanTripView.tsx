@@ -475,7 +475,6 @@ function SquadModal({ trip, onClose, onSave, myUid, isAdmin }: { trip: Trip; onC
                       );
                     })()}
                   </p>
-                  <p className="text-[11px] truncate" style={{ color: '#64748b' }}>{formatPhoneDisplay(m.phone || m.upiId) || 'No contact'}</p>
                 </div>
                 {isOwner && !m.isCurrentUser && (
                   <>

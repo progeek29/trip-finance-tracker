@@ -132,7 +132,9 @@ export function parseActivity(a: RawActivity, isUnread: boolean, meName?: string
   }
 
   const money = MONEY_RE.exec(title);
-  const mentions = title.match(MENTION_RE) || [];
+  // Chat-request rows ("@x sent you a request") never repeat the handle chip.
+  const isRequestRow = /sent you a (chat )?request/i.test(title);
+  const mentions = isRequestRow ? [] : title.match(MENTION_RE) || [];
   const category = pickCategory(title, mentions.length > 0);
   let actor = actorFromTitle(title, 'Someone');
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, X, Check, LogOut, UserPlus } from 'lucide-react';
+import { Search, X, Check, LogOut, Trash2, UserPlus } from 'lucide-react';
 import { MemberAvatar } from '../common/MemberAvatar';
 import { useLockBodyScroll } from '../common/useLockBodyScroll';
 import type { ChatGroup, CoTraveler } from '../../utils/requests';
@@ -12,9 +12,11 @@ interface ServerGroupSheetProps {
   /** Co-Travelers available to add. */
   candidates: CoTraveler[];
   busy: boolean;
+  isCreator: boolean;
   onAdd: (ids: string[]) => void;
   onRemove: (uid: string) => void;
   onLeave: () => void;
+  onDelete: () => void;
   onClose: () => void;
 }
 
@@ -27,9 +29,11 @@ export const ServerGroupSheet: React.FC<ServerGroupSheetProps> = ({
   memberNames,
   candidates,
   busy,
+  isCreator,
   onAdd,
   onRemove,
   onLeave,
+  onDelete,
   onClose,
 }) => {
   useLockBodyScroll();
@@ -155,7 +159,7 @@ export const ServerGroupSheet: React.FC<ServerGroupSheetProps> = ({
           </div>
         </div>
 
-        <div className="flex-shrink-0 px-5 py-4 border-t border-slate-100">
+        <div className="flex-shrink-0 px-5 py-4 border-t border-slate-100 space-y-2">
           <button
             onClick={onLeave}
             disabled={busy}
@@ -163,6 +167,15 @@ export const ServerGroupSheet: React.FC<ServerGroupSheetProps> = ({
           >
             <LogOut size={15} /> Leave group
           </button>
+          {isCreator && (
+            <button
+              onClick={onDelete}
+              disabled={busy}
+              className="w-full h-11 rounded-xl bg-white border border-slate-200 hover:border-rose-300 text-rose-600 text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-40"
+            >
+              <Trash2 size={15} /> Delete group
+            </button>
+          )}
         </div>
       </div>
     </div>

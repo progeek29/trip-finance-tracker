@@ -41,7 +41,7 @@ import { AtSign, Bell, Check, MapPin, MessageCircle, Radio } from 'lucide-react'
 import { WelcomeScreen } from './components/trip/WelcomeScreen';
 import { ChatView } from './components/chat/ChatView';
 import { ChatListView } from './components/chat/ChatListView';
-import { getRequests, getFriends, getMyGroups, renameGroup, updateGroupMembers, dmRoomId, type ChatRequest, type CoTraveler, type ChatGroup } from './utils/requests';
+import { getRequests, getFriends, getMyGroups, renameGroup, updateGroupMembers, deleteGroup, dmRoomId, type ChatRequest, type CoTraveler, type ChatGroup } from './utils/requests';
 import { sendChatMessage } from './utils/chat';
 import { ServerGroupSheet } from './components/chat/ServerGroupSheet';
 import { TripMomentsView } from './components/trip/TripMomentsView';
@@ -68,7 +68,7 @@ import { AdminActivity } from './components/admin/AdminActivity';
 import { LoginLanding } from './components/common/LoginLanding';
 import { ProfilePage } from './components/common/ProfilePage';
 
-  type AppView = 'landing' | 'trip_dashboard' | 'admin_activity' | 'profile' | 'coming_soon';
+  type AppView = 'landing' | 'trip_dashboard' | 'admin_activity' | 'profile' | 'public_profile' | 'coming_soon';
 
 import { migrateDataUrl, deleteMediaRefs, collectRefs } from './utils/mediaStore';
 import { viewerBudget, tripOwnerUid } from './utils/budget';
@@ -79,6 +79,7 @@ import {
   type FeedItem,
 } from './utils/notifications';
 import { NotifFeedPanel } from './components/common/NotifFeedPanel';
+import { PublicProfileView } from './components/common/PublicProfileView';
 import { isNativeApp, NativeSms } from './utils/nativeBridge';
 import { systemShare } from './utils/share';
 import { parseBankSMS, isDateWithinTrip, isRecurringDebit } from './utils/smsParser';
@@ -174,15 +175,19 @@ export function App() {
 
   const [activeTab, setActiveTab] = useState<CleanTab>(loadSessionTab);
   // Center + FAB → Timeline composer: bumps to open it (Timeline mounts on tab switch).
-  const [composerSignal, setComposerSignal] = useState(0);
-  const [landingTab, setLandingTab] = useState<'trips' | 'explore' | 'chat'>('trips');
+
+  const [landingTab, setLandingTab] = useState<'home' | 'trips' | 'timeline' | 'expenses' | 'chat'>('home');
   // Social hub (Chat tab): open DM, inbox lists, refresh trigger.
   const [dmFriend, setDmFriend] = useState<CoTraveler | null>(null);
   const [groupRoom, setGroupRoom] = useState<ChatGroup | null>(null);
+  const [publicUid, setPublicUid] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState(false);
   const [groupNameDraft, setGroupNameDraft] = useState('');
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
   const [groupBusy, setGroupBusy] = useState(false);
+  // True after the first successful people poll — access decisions (disabled
+  // chats, auto-close) must NEVER run on empty initial lists.
+  const [peopleLoaded, setPeopleLoaded] = useState(false);
   // Per-room unread (persists across reloads, cleared on open).
   const [dmUnread, setDmUnread] = useState<Record<string, { count: number; preview: string; at: number }>>(() => {
     try {
@@ -1080,9 +1085,9 @@ export function App() {
             reqKnownRef.current.add(r.id);
             const when = fmtWhen();
             const handle = r.username ? `@${r.username}` : r.name;
-            pushActivity({ id: `req_${r.id}`, title: `${handle} sent you a chat request`, sub: when, at: Date.now() });
-            showNotifFlash(`${handle} sent you a chat request • ${when}`, r.name);
-            loudNotify('New chat request', `${handle} wants to connect`, ticketNotifId(`req_${r.id}`));
+            pushActivity({ id: `req_${r.id}`, title: `${handle} sent you a request`, sub: when, at: Date.now() });
+            showNotifFlash(`${handle} sent you a request • ${when}`, r.name);
+            loudNotify('New request', `${handle} sent you a request`, ticketNotifId(`req_${r.id}`));
           }
           for (const g of grps) {
             if (grpKnownRef.current.has(g.id)) continue;
@@ -1106,6 +1111,7 @@ export function App() {
         setReqSent(sent);
         setFriendsList(normFr);
         setGroupsList(grps);
+        setPeopleLoaded(true);
       } catch { /* offline — keep last lists */ }
     };
     loadPeople();
@@ -1175,6 +1181,26 @@ export function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed, myUid, friendsList, groupsList, dmFriend, groupRoom]);
+
+  // Kicked/unfriended while a room is open → shut it (server lists already
+  // exclude it; the socket never kicks). Only after first successful poll.
+  useEffect(() => {
+    if (!peopleLoaded) return;
+    if (groupRoom && !groupsList.some((g) => g.id === groupRoom.id)) {
+      setGroupRoom(null);
+      setGroupInfoOpen(false);
+      showNotifFlash('You are no longer a member of that group.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peopleLoaded, groupsList]);
+  useEffect(() => {
+    if (!peopleLoaded || !dmFriend) return;
+    if (!friendsList.some((f) => f.id === dmFriend.id)) {
+      setDmFriend(null);
+      showNotifFlash('You are no longer connected with them.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peopleLoaded, friendsList]);
 
   // Mark read while chat is open
   useEffect(() => {
@@ -1882,6 +1908,40 @@ export function App() {
     );
   }
 
+  const openAuthorProfile = (uid: string) => {
+    if (uid === myUid) {
+      setAppView('profile');
+      return;
+    }
+    setPublicUid(uid);
+    setAppView('public_profile');
+  };
+
+  if (appView === 'public_profile' && publicUid) {
+    const relation: 'self' | 'friend' | 'stranger' =
+      publicUid === myUid ? 'self' : friendsList.some((f) => f.id === publicUid) ? 'friend' : 'stranger';
+    return (
+      <>
+        <PublicProfileView
+          uid={publicUid}
+          myUid={myUid}
+          relation={relation}
+          trips={trips}
+          notify={(msg) => showNotifFlash(msg)}
+          onBack={() => setAppView('landing')}
+          onRequestSent={() => setPeopleTick((n) => n + 1)}
+          onOpenTrip={(t) => {
+            setActiveTripId(t.id);
+            setActiveTab('chat');
+            setAppView('trip_dashboard');
+          }}
+        />
+        {SirenBanner}
+        {FlashToast}
+      </>
+    );
+  }
+
   if (appView === 'profile') {
     return (
       <>
@@ -1891,6 +1951,14 @@ export function App() {
           onJoinTrip={handleJoinTripById}
           onBack={() => setAppView('landing')}
           onOpenAdmin={() => setAppView('admin_activity')}
+          myMoments={myUid ? photos.filter((p) => p.uploadedByUid === myUid) : []}
+          allTrips={trips}
+          notify={(msg) => showNotifFlash(msg)}
+          onOpenTrip={(t) => {
+            setActiveTripId(t.id);
+            setActiveTab('trip');
+            setAppView('trip_dashboard');
+          }}
           onLogout={async () => {
             const { authSignOutAll } = await import('./utils/supabaseClient');
             await authSignOutAll();
@@ -2071,6 +2139,23 @@ export function App() {
           setGroupBusy(false);
         }
       };
+      // Delete whole group → creator only: history rows + group row gone.
+      const handleGroupDelete = async () => {
+        if (groupBusy || !groupRoom) return;
+        if (!window.confirm(`Delete "${gTitle}" for everyone? All messages go with it.`)) return;
+        setGroupBusy(true);
+        try {
+          await deleteGroup(groupRoom.id);
+          setGroupRoom(null);
+          setGroupInfoOpen(false);
+          setPeopleTick((n) => n + 1);
+          showNotifFlash('Group deleted.');
+        } catch (e) {
+          showNotifFlash(e instanceof Error ? e.message : 'Could not delete group');
+        } finally {
+          setGroupBusy(false);
+        }
+      };
       // Leave → API + timeline line (once): "Krey left the group".
       const handleGroupLeave = async () => {
         if (groupBusy || !myUid) return;
@@ -2179,6 +2264,8 @@ export function App() {
               myUid={myUid}
               unreadIds={[]}
               bare
+              disabled={peopleLoaded && !groupsList.some((g) => g.id === groupRoom.id)}
+              disabledNote="You are no longer a member of this group."
             />
           </div>
           {groupInfoOpen && (
@@ -2188,9 +2275,11 @@ export function App() {
               memberNames={grpMemberNames}
               candidates={grpCandidates}
               busy={groupBusy}
+              isCreator={groupRoom.createdBy === myUid}
               onAdd={(ids) => void handleGroupAdd(ids)}
               onRemove={(uid) => void handleGroupRemove(uid)}
               onLeave={() => void handleGroupLeave()}
+              onDelete={() => void handleGroupDelete()}
               onClose={() => setGroupInfoOpen(false)}
             />
           )}
@@ -2224,10 +2313,15 @@ export function App() {
               <span className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-extrabold flex-shrink-0">
                 {(dmFriend.name || 'M').trim().charAt(0).toUpperCase()}
               </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-extrabold text-slate-900 truncate">{dmFriend.name}</span>
+              <button
+                type="button"
+                onClick={() => openAuthorProfile(dmFriend.id)}
+                title="View profile"
+                className="min-w-0 flex-1 text-left cursor-pointer group"
+              >
+                <span className="block text-sm font-extrabold text-slate-900 truncate group-hover:text-indigo-600">{dmFriend.name}</span>
                 <span className="block text-[11px] text-slate-400 font-medium truncate">@{dmFriend.username}</span>
-              </span>
+              </button>
             </div>
           </div>
           <div className="flex-1 min-h-0 max-w-3xl mx-auto w-full px-3 sm:px-6 pt-1 pb-1 flex flex-col overflow-hidden">
@@ -2237,6 +2331,8 @@ export function App() {
               myUid={myUid}
               unreadIds={[]}
               bare
+              disabled={peopleLoaded && !friendsList.some((f) => f.id === dmFriend.id)}
+              disabledNote="You are no longer connected. Send a request to chat again."
             />
           </div>
         </div>
@@ -2312,6 +2408,8 @@ export function App() {
           )}
           recommendations={recommendations}
           onAddRecommendation={handleAddPlace}
+          moments={photos}
+          onOpenAuthor={(uid) => openAuthorProfile(uid)}
         />
         {notifOpen && (() => {
           // Landing panel: SAME unified feed as the trip page (activity +
@@ -2406,17 +2504,16 @@ export function App() {
           setNotifOpen(false);
         }}
         onOpenQuickAdd={() => { setEditingExpense(null); setIsQuickAddOpen(true); }}
-        onOpenComposer={() => {
-          setActiveTab('todo');
-          setNotifOpen(false);
-          setComposerSignal((n) => n + 1);
-        }}
         totalSpent={viewerBudget(activeTrip, tripExpenses, myUid, isAdmin).spent}
         totalBudget={viewerBudget(activeTrip, tripExpenses, myUid, isAdmin).budget}
         tripTitle={activeTrip.title}
         onBackToTrips={() => {
           if (activeTab === 'trip') setAppView('landing');
           else setActiveTab('trip');
+        }}
+        onGoDiscover={() => {
+          setLandingTab('home');
+          setAppView('landing');
         }}
         unreadCount={chatFeed.filter((m) => msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system').length}
         onBellClick={() => setNotifOpen((v) => !v)}
@@ -2598,7 +2695,6 @@ export function App() {
             onUpdatePhoto={handleUpdatePhoto}
             onDeletePhoto={handleDeletePhoto}
             notify={(msg) => showNotifFlash(msg)}
-            composerSignal={composerSignal}
           />
         )}
         {activeTab === 'expenses' && (

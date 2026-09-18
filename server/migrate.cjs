@@ -122,6 +122,26 @@ const STMTS = [
   `CREATE INDEX IF NOT EXISTS idx_groups_created ON chat_groups("createdBy")`,
   // Group display name (any member can rename, WhatsApp-style).
   `ALTER TABLE chat_groups ADD COLUMN IF NOT EXISTS name text DEFAULT ''`,
+  // Post comments (main + trip timelines): text only, author from session.
+  `CREATE TABLE IF NOT EXISTS photo_comments (
+    id text primary key,
+    "photoId" text not null references photos(id) on delete cascade,
+    uid text not null references users(id) on delete cascade,
+    name text default '',
+    text text default '',
+    at bigint
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_comments_photo ON photo_comments("photoId", at)`,
+  // Relational likes (toggle truth): one row per (photo, user).
+  // Insert on like, delete on unlike — never a blind counter column.
+  `CREATE TABLE IF NOT EXISTS photo_likes (
+    "photoId" text not null references photos(id) on delete cascade,
+    uid text not null references users(id) on delete cascade,
+    at bigint,
+    PRIMARY KEY ("photoId", uid)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_likes_photo ON photo_likes("photoId")`,
+  `CREATE INDEX IF NOT EXISTS idx_likes_uid ON photo_likes(uid)`,
 ];
 
 // Pass-number hash — MUST match src/utils/cards.ts + index.cjs mintCardNo.

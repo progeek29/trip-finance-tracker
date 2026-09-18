@@ -780,11 +780,12 @@ async function requestEdge(a, b) {
 
 // GET /api/users/search?q= — people search by @handle or name.
 // Leading @ stripped (users naturally type "@zon_ft9c").
-// Returns PUBLIC bits only (never email/phone). Min 2 chars, max 15 rows.
+// Single-char works ("Z" finds Zon + all matches). PUBLIC bits only
+// (never email/phone). Max 15 rows.
 app.get('/api/users/search', requireSession, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim().replace(/^@+/, '').slice(0, 24);
-    if (q.length < 2) return res.json({ data: [], error: null });
+    if (q.length < 1) return res.json({ data: [], error: null });
     const { rows } = await pool.query(
       `SELECT id, name, username, gender FROM users
        WHERE id <> $1 AND (username ILIKE $2 || '%' OR name ILIKE '%' || $2 || '%')
@@ -1049,6 +1050,56 @@ app.get('/api/groups/mine', requireSession, async (req, res) => {
   }
 });
 
+// Room membership gate (DM/group rooms only — trip rooms untouched).
+// grp_* → sender must be in memberUids. dm_* → an accepted friendship edge
+// must exist between sender and a peer whose derived room id matches.
+// System lines (join/created/added/left audit trail) are exempt — they are
+// posted by the acting client at action time, never user chat content.
+async function canSendInRoom(uid, tid, type) {
+  if (!tid || !uid) return false;
+  if (type === 'system') return true;
+  if (tid.startsWith('grp_')) {
+    try {
+      const { rows } = await pool.query('SELECT "memberUids" FROM chat_groups WHERE id = $1', [tid]);
+      if (!rows[0]) return false;
+      const m = Array.isArray(rows[0].memberUids) ? rows[0].memberUids : JSON.parse(rows[0].memberUids || '[]');
+      return m.includes(uid);
+    } catch {
+      return false;
+    }
+  }
+  if (tid.startsWith('dm_')) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT CASE WHEN "fromUid" = $1 THEN "toUid" ELSE "fromUid" END AS "uid"
+         FROM chat_requests WHERE status = 'accepted' AND ("fromUid" = $1 OR "toUid" = $1)`,
+        [uid]
+      );
+      return rows.map((r) => r.uid).some((p) => `dm_${[uid, p].sort().join('_')}` === tid);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+// DELETE /api/groups/:id — creator ONLY deletes the whole group: history
+// rows first, then the group row. Members just see it vanish on next poll.
+app.delete('/api/groups/:id', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!/^grp_[A-Za-z0-9_-]{1,64}$/.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query('SELECT "createdBy" FROM chat_groups WHERE id = $1', [id]);
+    if (!rows[0]) return fail(res, 404, 'Group not found');
+    if (rows[0].createdBy !== req.user.id) return fail(res, 403, 'Only the group creator can delete it');
+    await pool.query('DELETE FROM chat_messages WHERE "tripId" = $1', [id]);
+    await pool.query('DELETE FROM chat_groups WHERE id = $1', [id]);
+    res.json({ data: { id, deleted: true }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
 // POST /api/groups/:id/members {add?: string[], remove?: string[]} — any member
 // can add Co-Travelers or remove members (self-remove = leave). A group with
 // no members left is deleted. Timeline lines ("X added Y") are posted by the
@@ -1119,13 +1170,14 @@ function momentBytesUrl(req, id) {
   return `${req.protocol}://${req.get('host')}/api/moments/${id}/bytes`;
 }
 
-// POST /api/moments — upsert metadata (+ optional base64 bytes)
+// POST /api/moments — upsert metadata (+ optional base64 bytes).
+// tripId empty/omitted = MAIN timeline post (trip-less, public feed).
 app.post('/api/moments', async (req, res) => {
   try {
     const b = req.body || {};
     const id = String(b.id || '');
-    const tripId = String(b.tripId || '');
-    if (!MOMENT_ID.test(id) || !tripId) return fail(res, 400, 'id and tripId required');
+    const tripId = String(b.tripId || '') || null;
+    if (!MOMENT_ID.test(id)) return fail(res, 400, 'id required');
     let buf = null;
     const mime = String(b.mime || 'image/jpeg').slice(0, 64);
     const aspect = Number(b.aspect) > 0 ? Number(b.aspect) : null;
@@ -1212,27 +1264,59 @@ app.get('/api/moments', async (req, res) => {
   try {
     const tripId = String(req.query.tripId || '');
     if (!tripId) return fail(res, 400, 'tripId required');
+    // Optional viewer (public feed stays public): likedByMe only when a
+    // valid session rides along — never 401s here.
+    let me = null;
+    try {
+      const tok = bearerToken(req);
+      if (tok) {
+        const u = await userByToken(tok);
+        if (u) me = u.id;
+      }
+    } catch { /* public read proceeds without identity */ }
     let rows;
     try {
       ({ rows } = await pool.query(
-        `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
-          "uploadedByName", "uploadedAt", "likesCount", mime, aspect, "uploadedByUid",
-          octet_length(data) AS bytes, "updatedAt"
-         FROM photos WHERE "tripId" = $1 AND NOT COALESCE("_deleted", false)
-         ORDER BY "uploadedAt" ASC LIMIT 500`,
-        [tripId]
+        `SELECT p.id, p."tripId", p.caption, p."locationTag", p."uploadedByMemberId",
+          p."uploadedByName", p."uploadedAt", p."likesCount", p.mime, p.aspect, p."uploadedByUid",
+          octet_length(p.data) AS bytes, p."updatedAt",
+          (SELECT COUNT(*)::int FROM photo_likes l WHERE l."photoId" = p.id) AS "likeCount",
+          CASE WHEN $2::text IS NULL THEN false
+            ELSE EXISTS(SELECT 1 FROM photo_likes l WHERE l."photoId" = p.id AND l.uid = $2) END AS "likedByMe"
+         FROM photos p WHERE p."tripId" = $1 AND NOT COALESCE(p."_deleted", false)
+         ORDER BY p."uploadedAt" ASC LIMIT 500`,
+        [tripId, me]
       ));
     } catch (e) {
-      if (e && /uploadedByUid|aspect/i.test(e.message || '')) {
+      const legacyRead = async () => {
         // Columns not migrated yet — legacy read keeps the feed alive.
-        ({ rows } = await pool.query(
+        const r = await pool.query(
           `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
             "uploadedByName", "uploadedAt", "likesCount", mime,
             octet_length(data) AS bytes, "updatedAt"
            FROM photos WHERE "tripId" = $1 AND NOT COALESCE("_deleted", false)
            ORDER BY "uploadedAt" ASC LIMIT 500`,
           [tripId]
-        ));
+        );
+        return r.rows;
+      };
+      if (e && /photo_likes|relation/i.test(e.message || '')) {
+        try {
+          ({ rows } = await pool.query(
+            `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
+              "uploadedByName", "uploadedAt", "likesCount", mime, aspect, "uploadedByUid",
+              octet_length(data) AS bytes, "updatedAt"
+             FROM photos WHERE "tripId" = $1 AND NOT COALESCE("_deleted", false)
+             ORDER BY "uploadedAt" ASC LIMIT 500`,
+            [tripId]
+          ));
+        } catch (e2) {
+          if (e2 && /uploadedByUid|aspect/i.test(e2.message || '')) {
+            rows = await legacyRead();
+          } else throw e2;
+        }
+      } else if (e && /uploadedByUid|aspect/i.test(e.message || '')) {
+        rows = await legacyRead();
       } else throw e;
     }
     res.json({
@@ -1245,7 +1329,8 @@ app.get('/api/moments', async (req, res) => {
         uploadedByMemberId: r.uploadedByMemberId || '',
         uploadedByName: r.uploadedByName || '',
         uploadedAt: r.uploadedAt || '',
-        likesCount: Number(r.likesCount || 0),
+        likesCount: Number(r.likeCount ?? r.likesCount ?? 0),
+        likedByMe: !!r.likedByMe,
         bytes: Number(r.bytes || 0),
         ...(r.aspect ? { aspect: Number(r.aspect) } : {}),
         ...(r.uploadedByUid ? { uploadedByUid: r.uploadedByUid } : {}),
@@ -1278,13 +1363,21 @@ app.get('/api/moments/:id/bytes', async (req, res) => {
   }
 });
 
-// DELETE /api/moments/:id — tombstone + bytes freed immediately.
+// DELETE /api/moments/:id — owner-only tombstone + bytes freed immediately.
+// Wipes image bytes (storage), comments + likes (cascade), then the row.
+// Legacy rows without uploadedByUid stay deletable (no owner to check).
 // Plain VACUUM after (non-blocking, ms on this tiny table): reclaims the dead
 // TOAST bytes right away so the DB-size meter drops instead of going stale.
-app.delete('/api/moments/:id', async (req, res) => {
+app.delete('/api/moments/:id', requireSession, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     if (!MOMENT_ID.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query('SELECT "uploadedByUid" FROM photos WHERE id = $1', [id]);
+    if (rows.length === 0) return fail(res, 404, 'Not found');
+    const owner = rows[0].uploadedByUid || null;
+    if (owner && owner !== req.user.id) return fail(res, 403, 'Only the author can delete this post');
+    await pool.query('DELETE FROM photo_comments WHERE "photoId" = $1', [id]);
+    await pool.query('DELETE FROM photo_likes WHERE "photoId" = $1', [id]);
     await pool.query(
       'UPDATE photos SET "_deleted" = true, data = NULL, "updatedAt" = $2 WHERE id = $1',
       [id, Date.now()]
@@ -1297,6 +1390,250 @@ app.delete('/api/moments/:id', async (req, res) => {
     res.json({ data: { id }, error: null });
   } catch (e) {
     console.error('DELETE /api/moments error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/feed/main — PUBLIC main timeline: trip-less posts from EVERY
+// registered user, latest first. Session required (registered eyes only).
+app.get('/api/feed/main', requireSession, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+    const before = Number(req.query.before) || Date.now() + 1;
+    const q = String(req.query.q || '').trim().slice(0, 40);
+    const me = req.user.id;
+    let rows;
+    try {
+      ({ rows } = await pool.query(
+        `SELECT p.id, p."tripId", p.caption, p."locationTag", p."uploadedByMemberId",
+          p."uploadedByName", p."uploadedAt", p."likesCount", p.mime, p.aspect, p."uploadedByUid",
+          octet_length(p.data) AS bytes,
+          (SELECT COUNT(*)::int FROM photo_likes l WHERE l."photoId" = p.id) AS "likeCount",
+          EXISTS(SELECT 1 FROM photo_likes l WHERE l."photoId" = p.id AND l.uid = $3) AS "likedByMe"
+         FROM photos p
+         WHERE p."tripId" IS NULL AND NOT COALESCE(p."_deleted", false)
+           AND COALESCE(p."uploadedAt", '') < to_char(to_timestamp($1 / 1000.0), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+           AND ($4 = '' OR p.caption ILIKE '%' || $4 || '%' OR p."uploadedByName" ILIKE '%' || $4 || '%')
+         ORDER BY p."uploadedAt" DESC LIMIT $2`,
+        [before, limit, me, q]
+      ));
+    } catch (e) {
+      if (!(e && /photo_likes|relation/i.test(e.message || ''))) throw e;
+      ({ rows } = await pool.query(
+        `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
+          "uploadedByName", "uploadedAt", "likesCount", mime, aspect, "uploadedByUid",
+          octet_length(data) AS bytes
+         FROM photos
+         WHERE "tripId" IS NULL AND NOT COALESCE("_deleted", false)
+           AND COALESCE("uploadedAt", '') < to_char(to_timestamp($1 / 1000.0), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+           AND ($3 = '' OR caption ILIKE '%' || $3 || '%' OR "uploadedByName" ILIKE '%' || $3 || '%')
+         ORDER BY "uploadedAt" DESC LIMIT $2`,
+        [before, limit, q]
+      ));
+    }
+    res.json({
+      data: rows.map((r) => ({
+        id: r.id,
+        tripId: null,
+        url: Number(r.bytes || 0) > 0 ? momentBytesUrl(req, r.id) : '',
+        caption: r.caption || '',
+        locationTag: r.locationTag || '',
+        uploadedByMemberId: r.uploadedByMemberId || '',
+        uploadedByName: r.uploadedByName || '',
+        uploadedAt: r.uploadedAt || '',
+        likesCount: Number(r.likeCount ?? r.likesCount ?? 0),
+        likedByMe: !!r.likedByMe,
+        bytes: Number(r.bytes || 0),
+        ...(r.aspect ? { aspect: Number(r.aspect) } : {}),
+        ...(r.uploadedByUid ? { uploadedByUid: r.uploadedByUid } : {}),
+      })),
+      error: null,
+    });
+  } catch (e) {
+    console.error('GET /api/feed/main error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/users/public/:uid — safe public bits for profile pages.
+// Never email/phone/hash. Session required (registered eyes only).
+app.get('/api/users/public/:uid', requireSession, async (req, res) => {
+  try {
+    const uid = String(req.params.uid || '');
+    if (!uid) return fail(res, 400, 'uid required');
+    const { rows } = await pool.query(
+      'SELECT id, name, username, gender FROM users WHERE id = $1',
+      [uid]
+    );
+    if (rows.length === 0) return fail(res, 404, 'User not found');
+    res.json({ data: rows[0], error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/feed/user/:uid — MAIN (trip-less) posts by one user, latest first.
+// Trip posts stay inside their trips (privacy); this is the public grid.
+app.get('/api/feed/user/:uid', requireSession, async (req, res) => {
+  try {
+    const uid = String(req.params.uid || '');
+    if (!uid) return fail(res, 400, 'uid required');
+    const limit = Math.min(Math.max(Number(req.query.limit) || 60, 1), 100);
+    const me = req.user.id;
+    let rows;
+    try {
+      ({ rows } = await pool.query(
+        `SELECT p.id, p."tripId", p.caption, p."locationTag", p."uploadedByMemberId",
+          p."uploadedByName", p."uploadedAt", p."likesCount", p.mime, p.aspect, p."uploadedByUid",
+          octet_length(p.data) AS bytes,
+          (SELECT COUNT(*)::int FROM photo_likes l WHERE l."photoId" = p.id) AS "likeCount",
+          EXISTS(SELECT 1 FROM photo_likes l WHERE l."photoId" = p.id AND l.uid = $3) AS "likedByMe"
+         FROM photos p
+         WHERE p."tripId" IS NULL AND NOT COALESCE(p."_deleted", false)
+           AND p."uploadedByUid" = $1
+         ORDER BY p."uploadedAt" DESC LIMIT $2`,
+        [uid, limit, me]
+      ));
+    } catch (e) {
+      if (!(e && /photo_likes|relation/i.test(e.message || ''))) throw e;
+      ({ rows } = await pool.query(
+        `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
+          "uploadedByName", "uploadedAt", "likesCount", mime, aspect, "uploadedByUid",
+          octet_length(data) AS bytes
+         FROM photos
+         WHERE "tripId" IS NULL AND NOT COALESCE("_deleted", false)
+           AND "uploadedByUid" = $1
+         ORDER BY "uploadedAt" DESC LIMIT $2`,
+        [uid, limit]
+      ));
+    }
+    res.json({
+      data: rows.map((r) => ({
+        id: r.id,
+        tripId: null,
+        url: Number(r.bytes || 0) > 0 ? momentBytesUrl(req, r.id) : '',
+        caption: r.caption || '',
+        locationTag: r.locationTag || '',
+        uploadedByMemberId: r.uploadedByMemberId || '',
+        uploadedByName: r.uploadedByName || '',
+        uploadedAt: r.uploadedAt || '',
+        likesCount: Number(r.likeCount ?? r.likesCount ?? 0),
+        likedByMe: !!r.likedByMe,
+        bytes: Number(r.bytes || 0),
+        ...(r.aspect ? { aspect: Number(r.aspect) } : {}),
+        ...(r.uploadedByUid ? { uploadedByUid: r.uploadedByUid } : {}),
+      })),
+      error: null,
+    });
+  } catch (e) {
+    console.error('GET /api/feed/user error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// ─── Relational likes: one row per (photo, user) ──────────────────────────
+// POST /api/likes {photoId} → insert (idempotent) · DELETE /api/likes/:photoId
+// → delete row (unlike) · GET /api/likes/mine → my liked photoIds.
+// Both return the live {count, liked} so every screen shows identical state.
+async function likeCountFor(photoId) {
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM photo_likes WHERE "photoId" = $1', [photoId]);
+  return rows[0]?.n || 0;
+}
+
+app.get('/api/likes/mine', requireSession, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT "photoId" FROM photo_likes WHERE uid = $1', [req.user.id]);
+    res.json({ data: rows.map((r) => r.photoId), error: null });
+  } catch (e) {
+    if (e && /photo_likes|relation/i.test(e.message || '')) return res.json({ data: [], error: null });
+    res.json({ data: null, error: e.message });
+  }
+});
+
+app.post('/api/likes', requireSession, async (req, res) => {
+  try {
+    const photoId = String(req.body?.photoId || '');
+    if (!MOMENT_ID.test(photoId)) return fail(res, 400, 'photoId required');
+    await pool.query(
+      'INSERT INTO photo_likes ("photoId", uid, at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+      [photoId, req.user.id, Date.now()]
+    );
+    res.json({ data: { photoId, liked: true, count: await likeCountFor(photoId) }, error: null });
+  } catch (e) {
+    console.error('POST /api/likes error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+app.delete('/api/likes/:photoId', requireSession, async (req, res) => {
+  try {
+    const photoId = String(req.params.photoId || '');
+    if (!MOMENT_ID.test(photoId)) return fail(res, 400, 'photoId required');
+    await pool.query('DELETE FROM photo_likes WHERE "photoId" = $1 AND uid = $2', [photoId, req.user.id]);
+    res.json({ data: { photoId, liked: false, count: await likeCountFor(photoId) }, error: null });
+  } catch (e) {
+    console.error('DELETE /api/likes error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// ─── Post comments: text only, author from session (never client-supplied) ──
+// Session-gated both ways (the /:table gate 401s token-less GETs anyway).
+// GET /api/comments?photoId= · POST /api/comments {photoId, text}
+app.get('/api/comments', requireSession, async (req, res) => {
+  try {
+    const photoId = String(req.query.photoId || '');
+    if (!MOMENT_ID.test(photoId)) return fail(res, 400, 'photoId required');
+    const { rows } = await pool.query(
+      `SELECT c.id, c."photoId", c.uid, c.name, c.text, c.at
+       FROM photo_comments c WHERE c."photoId" = $1 ORDER BY c.at ASC LIMIT 200`,
+      [photoId]
+    );
+    res.json({ data: rows, error: null });
+  } catch (e) {
+    if (e && /photo_comments|relation/i.test(e.message || '')) return res.json({ data: [], error: null });
+    console.error('GET /api/comments error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// DELETE /api/comments/:id — comment author OR post author (cleanup duty).
+app.delete('/api/comments/:id', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!/^cmt_[A-Za-z0-9_-]{1,64}$/.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query(
+      `SELECT c.uid AS "commentUid", p."uploadedByUid" AS "postUid"
+       FROM photo_comments c LEFT JOIN photos p ON p.id = c."photoId"
+       WHERE c.id = $1`,
+      [id]
+    );
+    if (rows.length === 0) return fail(res, 404, 'Not found');
+    const allowed = rows[0].commentUid === req.user.id || (rows[0].postUid && rows[0].postUid === req.user.id);
+    if (!allowed) return fail(res, 403, 'Only the author can delete this comment');
+    await pool.query('DELETE FROM photo_comments WHERE id = $1', [id]);
+    res.json({ data: { id }, error: null });
+  } catch (e) {
+    console.error('DELETE /api/comments error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+app.post('/api/comments', requireSession, async (req, res) => {
+  try {
+    const photoId = String(req.body?.photoId || '');
+    const text = String(req.body?.text || '').trim().slice(0, 500);
+    if (!MOMENT_ID.test(photoId)) return fail(res, 400, 'photoId required');
+    if (!text) return fail(res, 400, 'Comment is empty');
+    const id = 'cmt_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const at = Date.now();
+    await pool.query(
+      'INSERT INTO photo_comments (id, "photoId", uid, name, text, at) VALUES ($1,$2,$3,$4,$5,$6)',
+      [id, photoId, req.user.id, req.user.name || 'Someone', text, at]
+    );
+    res.json({ data: { id, photoId: photoId, uid: req.user.id, name: req.user.name || 'Someone', text, at }, error: null });
+  } catch (e) {
+    console.error('POST /api/comments error:', e.message);
     res.json({ data: null, error: e.message });
   }
 });
@@ -1398,6 +1735,15 @@ app.post('/api/:table', async (req, res) => {
     if (table === 'trips') {
       for (const r of rows) {
         if (!r.ownerUid && req.user && req.user.id) r.ownerUid = req.user.id;
+      }
+    }
+    // Chat sends: stamp the author from the session (never trust the client)
+    // + refuse DM/group rooms the sender no longer belongs to (unfriend/removed).
+    if (table === 'chat_messages') {
+      for (const r of rows) {
+        if (req.user && req.user.id) r.senderId = req.user.id;
+        const ok = await canSendInRoom(r.senderId, String(r.tripId || ''), String(r.type || 'text'));
+        if (!ok) return fail(res, 403, 'You are no longer a member of this chat');
       }
     }
     if (rows.length === 0) return res.json({ data: [], error: null });
@@ -1630,6 +1976,18 @@ io.on('connection', (socket) => {
       const { id, tripId: tid, type, text, lat, lng, replyTo, mentions, senderId, senderName } = msg || {};
       if (!id || !tid) {
         if (ack) ack({ error: 'id and tripId required' });
+        return;
+      }
+      // Anti-spoof: a tracked socket may only send as itself.
+      const sockUid = socket.data ? socket.data.uid : null;
+      if (sockUid && senderId && senderId !== sockUid) {
+        if (ack) ack({ error: 'sender mismatch' });
+        return;
+      }
+      // Removed/unfriended senders are refused in DM/group rooms.
+      const ok = await canSendInRoom(senderId || sockUid, tid, type || 'text');
+      if (!ok) {
+        if (ack) ack({ error: 'You are no longer a member of this chat' });
         return;
       }
       await pool.query(

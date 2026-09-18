@@ -158,6 +158,8 @@ export interface SharedPhoto {
   uploadedByUid?: string;
   uploadedAt: string;
   likesCount: number;
+  /** Relational like state (photo_likes table) — server truth, all screens. */
+  likedByMe?: boolean;
   locationTag?: string;
   isPublicHighlight?: boolean;
   /** Crop aspect (w/h) saved at post — feed frame matches it exactly (Insta rule). */
