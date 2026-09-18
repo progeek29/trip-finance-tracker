@@ -33,6 +33,8 @@ services:
       # auto-inject .env values — each var must be listed here explicitly).
       FIREBASE_SERVICE_ACCOUNT: ${FIREBASE_SERVICE_ACCOUNT:-}
       FIREBASE_SERVICE_ACCOUNT_FILE: ${FIREBASE_SERVICE_ACCOUNT_FILE:-}
+      # Google sign-on (public Client ID — verified server-side, no secret).
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     volumes:
       # Host secrets dir → /secrets inside container (read-only).
       # Firebase key file itself NEVER in git; container path comes from

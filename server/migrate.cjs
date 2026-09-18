@@ -60,6 +60,8 @@ const STMTS = [
   // P1 identity: @handle for search/QR + gender for search icons/profile.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS username text`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS gender text DEFAULT 'unspecified'`,
+  // Google sign-on: stable subject id (never trust email alone for linking).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS pinned boolean DEFAULT false`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS "_deleted" boolean DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS message_reads (
@@ -245,6 +247,8 @@ async function backfillUsername(pool) {
     await pool.query('UPDATE users SET gender = $1 WHERE gender IS NULL OR gender = $2', ['unspecified', '']);
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username))');
     console.log('OK: CREATE UNIQUE INDEX idx_users_username_lower');
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users (google_sub) WHERE google_sub IS NOT NULL AND google_sub <> ' + "''");
+    console.log('OK: CREATE UNIQUE INDEX idx_users_google_sub');
   } catch (e) {
     console.error('FAIL: cardNo/username backfill/index', e.message);
     process.exitCode = 1;

@@ -97,6 +97,28 @@ export async function authSignUp(email: string, password: string, name: string, 
   return { uid: data.user.id, isAdmin: cachedIsAdmin };
 }
 
+/** Google sign-on: server verifies the GIS ID token, finds-or-creates the
+ *  user (username/cardNo minted, no password ever), returns our session. */
+export async function authSignInWithGoogle(idToken: string): Promise<{ uid: string; isAdmin: boolean }> {
+  const { data, error } = await api('/auth/google', {
+    method: 'POST',
+    body: JSON.stringify({ idToken }),
+  });
+  if (error) throw new Error(error);
+  setToken(data.token);
+  cachedUid = data.user.id;
+  cachedIsAdmin = data.user.email === ADMIN_EMAIL;
+  return { uid: data.user.id, isAdmin: cachedIsAdmin };
+}
+
+export function googleClientId(): string {
+  try {
+    return (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_GOOGLE_CLIENT_ID || '';
+  } catch {
+    return '';
+  }
+}
+
 export async function authSignIn(email: string, password: string): Promise<{ uid: string; isAdmin: boolean }> {
   const { data, error } = await api('/auth/signin', {
     method: 'POST',

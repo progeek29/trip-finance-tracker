@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Mail, Lock, ArrowRight, User } from 'lucide-react';
 import { authSignUp, authSignIn, authForgotPassword } from '../../utils/supabaseClient';
 import { PhoneInput, isValidPhone } from './PhoneInput';
+import { GoogleButton } from './GoogleButton';
 import { Logo } from './Logo';
 
 interface AuthScreenProps {
@@ -160,6 +161,7 @@ interface AuthFormProps {
   hasInvite: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onForgot: (e: React.FormEvent) => void;
+  googleAuth?: { onSuccess: () => void; onError: (msg: string) => void };
 }
 
 /** The real login/signup/forgot form — shared by AuthScreen and LoginLanding. */
@@ -168,10 +170,22 @@ export function AuthForm(props: AuthFormProps) {
     isLogin, setIsLogin, name, setName, email, setEmail, phone, setPhone,
     password, setPassword, inviteCode, setInviteCode, loading, error, setError,
     showForgot, setShowForgot, fNewPass, setFNewPass, fMsg, setFMsg, successMessage,
-    setSuccessMessage, fLoading, hasInvite, onSubmit, onForgot,
+    setSuccessMessage, fLoading, hasInvite, onSubmit, onForgot, googleAuth,
   } = props;
   return (
         <form onSubmit={onSubmit} className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
+          {!showForgot && googleAuth && (
+            <>
+              <GoogleButton onSuccess={googleAuth.onSuccess} onError={googleAuth.onError} />
+              <div className="flex items-center gap-3">
+                <span className="flex-1 h-px bg-slate-200" />
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                  or continue with email
+                </span>
+                <span className="flex-1 h-px bg-slate-200" />
+              </div>
+            </>
+          )}
           {showForgot ? (
             <div className="space-y-3 rounded-2xl bg-slate-50 border border-slate-200 p-3">
               <div>

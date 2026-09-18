@@ -4,6 +4,13 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const http = require('http');
 const { Server } = require('socket.io');
+const { OAuth2Client } = require('google-auth-library');
+try {
+  const path = require('path');
+  // Local dev reads server/.env next to this file (compose env wins in prod —
+  // dotenv never overrides real environment variables).
+  require('dotenv').config({ path: path.join(__dirname, '.env') });
+} catch { /* dotenv optional — compose/env already provides vars in prod */ }
 const pool = require('./db.cjs');
 
 const app = express();
@@ -512,6 +519,95 @@ app.post('/api/auth/signin', async (req, res) => {
   } catch (e) {
     console.error('Signin error:', e.message);
     res.json({ data: null, error: e.message });
+  }
+});
+
+// Auth: Google sign-on — verify ID token server-side, find-or-create user.
+// Google users are email-verified by definition (no OTP ever). Username +
+// pass number mint through the SAME pipeline (same format, server-unique).
+// No password_hash is ever set — password signin stays impossible for them.
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const clientId = process.env.GOOGLE_CLIENT_ID || '';
+    if (!clientId) return fail(res, 503, 'Google sign-in is not configured on this server');
+    const idToken = String(req.body?.idToken || '');
+    if (!idToken) return fail(res, 400, 'idToken required');
+    const client = new OAuth2Client(clientId);
+    let payload;
+    try {
+      const ticket = await client.verifyIdToken({ idToken, audience: clientId });
+      payload = ticket.getPayload();
+    } catch {
+      return fail(res, 401, 'Google verification failed. Try again.');
+    }
+    const sub = String(payload?.sub || '');
+    const email = String(payload?.email || '').trim().toLowerCase();
+    if (!sub || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return fail(res, 401, 'Google account has no usable email');
+    }
+    if (payload?.email_verified === false) {
+      return fail(res, 401, 'Google email is not verified');
+    }
+    const name = String(payload?.name || email.split('@')[0] || 'Friend').trim().slice(0, 80) || 'Friend';
+
+    // 1) Stable link: google_sub wins (email alone is never trusted for linking).
+    let user = null;
+    try {
+      const { rows } = await pool.query('SELECT * FROM users WHERE google_sub = $1', [sub]);
+      user = rows[0] || null;
+    } catch (e) {
+      if (!(e && /google_sub/i.test(e.message || ''))) throw e;
+      // Column not migrated yet — fall through to email match.
+    }
+    // 2) Same verified email, previously password-signed: link the accounts.
+    if (!user) {
+      const { rows } = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+      if (rows[0]) {
+        user = rows[0];
+        try {
+          await pool.query('UPDATE users SET google_sub = $1 WHERE id = $2', [sub, user.id]);
+        } catch (e) {
+          if (!(e && /google_sub/i.test(e.message || ''))) throw e;
+        }
+      }
+    }
+    // 3) Brand new: create through the standard pipeline (username/cardNo minted).
+    if (!user) {
+      const id = 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+      const role = email === 'admin@wandersync.com' ? 'admin' : 'user';
+      const cardNo = cleanCardNo('', email);
+      const username = await ensureUniqueUsername(name, id);
+      const row = { id, email, name, phone: '', role, hash: '', cardNo, username, gender: 'unspecified' };
+      try {
+        await pool.query(
+          'INSERT INTO users (id, email, name, phone, role, password_hash, "cardNo", username, gender, google_sub) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+          [row.id, row.email, row.name, row.phone, row.role, row.hash, row.cardNo, row.username, row.gender, sub]
+        );
+      } catch (e) {
+        if (e && /google_sub/i.test(e.message || '')) {
+          await insertUser(row);
+        } else throw e;
+      }
+      user = { ...row, password_hash: '' };
+    }
+    const token = await createSession(user.id);
+    const fresh = await userByToken(token);
+    res.json({
+      data: {
+        user: {
+          id: user.id,
+          email: user.email,
+          cardNo: (fresh && fresh.cardNo) || user.cardNo || mintCardNo(user.email),
+          username: (fresh && fresh.username) || user.username || '',
+          gender: cleanGender((fresh && fresh.gender) || user.gender),
+        },
+        token,
+      },
+      error: null,
+    });
+  } catch (e) {
+    console.error('Google auth error:', e.message);
+    return fail(res, 500, e.message);
   }
 });
 

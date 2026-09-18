@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { LogIn, Megaphone, MoreVertical, X, Zap } from 'lucide-react';
 import { AuthForm, useAuthForm } from './AuthScreen';
+import { PhoneGate } from './PhoneGate';
 import { Logo } from './Logo';
 
 interface LoginLandingProps {
@@ -31,6 +32,7 @@ export function LoginLanding({ onAuth }: LoginLandingProps) {
   const [barVisible, setBarVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [justGoogled, setJustGoogled] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<number | null>(null);
@@ -62,6 +64,11 @@ export function LoginLanding({ onAuth }: LoginLandingProps) {
     setMenuOpen(false);
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
+
+  // Post-Google phone gate (Skip allowed) before entering the app.
+  if (justGoogled) {
+    return <PhoneGate onDone={() => { setJustGoogled(false); onAuth(); }} />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -144,6 +151,16 @@ export function LoginLanding({ onAuth }: LoginLandingProps) {
             expense balances, and secure your destination paths — all inside one unified, premium
             explorer network dashboard.
           </p>
+          <div className="flex flex-wrap gap-2 mt-5">
+            {['Trip tracking', 'Smart splits', 'Squad chat', 'Works offline'].map((t) => (
+              <span
+                key={t}
+                className="px-3 py-1.5 rounded-full bg-white border border-slate-200 text-[11px] font-bold text-slate-600 shadow-sm"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
         </div>
 
         <div ref={formRef} style={{ scrollMarginTop: 80 }}>
@@ -151,7 +168,13 @@ export function LoginLanding({ onAuth }: LoginLandingProps) {
             <h3 className="text-xl font-bold text-slate-900 font-display">Welcome</h3>
             <p className="text-[13px] text-slate-500 mt-0.5">Sync your plans and memories.</p>
           </div>
-          <AuthForm {...auth} />
+          <AuthForm
+            {...auth}
+            googleAuth={{
+              onSuccess: () => setJustGoogled(true),
+              onError: (msg) => showToast(msg),
+            }}
+          />
         </div>
       </main>
 
