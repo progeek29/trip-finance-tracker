@@ -25,7 +25,10 @@ export const MemberAvatar: React.FC<MemberAvatarProps> = ({
   size = 'md',
   ring = true,
 }) => {
-  const initials = name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || '?';
+  // Initials ignore parenthetical tags — "Krey (You)" is "K", never "K(".
+  // (Fix lives here so EVERY avatar app-wide is safe, not just one screen.)
+  const clean = name.replace(/\s*\([^)]*\)/g, '').trim();
+  const initials = clean.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || '?';
   return (
     <div
       title={name}

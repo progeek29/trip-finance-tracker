@@ -33,6 +33,18 @@ async function requireSession(req, res, next) {
     res.status(500).json({ data: null, error: e.message });
   }
 }
+
+// Admin gate: role comes from the SESSION (never from body adminId —
+// trusting the body let anyone borrow admin rights). Use on every
+// /api/admin/* route. This is the master-key foundation.
+function requireAdminSession(req, res, next) {
+  requireSession(req, res, () => {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ data: null, error: 'Admin access required' });
+    }
+    next();
+  });
+}
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
@@ -343,15 +355,65 @@ function cleanCardNo(v, fallbackSeed) {
   if (/^WS\d{2}( \d{4}){3}$/.test(s)) return s;
   return mintCardNo(fallbackSeed);
 }
+
+// ─── Username (@handle) — `firstname(≤8)_xxxx`, permanent per user ───────
+// Same deterministic hash as src/utils/cards.ts mintUsername: every device
+// derives the SAME handle, so display never flaps. Uniqueness enforced by
+// idx_users_username_lower (migrate.cjs); collisions re-mint with a `#i`
+// seed suffix (format preserved, new suffix).
+function usernameSlug(name) {
+  return (
+    String(name || '').trim().toLowerCase().split(/\s+/)[0]
+      ?.replace(/[^a-z0-9]/g, '').slice(0, 8) || 'friend'
+  );
+}
+function mintUsername(name, seed) {
+  const slug = usernameSlug(name);
+  const s = `${slug}|${String(seed || '').trim().toLowerCase() || 'wandersync-guest'}`;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h * 31 + s.charCodeAt(i)) >>> 0);
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789'; // no 0/o/1/l — readable over a call
+  let suffix = '';
+  let n = h;
+  for (let i = 0; i < 4; i++) {
+    suffix += alphabet[n % alphabet.length];
+    n = Math.floor(n / alphabet.length);
+  }
+  return `${slug}_${suffix}`;
+}
+function isValidUsername(v) {
+  return !!v && /^[a-z0-9]{1,8}_[a-z0-9]{4}$/.test(String(v).trim().toLowerCase());
+}
+async function ensureUniqueUsername(name, seed) {
+  for (let i = 0; i < 8; i++) {
+    const candidate = mintUsername(name, i === 0 ? seed : `${seed}#${i}`);
+    try {
+      const { rows } = await pool.query(
+        'SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [candidate]
+      );
+      if (rows.length === 0) return candidate;
+    } catch (e) {
+      if (e && /username/i.test(e.message || '')) return mintUsername(name, seed); // column not migrated yet
+      throw e;
+    }
+  }
+  return `${usernameSlug(name)}_${Date.now().toString(36).slice(-4)}`;
+}
+function cleanGender(v) {
+  const s = String(v || '').trim().toLowerCase();
+  return s === 'male' || s === 'female' || s === 'other' ? s : 'unspecified';
+}
 async function insertUser(row) {
   try {
+    if (!row.username) row.username = await ensureUniqueUsername(row.name, row.id);
+    if (!row.gender) row.gender = 'unspecified';
     await pool.query(
-      'INSERT INTO users (id, email, name, phone, role, password_hash, "cardNo") VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [row.id, row.email, row.name, row.phone, row.role, row.hash, row.cardNo]
+      'INSERT INTO users (id, email, name, phone, role, password_hash, "cardNo", username, gender) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [row.id, row.email, row.name, row.phone, row.role, row.hash, row.cardNo, row.username, row.gender]
     );
   } catch (e) {
-    if (e && /cardno/i.test(e.message || '')) {
-      // Column not migrated yet — legacy insert keeps signup working.
+    if (e && /cardno|username|gender/i.test(e.message || '')) {
+      // Column(s) not migrated yet — legacy insert keeps signup working.
       await pool.query(
         'INSERT INTO users (id, email, name, phone, role, password_hash) VALUES ($1, $2, $3, $4, $5, $6)',
         [row.id, row.email, row.name, row.phone, row.role, row.hash]
@@ -362,12 +424,12 @@ async function insertUser(row) {
 async function userByToken(token) {
   try {
     const { rows } = await pool.query(
-      'SELECT u.id, u.email, u.name, u.phone, u.role, u."cardNo" FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
+      'SELECT u.id, u.email, u.name, u.phone, u.role, u."cardNo", u.username, u.gender FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
       [token]
     );
     return rows[0] || null;
   } catch (e) {
-    if (e && /cardno/i.test(e.message || '')) {
+    if (e && /cardno|username|gender/i.test(e.message || '')) {
       const { rows } = await pool.query(
         'SELECT u.id, u.email, u.name, u.phone, u.role FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
         [token]
@@ -413,11 +475,13 @@ app.post('/api/auth/signup', async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const role = email === 'admin@wandersync.com' ? 'admin' : 'user';
     const cardNo = cleanCardNo(req.body?.cardNo, email);
+    const gender = cleanGender(req.body?.gender);
 
-    await insertUser({ id, email, name, phone, role, hash, cardNo });
+    await insertUser({ id, email, name, phone, role, hash, cardNo, gender });
 
     const token = await createSession(id);
-    res.json({ data: { user: { id, email, cardNo }, token }, error: null });
+    const created = await userByToken(token);
+    res.json({ data: { user: { id, email, cardNo, username: created?.username || '', gender: created?.gender || gender }, token }, error: null });
   } catch (e) {
     // Race-proof backstop: DB unique constraint hit between check and insert.
     if (e && (e.code === '23505' || String(e.message || '').toLowerCase().includes('unique'))) {
@@ -444,7 +508,7 @@ app.post('/api/auth/signin', async (req, res) => {
     if (!valid) return fail(res, 401, 'Invalid email or password');
 
     const token = await createSession(user.id);
-    res.json({ data: { user: { id: user.id, email: user.email, cardNo: user.cardNo || mintCardNo(user.email) }, token }, error: null });
+    res.json({ data: { user: { id: user.id, email: user.email, cardNo: user.cardNo || mintCardNo(user.email), username: user.username || mintUsername(user.name, user.id), gender: cleanGender(user.gender) }, token }, error: null });
   } catch (e) {
     console.error('Signin error:', e.message);
     res.json({ data: null, error: e.message });
@@ -460,6 +524,25 @@ app.get('/api/auth/user', async (req, res) => {
     const user = await userByToken(token);
     if (!user) return res.json({ data: { user: null }, error: null });
     if (!user.cardNo) user.cardNo = mintCardNo(user.email);
+    if (!user.username) {
+      // Backfill-on-read (migrate covers existing rows; this is the legacy-DB path).
+      // Guarded fill: only when still empty. Race loser re-reads the winner.
+      user.username = mintUsername(user.name, user.id);
+      try {
+        await pool.query(
+          'UPDATE users SET username = $1 WHERE id = $2 AND (username IS NULL OR username = $3)',
+          [user.username, user.id, '']
+        );
+      } catch (e) {
+        if (e && e.code === '23505') {
+          const reread = await pool.query('SELECT username FROM users WHERE id = $1', [user.id]).catch(() => null);
+          if (reread?.rows?.[0]?.username) user.username = reread.rows[0].username;
+        } else if (!(e && /username/i.test(e.message || ''))) {
+          throw e;
+        }
+      }
+    }
+    if (!user.gender) user.gender = 'unspecified';
 
     res.json({ data: { user }, error: null });
   } catch (e) {
@@ -467,7 +550,7 @@ app.get('/api/auth/user', async (req, res) => {
   }
 });
 
-// POST /api/auth/profile — update OWN name/phone/cardNo (session required).
+// POST /api/auth/profile — update OWN name/phone/cardNo/gender (session required).
 // This is what makes Profile → Save Changes survive the next login: name
 // and phone used to live in localStorage only, and the login restore
 // overwrote them with stale DB values every time.
@@ -494,19 +577,48 @@ app.post('/api/auth/profile', async (req, res) => {
     }
     const incomingCard = String(req.body?.cardNo || '').trim().toUpperCase();
     const wantCard = /^WS\d{2}( \d{4}){3}$/.test(incomingCard) ? incomingCard : null;
-    // cardNo is permanent: only fill it when the row has none yet.
-    const setCard = wantCard && !me.cardNo ? `, "cardNo" = $4` : '';
-    const vals = wantCard && !me.cardNo ? [name, phone, me.id, wantCard] : [name, phone, me.id];
+    // Gender is freely updatable (validated). Username is permanent like cardNo:
+    // filled once from the SERVER mint only — never trusted from the client,
+    // because uniqueness is the whole point.
+    const gender = cleanGender(req.body?.gender ?? me.gender);
+    const params = [name, phone, gender];
+    let setExtra = '';
+    if (wantCard && !me.cardNo) {
+      setExtra += `, "cardNo" = $${params.length + 1}`;
+      params.push(wantCard);
+    }
+    if (!me.username) {
+      setExtra += `, username = $${params.length + 1}`;
+      params.push(await ensureUniqueUsername(name, me.id));
+    }
+    params.push(me.id);
     try {
-      await pool.query(`UPDATE users SET name = $1, phone = $2${setCard} WHERE id = $3`, vals);
+      await pool.query(
+        `UPDATE users SET name = $1, phone = $2, gender = $3${setExtra} WHERE id = $${params.length}`,
+        params
+      );
     } catch (e) {
-      if (e && /cardno/i.test(e.message || '')) {
+      if (e && /cardno|username|gender/i.test(e.message || '')) {
         await pool.query('UPDATE users SET name = $1, phone = $2 WHERE id = $3', [name, phone, me.id]);
+      } else if (e && e.code === '23505') {
+        return fail(res, 409, 'That handle just got taken. Try saving again.');
       } else throw e;
     }
-    const { rows } = await pool.query('SELECT id, email, name, phone, role FROM users WHERE id = $1', [me.id]);
-    const user = rows[0] || { id: me.id, email: me.email, name, phone, role: me.role };
+    let user;
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, email, name, phone, role, username, gender FROM users WHERE id = $1',
+        [me.id]
+      );
+      user = rows[0] || { id: me.id, email: me.email, name, phone, role: me.role };
+    } catch (e) {
+      if (!(e && /username|gender/i.test(e.message || ''))) throw e;
+      const { rows } = await pool.query('SELECT id, email, name, phone, role FROM users WHERE id = $1', [me.id]);
+      user = rows[0] || { id: me.id, email: me.email, name, phone, role: me.role };
+    }
     user.cardNo = me.cardNo || wantCard || mintCardNo(user.email);
+    if (!user.username) user.username = mintUsername(user.name, user.id);
+    user.gender = cleanGender(user.gender ?? gender);
     res.json({ data: { user }, error: null });
   } catch (e) {
     console.error('Profile update error:', e.message);
@@ -520,20 +632,22 @@ function normPhone(p) {
   return String(p || '').replace(/\D/g, '').slice(-10);
 }
 
-async function requireAdmin(adminId) {
-  if (!adminId) return null;
-  const { rows } = await pool.query('SELECT id, email, role FROM users WHERE id = $1', [adminId]);
-  const admin = rows[0];
-  if (!admin || admin.role !== 'admin') return null;
-  return admin;
-}
+// (Deleted legacy helper requireAdmin(adminId): trusting a body-supplied id
+// for admin rights was the takeover hole. Use requireAdminSession.)
 
 // GET /api/users — user directory WITHOUT password hashes
 // (must stay before the generic /:table route)
 app.get('/api/users', requireSession, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      const { rows } = await pool.query(
+        'SELECT id, email, name, phone, role, username, gender, "createdAt" FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      return res.json({ data: rows, error: null });
+    }
     const { rows } = await pool.query(
-      'SELECT id, email, name, phone, role, "createdAt" FROM users ORDER BY email'
+      'SELECT id, email, name, phone, role, username, gender, "createdAt" FROM users ORDER BY email'
     );
     res.json({ data: rows, error: null });
   } catch (e) {
@@ -541,28 +655,17 @@ app.get('/api/users', requireSession, async (req, res) => {
   }
 });
 
-// POST /api/auth/forgot-password — self-service reset for the current account.
-// MVP flow: email + new password only. OTP/mobile verification is planned later.
+// POST /api/auth/forgot-password — DISABLED (was: email-only reset with zero
+// verification = anyone could take over anyone's account). Recovery path:
+// admin resets via /api/admin/reset-password (session-verified). OTP-based
+// self-service returns as its own module later — do NOT re-enable this
+// endpoint without a verification step.
 app.post('/api/auth/forgot-password', async (req, res) => {
-  try {
-    const rawEmail = String(req.body?.email ?? req.body?.id ?? '').trim();
-    const rawPassword = req.body?.newPassword ?? req.body?.password;
-    const email = rawEmail.toLowerCase();
-
-    if (!email) return fail(res, 400, 'Email is required');
-    if (!rawPassword || String(rawPassword).trim().length < 6) {
-      return fail(res, 400, 'New password must be at least 6 characters');
-    }
-
-    const { rows } = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-    if (rows.length === 0) return fail(res, 404, 'No account found with this email');
-
-    const hash = await bcrypt.hash(String(rawPassword), 10);
-    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, rows[0].id]);
-    res.json({ data: { ok: true }, error: null });
-  } catch (e) {
-    res.json({ data: null, error: e.message });
-  }
+  return fail(
+    res,
+    503,
+    'Password reset is handled by support right now. Ask the admin to reset it for you.'
+  );
 });
 
 // POST /api/auth/logout-all — kill EVERY session for this user, all devices/tabs.
@@ -576,11 +679,11 @@ app.post('/api/auth/logout-all', requireSession, async (req, res) => {
   }
 });
 
-// POST /api/admin/create-user — admin creates a login-ready user (hashed server-side)
-app.post('/api/admin/create-user', async (req, res) => {
+// POST /api/admin/create-user — admin creates a login-ready user (hashed server-side).
+// Session-gated: the admin is req.user, never a body adminId.
+app.post('/api/admin/create-user', requireAdminSession, async (req, res) => {
   try {
-    const { adminId, email, password, name, phone, role } = req.body;
-    if (!await requireAdmin(adminId)) return res.json({ data: null, error: 'Admin access required' });
+    const { email, password, name, phone, role } = req.body;
     if (!email || !password) return res.json({ data: null, error: 'Email and password required' });
     if (password.length < 6) return res.json({ data: null, error: 'Password must be at least 6 characters' });
 
@@ -599,11 +702,11 @@ app.post('/api/admin/create-user', async (req, res) => {
 });
 
 // POST /api/admin/reset-password — admin sets a new password for any user
-// (passwords are bcrypt hashes: nobody, not even admin, can SEE a password)
-app.post('/api/admin/reset-password', async (req, res) => {
+// (passwords are bcrypt hashes: nobody, not even admin, can SEE a password).
+// Session-gated recovery path (forgot-password is disabled until OTP exists).
+app.post('/api/admin/reset-password', requireAdminSession, async (req, res) => {
   try {
-    const { adminId, userId, newPassword } = req.body;
-    if (!await requireAdmin(adminId)) return res.json({ data: null, error: 'Admin access required' });
+    const { userId, newPassword } = req.body;
     if (!userId || !newPassword || newPassword.length < 6) {
       return res.json({ data: null, error: 'Valid user and 6+ character password required' });
     }
@@ -618,12 +721,30 @@ app.post('/api/admin/reset-password', async (req, res) => {
   }
 });
 
-// POST /api/admin/delete-user — admin deletes a user + their owned trips (refuses self-delete)
-app.post('/api/admin/delete-user', async (req, res) => {
+// POST /api/admin/impersonate — master key: login AS any user (debug/support).
+// Session-gated admin-only. Audit-logged to server console (who → whom, when).
+// Frontend swaps its token, reloads as that user; back-to-admin restores.
+app.post('/api/admin/impersonate', requireAdminSession, async (req, res) => {
   try {
-    const { adminId, userId } = req.body;
-    const admin = await requireAdmin(adminId);
-    if (!admin) return res.json({ data: null, error: 'Admin access required' });
+    const { userId } = req.body;
+    if (!userId) return res.json({ data: null, error: 'User required' });
+    if (userId === req.user.id) return res.json({ data: null, error: 'You are already yourself' });
+    const { rows } = await pool.query('SELECT id, email, name FROM users WHERE id = $1', [userId]);
+    if (rows.length === 0) return res.json({ data: null, error: 'User not found' });
+    const token = await createSession(userId);
+    console.log(`ADMIN-IMPERSONATE admin=${req.user.id} (${req.user.email}) -> user=${userId} (${rows[0].email})`);
+    res.json({ data: { token, user: rows[0] }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/admin/delete-user — admin deletes a user + their owned trips (refuses self-delete).
+// Session-gated: the admin is req.user, never a body adminId.
+app.post('/api/admin/delete-user', requireAdminSession, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const admin = req.user;
     if (!userId) return res.json({ data: null, error: 'User required' });
     if (userId === admin.id) return res.json({ data: null, error: 'You cannot delete your own admin account' });
 
@@ -633,6 +754,345 @@ app.post('/api/admin/delete-user', async (req, res) => {
     }
     await pool.query('DELETE FROM users WHERE id = $1', [userId]);
     res.json({ data: { ok: true }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// ─── Chat requests + Co-Travelers (friends) ──────────────────────────
+// Rule: no accept = zero messages. Search never leaks email/phone.
+// All routes session-gated; users can only act as themselves (admin bypass
+// intentionally NOT added here — friendship is consensual, even for admins).
+
+const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+// Any live edge (pending or accepted) between two users, either direction.
+async function requestEdge(a, b) {
+  const { rows } = await pool.query(
+    `SELECT id, "fromUid", "toUid", status FROM chat_requests
+     WHERE status IN ('pending','accepted')
+     AND (("fromUid" = $1 AND "toUid" = $2) OR ("fromUid" = $2 AND "toUid" = $1))
+     LIMIT 1`,
+    [a, b]
+  );
+  return rows[0] || null;
+}
+
+// GET /api/users/search?q= — people search by @handle or name.
+// Leading @ stripped (users naturally type "@zon_ft9c").
+// Returns PUBLIC bits only (never email/phone). Min 2 chars, max 15 rows.
+app.get('/api/users/search', requireSession, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim().replace(/^@+/, '').slice(0, 24);
+    if (q.length < 2) return res.json({ data: [], error: null });
+    const { rows } = await pool.query(
+      `SELECT id, name, username, gender FROM users
+       WHERE id <> $1 AND (username ILIKE $2 || '%' OR name ILIKE '%' || $2 || '%')
+       ORDER BY username LIMIT 15`,
+      [req.user.id, q]
+    );
+    res.json({ data: rows, error: null });
+  } catch (e) {
+    res.json({ data: [], error: e.message });
+  }
+});
+
+// POST /api/requests {toUsername} — send a chat request.
+app.post('/api/requests', requireSession, async (req, res) => {
+  try {
+    const to = String(req.body?.toUsername || '').trim().toLowerCase();
+    if (!to) return fail(res, 400, 'Username required');
+    const { rows: found } = await pool.query(
+      'SELECT id, name, username, gender FROM users WHERE LOWER(username) = LOWER($1)',
+      [to]
+    );
+    const target = found[0];
+    if (!target) return fail(res, 404, 'No user with that handle');
+    if (target.id === req.user.id) return fail(res, 400, 'That is you');
+    const edge = await requestEdge(req.user.id, target.id);
+    if (edge) {
+      return fail(res, 409, edge.status === 'accepted' ? 'Already connected' : 'Request already pending');
+    }
+    const id = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const now = Date.now();
+    await pool.query(
+      'INSERT INTO chat_requests (id, "fromUid", "toUid", status, "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$5)',
+      [id, req.user.id, target.id, 'pending', now]
+    );
+    res.json({ data: { id, to: target }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/requests?box=received|sent — inbox with other-side public profile.
+app.get('/api/requests', requireSession, async (req, res) => {
+  try {
+    const box = req.query.box === 'sent' ? 'sent' : 'received';
+    // Fixed literals only (never user input) — safe to interpolate quoted.
+    const otherCol = box === 'sent' ? 'toUid' : 'fromUid';
+    const mineCol = box === 'sent' ? 'fromUid' : 'toUid';
+    const { rows } = await pool.query(
+      `SELECT r.id, r.status, r."createdAt", u.id AS "uid", u.name, u.username, u.gender
+       FROM chat_requests r JOIN users u ON u.id = r."${otherCol}"
+       WHERE r."${mineCol}" = $1 AND r.status = 'pending'
+       ORDER BY r."createdAt" DESC LIMIT 50`,
+      [req.user.id]
+    );
+    res.json({ data: rows, error: null });
+  } catch (e) {
+    res.json({ data: [], error: e.message });
+  }
+});
+
+// POST /api/requests/:id/accept — receiver only. Opens the 1:1 room.
+app.post('/api/requests/:id/accept', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!REQUEST_ID.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query('SELECT * FROM chat_requests WHERE id = $1', [id]);
+    const r = rows[0];
+    if (!r || r.toUid !== req.user.id || r.status !== 'pending') {
+      return fail(res, 404, 'Request not found');
+    }
+    await pool.query(
+      'UPDATE chat_requests SET status = $1, "updatedAt" = $2 WHERE id = $3',
+      ['accepted', Date.now(), id]
+    );
+    res.json({ data: { id, status: 'accepted' }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/requests/:id/decline — receiver only. SILENT (sender sees nothing).
+app.post('/api/requests/:id/decline', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!REQUEST_ID.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query('SELECT * FROM chat_requests WHERE id = $1', [id]);
+    const r = rows[0];
+    if (!r || r.toUid !== req.user.id || r.status !== 'pending') {
+      return fail(res, 404, 'Request not found');
+    }
+    await pool.query(
+      'UPDATE chat_requests SET status = $1, "updatedAt" = $2 WHERE id = $3',
+      ['declined', Date.now(), id]
+    );
+    res.json({ data: { id, status: 'declined' }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/requests/:id/cancel — sender undo (pending only). Deletes the row.
+app.post('/api/requests/:id/cancel', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!REQUEST_ID.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query('SELECT * FROM chat_requests WHERE id = $1', [id]);
+    const r = rows[0];
+    if (!r || r.fromUid !== req.user.id || r.status !== 'pending') {
+      return fail(res, 404, 'Request not found');
+    }
+    await pool.query('DELETE FROM chat_requests WHERE id = $1', [id]);
+    res.json({ data: { id, status: 'cancelled' }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/friends/remove {uid} — unfriend: delete the accepted edge both
+// directions + pull them out of shared groups. History rows stay (audit),
+// but the room vanishes from both lists (friends query is accepted-only).
+app.post('/api/friends/remove', requireSession, async (req, res) => {
+  try {
+    const uid = String(req.body?.uid || '');
+    if (!uid || uid === req.user.id) return fail(res, 400, 'Bad user');
+    await pool.query(
+      `DELETE FROM chat_requests WHERE status = 'accepted' AND
+       (("fromUid" = $1 AND "toUid" = $2) OR ("fromUid" = $2 AND "toUid" = $1))`,
+      [req.user.id, uid]
+    );
+    // Strip from shared groups (groups with <2 others left stay — harmless).
+    const { rows } = await pool.query(
+      `SELECT id, "memberUids" FROM chat_groups WHERE "memberUids" ? $1`,
+      [req.user.id]
+    );
+    for (const g of rows) {
+      let members = [];
+      try {
+        members = Array.isArray(g.memberUids) ? g.memberUids : JSON.parse(g.memberUids || '[]');
+      } catch { continue; }
+      if (!members.includes(uid)) continue;
+      const next = members.filter((m) => m !== uid);
+      await pool.query('UPDATE chat_groups SET "memberUids" = $1 WHERE id = $2', [
+        JSON.stringify(next),
+        g.id,
+      ]);
+    }
+    res.json({ data: { ok: true }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/friends — accepted Co-Travelers (either direction), public bits.
+app.get('/api/friends', requireSession, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT u.id AS "uid", u.name, u.username, u.gender,
+              (SELECT MAX("updatedAt") FROM chat_requests r
+               WHERE r.status = 'accepted'
+               AND ((r."fromUid" = $1 AND r."toUid" = u.id) OR (r."fromUid" = u.id AND r."toUid" = $1))) AS "since"
+       FROM users u
+       WHERE u.id <> $1 AND EXISTS (
+         SELECT 1 FROM chat_requests r WHERE r.status = 'accepted'
+         AND ((r."fromUid" = $1 AND r."toUid" = u.id) OR (r."fromUid" = u.id AND r."toUid" = $1))
+       )
+       ORDER BY u.name LIMIT 200`,
+      [req.user.id]
+    );
+    res.json({ data: rows, error: null });
+  } catch (e) {
+    res.json({ data: [], error: e.message });
+  }
+});
+
+// POST /api/groups {memberUids: string[], name?: string} — create a friend group.
+// Every picked member must already be an accepted Co-Traveler of the creator
+// (groups never smuggle strangers in). Returns the shared room id.
+app.post('/api/groups', requireSession, async (req, res) => {
+  try {
+    const picks = Array.isArray(req.body?.memberUids) ? req.body.memberUids : [];
+    const clean = [...new Set(picks.map((u) => String(u || '')))].filter((u) => u && u !== req.user.id);
+    if (clean.length < 2) return fail(res, 400, 'Pick at least 2 Co-Travelers');
+    if (clean.length > 20) return fail(res, 400, 'Max 20 members');
+    const name = String(req.body?.name || '').trim().slice(0, 60);
+    const { rows: fr } = await pool.query(
+      `SELECT CASE WHEN "fromUid" = $1 THEN "toUid" ELSE "fromUid" END AS "uid"
+       FROM chat_requests WHERE status = 'accepted' AND ("fromUid" = $1 OR "toUid" = $1)`,
+      [req.user.id]
+    );
+    const mine = new Set(fr.map((r) => r.uid));
+    const strangers = clean.filter((u) => !mine.has(u));
+    if (strangers.length > 0) return fail(res, 403, 'Only Co-Travelers can join a group');
+    const id = 'grp_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const members = [...clean, req.user.id].sort();
+    try {
+      await pool.query(
+        'INSERT INTO chat_groups (id, "memberUids", "createdBy", "createdAt", name) VALUES ($1, $2, $3, $4, $5)',
+        [id, JSON.stringify(members), req.user.id, Date.now(), name]
+      );
+    } catch (e) {
+      if (e && /name/i.test(e.message || '')) {
+        // Column not migrated yet — nameless group keeps working.
+        await pool.query(
+          'INSERT INTO chat_groups (id, "memberUids", "createdBy", "createdAt") VALUES ($1, $2, $3, $4)',
+          [id, JSON.stringify(members), req.user.id, Date.now()]
+        );
+      } else throw e;
+    }
+    res.json({ data: { id, memberUids: members, name }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// PUT /api/groups/:id {name} — rename. ANY member can rename (WhatsApp rule).
+app.put('/api/groups/:id', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!/^grp_[A-Za-z0-9_-]{1,64}$/.test(id)) return fail(res, 400, 'Bad id');
+    const name = String(req.body?.name || '').trim().slice(0, 60);
+    if (!name) return fail(res, 400, 'Name required');
+    const { rows } = await pool.query('SELECT "memberUids" FROM chat_groups WHERE id = $1', [id]);
+    const g = rows[0];
+    if (!g) return fail(res, 404, 'Group not found');
+    const members = Array.isArray(g.memberUids) ? g.memberUids : JSON.parse(g.memberUids || '[]');
+    if (!members.includes(req.user.id)) return fail(res, 403, 'Members only');
+    try {
+      await pool.query('UPDATE chat_groups SET name = $1 WHERE id = $2', [name, id]);
+    } catch (e) {
+      if (!(e && /name/i.test(e.message || ''))) throw e;
+      return fail(res, 503, 'Update the app backend first (migrate pending)');
+    }
+    res.json({ data: { id, name }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// GET /api/groups/mine — groups I belong to (for the Chats list + newcomer watch).
+// creatorName rides along so "X added you to group Y" never reads "Someone".
+app.get('/api/groups/mine', requireSession, async (req, res) => {
+  try {
+    let rows;
+    try {
+      ({ rows } = await pool.query(
+        `SELECT g.id, g."memberUids", g."createdBy", g."createdAt", g.name, u.name AS "creatorName"
+         FROM chat_groups g LEFT JOIN users u ON u.id = g."createdBy"
+         WHERE g."memberUids" ? $1 ORDER BY g."createdAt" DESC LIMIT 50`,
+        [req.user.id]
+      ));
+    } catch (e) {
+      if (!(e && /name/i.test(e.message || ''))) throw e;
+      ({ rows } = await pool.query(
+        `SELECT id, "memberUids", "createdBy", "createdAt" FROM chat_groups
+         WHERE "memberUids" ? $1 ORDER BY "createdAt" DESC LIMIT 50`,
+        [req.user.id]
+      ));
+    }
+    res.json({ data: rows, error: null });
+  } catch (e) {
+    res.json({ data: [], error: e.message });
+  }
+});
+
+// POST /api/groups/:id/members {add?: string[], remove?: string[]} — any member
+// can add Co-Travelers or remove members (self-remove = leave). A group with
+// no members left is deleted. Timeline lines ("X added Y") are posted by the
+// CLIENT as system chat messages (same pattern as trip join lines).
+app.post('/api/groups/:id/members', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!/^grp_[A-Za-z0-9_-]{1,64}$/.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query('SELECT "memberUids", "createdBy" FROM chat_groups WHERE id = $1', [id]);
+    const g = rows[0];
+    if (!g) return fail(res, 404, 'Group not found');
+    let members = Array.isArray(g.memberUids) ? g.memberUids : JSON.parse(g.memberUids || '[]');
+    let creator = g.createdBy;
+    if (!members.includes(req.user.id)) return fail(res, 403, 'Members only');
+    const add = [...new Set((Array.isArray(req.body?.add) ? req.body.add : []).map((u) => String(u || '')))]
+      .filter((u) => u && u !== req.user.id && !members.includes(u));
+    const remove = [...new Set((Array.isArray(req.body?.remove) ? req.body.remove : []).map((u) => String(u || '')))]
+      .filter((u) => u && members.includes(u));
+    if (add.length > 0) {
+      const { rows: fr } = await pool.query(
+        `SELECT CASE WHEN "fromUid" = $1 THEN "toUid" ELSE "fromUid" END AS "uid"
+         FROM chat_requests WHERE status = 'accepted' AND ("fromUid" = $1 OR "toUid" = $1)`,
+        [req.user.id]
+      );
+      const mine = new Set(fr.map((r) => r.uid));
+      const strangers = add.filter((u) => !mine.has(u));
+      if (strangers.length > 0) return fail(res, 403, 'Only Co-Travelers can join a group');
+      members = [...members, ...add];
+      if (members.length > 21) return fail(res, 400, 'Max 20 members + you');
+    }
+    if (remove.length > 0) members = members.filter((u) => !remove.includes(u));
+    if (members.length === 0) {
+      await pool.query('DELETE FROM chat_groups WHERE id = $1', [id]);
+      return res.json({ data: { id, memberUids: [], deleted: true }, error: null });
+    }
+    // Admin (creator) left or was removed → role passes to the next member.
+    // Group itself (name, history, everyone else) stays exactly as it is.
+    if (!members.includes(creator)) {
+      creator = members[0];
+      await pool.query('UPDATE chat_groups SET "memberUids" = $1, "createdBy" = $2 WHERE id = $3', [JSON.stringify(members), creator, id]);
+    } else {
+      await pool.query('UPDATE chat_groups SET "memberUids" = $1 WHERE id = $2', [JSON.stringify(members), id]);
+    }
+    res.json({ data: { id, memberUids: members, createdBy: creator }, error: null });
   } catch (e) {
     res.json({ data: null, error: e.message });
   }
@@ -669,40 +1129,75 @@ app.post('/api/moments', async (req, res) => {
     let buf = null;
     const mime = String(b.mime || 'image/jpeg').slice(0, 64);
     const aspect = Number(b.aspect) > 0 ? Number(b.aspect) : null;
+    const uploadedByUid = String(b.uploadedByUid || '').slice(0, 128) || null;
     if (typeof b.data === 'string' && b.data.length > 0) {
       const b64 = b.data.includes(',') ? b.data.split(',').pop() : b.data;
       if (b64.length > 15 * 1024 * 1024) return fail(res, 413, 'Photo too large');
       buf = Buffer.from(b64, 'base64');
       if (buf.length === 0 || buf.length > 12 * 1024 * 1024) return fail(res, 400, 'Bad image data');
     }
-    await pool.query(
-      `INSERT INTO photos (id, "tripId", caption, "locationTag", "uploadedByMemberId",
-        "uploadedByName", "uploadedAt", "likesCount", mime, data, aspect,
-        "_deleted", "updatedAt", "updatedBy")
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,$12,$13)
-       ON CONFLICT (id) DO UPDATE SET
-         caption = EXCLUDED.caption,
-         "locationTag" = EXCLUDED."locationTag",
-         "likesCount" = EXCLUDED."likesCount",
-         mime = EXCLUDED.mime,
-         data = COALESCE(EXCLUDED.data, photos.data),
-         aspect = COALESCE(EXCLUDED.aspect, photos.aspect),
-         "_deleted" = EXCLUDED."_deleted",
-         "updatedAt" = EXCLUDED."updatedAt",
-         "updatedBy" = EXCLUDED."updatedBy"`,
-      [
-        id, tripId,
-        String(b.caption || '').slice(0, 500),
-        String(b.locationTag || '').slice(0, 120),
-        String(b.uploadedByMemberId || '').slice(0, 128),
-        String(b.uploadedByName || '').slice(0, 128),
-        String(b.uploadedAt || new Date().toISOString()).slice(0, 64),
-        Number(b.likesCount || 0) || 0,
-        mime, buf, aspect,
-        Date.now(),
-        String(b.updatedBy || b.uploadedByMemberId || '').slice(0, 128),
-      ]
-    );
+    try {
+      await pool.query(
+        `INSERT INTO photos (id, "tripId", caption, "locationTag", "uploadedByMemberId",
+          "uploadedByName", "uploadedAt", "likesCount", mime, data, aspect, "uploadedByUid",
+          "_deleted", "updatedAt", "updatedBy")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,$13,$14)
+         ON CONFLICT (id) DO UPDATE SET
+           caption = EXCLUDED.caption,
+           "locationTag" = EXCLUDED."locationTag",
+           "likesCount" = EXCLUDED."likesCount",
+           mime = EXCLUDED.mime,
+           data = COALESCE(EXCLUDED.data, photos.data),
+           aspect = COALESCE(EXCLUDED.aspect, photos.aspect),
+           "uploadedByUid" = COALESCE(EXCLUDED."uploadedByUid", photos."uploadedByUid"),
+           "_deleted" = EXCLUDED."_deleted",
+           "updatedAt" = EXCLUDED."updatedAt",
+           "updatedBy" = EXCLUDED."updatedBy"`,
+        [
+          id, tripId,
+          String(b.caption || '').slice(0, 500),
+          String(b.locationTag || '').slice(0, 120),
+          String(b.uploadedByMemberId || '').slice(0, 128),
+          String(b.uploadedByName || '').slice(0, 128),
+          String(b.uploadedAt || new Date().toISOString()).slice(0, 64),
+          Number(b.likesCount || 0) || 0,
+          mime, buf, aspect, uploadedByUid,
+          Date.now(),
+          String(b.updatedBy || b.uploadedByMemberId || '').slice(0, 128),
+        ]
+      );
+    } catch (e) {
+      if (e && /uploadedByUid|aspect/i.test(e.message || '')) {
+        // Column not migrated yet — legacy write keeps posting alive.
+        await pool.query(
+          `INSERT INTO photos (id, "tripId", caption, "locationTag", "uploadedByMemberId",
+            "uploadedByName", "uploadedAt", "likesCount", mime, data,
+            "_deleted", "updatedAt", "updatedBy")
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,$11,$12)
+           ON CONFLICT (id) DO UPDATE SET
+             caption = EXCLUDED.caption,
+             "locationTag" = EXCLUDED."locationTag",
+             "likesCount" = EXCLUDED."likesCount",
+             mime = EXCLUDED.mime,
+             data = COALESCE(EXCLUDED.data, photos.data),
+             "_deleted" = EXCLUDED."_deleted",
+             "updatedAt" = EXCLUDED."updatedAt",
+             "updatedBy" = EXCLUDED."updatedBy"`,
+          [
+            id, tripId,
+            String(b.caption || '').slice(0, 500),
+            String(b.locationTag || '').slice(0, 120),
+            String(b.uploadedByMemberId || '').slice(0, 128),
+            String(b.uploadedByName || '').slice(0, 128),
+            String(b.uploadedAt || new Date().toISOString()).slice(0, 64),
+            Number(b.likesCount || 0) || 0,
+            mime, buf,
+            Date.now(),
+            String(b.updatedBy || b.uploadedByMemberId || '').slice(0, 128),
+          ]
+        );
+      } else throw e;
+    }
     res.json({ data: { id, url: buf ? momentBytesUrl(req, id) : null, bytes: buf ? buf.length : 0 }, error: null });
   } catch (e) {
     console.error('POST /api/moments error:', e.message);
@@ -717,14 +1212,29 @@ app.get('/api/moments', async (req, res) => {
   try {
     const tripId = String(req.query.tripId || '');
     if (!tripId) return fail(res, 400, 'tripId required');
-    const { rows } = await pool.query(
-      `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
-        "uploadedByName", "uploadedAt", "likesCount", mime, aspect,
-        octet_length(data) AS bytes, "updatedAt"
-       FROM photos WHERE "tripId" = $1 AND NOT COALESCE("_deleted", false)
-       ORDER BY "uploadedAt" ASC LIMIT 500`,
-      [tripId]
-    );
+    let rows;
+    try {
+      ({ rows } = await pool.query(
+        `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
+          "uploadedByName", "uploadedAt", "likesCount", mime, aspect, "uploadedByUid",
+          octet_length(data) AS bytes, "updatedAt"
+         FROM photos WHERE "tripId" = $1 AND NOT COALESCE("_deleted", false)
+         ORDER BY "uploadedAt" ASC LIMIT 500`,
+        [tripId]
+      ));
+    } catch (e) {
+      if (e && /uploadedByUid|aspect/i.test(e.message || '')) {
+        // Columns not migrated yet — legacy read keeps the feed alive.
+        ({ rows } = await pool.query(
+          `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
+            "uploadedByName", "uploadedAt", "likesCount", mime,
+            octet_length(data) AS bytes, "updatedAt"
+           FROM photos WHERE "tripId" = $1 AND NOT COALESCE("_deleted", false)
+           ORDER BY "uploadedAt" ASC LIMIT 500`,
+          [tripId]
+        ));
+      } else throw e;
+    }
     res.json({
       data: rows.map((r) => ({
         id: r.id,
@@ -738,6 +1248,7 @@ app.get('/api/moments', async (req, res) => {
         likesCount: Number(r.likesCount || 0),
         bytes: Number(r.bytes || 0),
         ...(r.aspect ? { aspect: Number(r.aspect) } : {}),
+        ...(r.uploadedByUid ? { uploadedByUid: r.uploadedByUid } : {}),
       })),
       error: null,
     });
@@ -1209,6 +1720,22 @@ io.on('connection', (socket) => {
       }
     }
   });
+
+  // ── WebRTC signaling relay (call groundwork) ──────────────────────
+  // Stateless room-scoped forward for SDP offer/answer + ICE candidates.
+  // No media ever touches the server — pure peer-to-peer afterwards.
+  // Clients open data channels / media on top (see src/utils/webrtc.ts).
+  for (const ev of ['call:hello', 'call:offer', 'call:answer', 'call:ice', 'call:hangup']) {
+    socket.on(ev, (payload) => {
+      try {
+        const tid = payload && payload.tripId;
+        if (!tid || typeof tid !== 'string') return;
+        socket.to(roomOf(tid)).emit(ev, payload);
+      } catch (e) {
+        console.error('call relay error:', e.message);
+      }
+    });
+  }
 });
 
 httpServer.listen(PORT, () => {

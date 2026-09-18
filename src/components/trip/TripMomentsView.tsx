@@ -19,7 +19,8 @@ import { MediaImg, dropCachedMediaUrl } from '../common/MediaImg';
 import { compressImage } from '../../utils/image';
 import { formatBytes } from '../chat/chatStore';
 import { putMedia, resolveMediaBlob } from '../../utils/mediaStore';
-import { saveMoment, deleteMomentRemote, fetchStorageUsage, type StorageUsage } from '../../utils/momentsSync';
+import { saveMoment, deleteMomentRemote, queueTombstone, fetchStorageUsage, type StorageUsage } from '../../utils/momentsSync';
+import { sendPush } from '../../utils/push';
 
 interface MomentComment {
   id: string;
@@ -350,9 +351,19 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
         uploadedByName: me?.name ?? myName,
         uploadedAt: new Date().toISOString(),
         likesCount: 0,
+        ...(myUid ? { uploadedByUid: myUid } : {}),
         ...(aspect ? { aspect } : {}),
       };
       onAddPhoto(created);
+      // Squad fan-out: offline members get phone push (worker, when live),
+      // online members get it via the moments watcher below (bell + flash).
+      void sendPush({
+        tripId: trip.id,
+        kind: 'moment',
+        title: `${created.uploadedByName} shared a trip moment`,
+        body: (text || 'Trip moment').slice(0, 120),
+        senderUid: myUid || undefined,
+      }).catch(() => undefined);
       // Background: same bytes → Supabase (visible from any device).
       if (file) {
         const blob = await resolveMediaBlob(ref);
@@ -672,6 +683,14 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
         const isLiked = liked.has(photo.id);
         const isSaved = saved.has(photo.id);
         const isOwner = photo.uploadedByMemberId === myMemberId;
+        // LIVE display name: resolve from current trip members (uid first),
+        // so a profile rename propagates everywhere instead of freezing at post.
+        const liveAuthor =
+          (photo.uploadedByUid &&
+            trip.members.find((m) => m.uid === photo.uploadedByUid)?.name) ||
+          trip.members.find((m) => m.id === photo.uploadedByMemberId)?.name ||
+          photo.uploadedByName ||
+          'Someone';
         const photoComments = comments[photo.id] ?? [];
         const commentsOpen = openComments === photo.id;
         const menuOpen = menuOpenId === photo.id;
@@ -680,11 +699,11 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
           <article key={photo.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2.5">
               <span className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-extrabold flex-shrink-0">
-                {(photo.uploadedByName || 'M').trim().charAt(0).toUpperCase()}
+                {(liveAuthor || 'M').trim().charAt(0).toUpperCase()}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1">
-                  <span className="block text-xs font-bold text-slate-900 truncate">{photo.uploadedByName}</span>
+                  <span className="block text-xs font-bold text-slate-900 truncate">{liveAuthor}</span>
                   {photo.url.startsWith('http') ? (
                     <Cloud size={11} className="text-emerald-500 flex-shrink-0" />
                   ) : (
@@ -718,8 +737,9 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
                           if (confirmDeleteId === photo.id) {
                             // Full wipe: server bytes + device bytes + interaction
                             // crumbs (likes/saves/comments) + cached object URLs.
-                            // Nothing of this photo remains anywhere.
-                            void deleteMomentRemote(photo.id).catch(() => undefined);
+                            // Offline failure queues a retry (outbox flushed on next good poll).
+                            void deleteMomentRemote(photo.id)
+                              .catch(() => queueTombstone(photo.id));
                             onDeletePhoto(photo.id);
                             dropCachedMediaUrl(photo.url);
                             dropCachedMediaUrl(photo.localRef);

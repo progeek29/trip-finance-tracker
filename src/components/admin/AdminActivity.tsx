@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Users, MapPin, Trash2, Plus, Pencil, Shield, User, X } from 'lucide-react';
-import { supabase, getAllUsers, adminDeleteUser, adminCreateUser, adminUpdateUser, adminResetPassword, type ManagedUser } from '../../utils/supabaseClient';
+import { ChevronLeft, Users, MapPin, Trash2, Plus, Pencil, Shield, User, X, LogIn } from 'lucide-react';
+import { supabase, getAllUsers, adminDeleteUser, adminCreateUser, adminUpdateUser, adminResetPassword, adminImpersonate, type ManagedUser } from '../../utils/supabaseClient';
 import type { Trip } from '../../types';
 
 interface AdminActivityProps {
@@ -14,6 +14,7 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'users' | 'trips'>('users');
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const [viewUser, setViewUser] = useState<ManagedUser | null>(null);
   const [showAddUser, setShowAddUser] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', phone: '', role: 'user' });
   const [modalError, setModalError] = useState('');
@@ -41,6 +42,16 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
       load();
     } catch (e: any) {
       alert(e?.message || 'Delete failed');
+    }
+  };
+
+  const handleImpersonate = async (u: ManagedUser) => {
+    if (u.id === myUid) return;
+    if (!confirm(`Login as ${u.name || u.email}? You will see the app exactly as they do.`)) return;
+    try {
+      await adminImpersonate(u.id, 'Admin', u.name || u.email);
+    } catch (e: any) {
+      alert(e?.message || 'Impersonation failed');
     }
   };
 
@@ -173,8 +184,17 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
           )}
 
           {users.map((u) => (
-            <div key={u.id} className="bg-white rounded-2xl p-3 border border-slate-100">
-              <div className="flex items-center gap-3">
+            <div
+              key={u.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => setViewUser(u)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') setViewUser(u);
+              }}
+              title="View profile"
+              className="bg-white rounded-2xl p-3 border border-slate-100 hover:border-indigo-300 hover:bg-indigo-50/40 hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
+            >              <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center">
                   <User className="w-4 h-4 text-indigo-600" />
                 </div>
@@ -188,7 +208,15 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
                   <p className="text-[11px] text-slate-500 truncate">{u.email}</p>
                   {u.phone && <p className="text-[11px] text-slate-400">{u.phone}</p>}
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => handleImpersonate(u)}
+                    disabled={u.id === myUid}
+                    title={u.id === myUid ? 'This is you' : 'Login as this user'}
+                    className="p-1.5 rounded-lg hover:bg-amber-50 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    <LogIn className="w-3.5 h-3.5 text-amber-600" />
+                  </button>
                   <button
                     onClick={() => { setEditingUser(u); setModalError(''); setResetPw(''); setResetMsg(''); }}
                     className="p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer"
@@ -262,6 +290,65 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
               <p className="text-[11px] text-red-600 bg-red-50 rounded-lg px-3 py-2">{modalError}</p>
             )}
             <button onClick={handleAddUser} className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer">Create</button>
+          </div>
+        </div>
+      )}
+
+      {/* View Profile Modal — read-only card; actions below */}
+      {viewUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60" onClick={() => setViewUser(null)}>
+          <div
+            className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col items-center text-center">
+              <span className="w-14 h-14 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xl font-extrabold">
+                {(viewUser.name || 'M').trim().charAt(0).toUpperCase()}
+              </span>
+              <p className="mt-2.5 text-sm font-extrabold text-slate-900 flex items-center gap-1.5">
+                {viewUser.name || 'No name'}
+                {viewUser.gender === 'male' && <span className="text-[12px] font-extrabold text-sky-500">♂</span>}
+                {viewUser.gender === 'female' && <span className="text-[12px] font-extrabold text-rose-400">♀</span>}
+                {viewUser.role === 'admin' && (
+                  <span className="text-[9px] font-extrabold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-full px-1.5 py-0.5">ADMIN</span>
+                )}
+              </p>
+              {viewUser.username && <p className="text-xs text-slate-400 font-medium">@{viewUser.username}</p>}
+              <p className="text-[11px] text-slate-500 mt-1 break-all">{viewUser.email}</p>
+              {viewUser.phone && <p className="text-[11px] text-slate-400">{viewUser.phone}</p>}
+              <div className="grid grid-cols-3 gap-2 mt-4 w-full">
+                <button
+                  type="button"
+                  onClick={() => { setEditingUser(viewUser); setModalError(''); setResetPw(''); setResetMsg(''); setViewUser(null); }}
+                  className="h-10 rounded-xl bg-white border border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-600 text-[11px] font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Pencil className="w-3.5 h-3.5" /> Edit
+                </button>
+                <button
+                  type="button"
+                  disabled={viewUser.id === myUid}
+                  onClick={() => { setViewUser(null); handleImpersonate(viewUser); }}
+                  className="h-10 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-[11px] font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <LogIn className="w-3.5 h-3.5" /> Login as
+                </button>
+                <button
+                  type="button"
+                  disabled={viewUser.id === myUid}
+                  onClick={() => { setViewUser(null); handleDeleteUser(viewUser.id); }}
+                  className="h-10 rounded-xl bg-white border border-slate-200 text-rose-500 hover:bg-rose-50 hover:border-rose-200 text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-40 flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewUser(null)}
+                className="mt-2 text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

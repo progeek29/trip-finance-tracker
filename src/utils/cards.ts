@@ -25,3 +25,40 @@ export function cardSeed(...parts: Array<string | undefined | null>): string {
 export function isValidCardNo(v: string | undefined | null): boolean {
   return !!v && /^WS\d{2}( \d{4}){3}$/.test(v.trim());
 }
+
+export type Gender = 'male' | 'female' | 'unspecified';
+
+export function cleanGender(v: unknown): Gender {
+  const s = String(v || '').trim().toLowerCase();
+  if (s === 'male' || s === 'female') return s;
+  return 'unspecified';
+}
+
+/** Username slug: `firstname(≤8, a-z0-9)_xxxx` — short, speakable, ours to control.
+ * Deterministic per (name, seed) so every device derives the SAME handle.
+ * Uniqueness is enforced by the DB unique index (migrate.cjs); collisions
+ * re-mint with a `#i` seed suffix (same format, new suffix). */
+export function mintUsername(name: string | undefined | null, seed: string | undefined | null): string {
+  const slug =
+    String(name || '')
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)[0]
+      ?.replace(/[^a-z0-9]/g, '')
+      .slice(0, 8) || 'friend';
+  const s = `${slug}|${String(seed || '').trim().toLowerCase() || 'wandersync-guest'}`;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789'; // no 0/o/1/l — readable over a call
+  let suffix = '';
+  let n = h;
+  for (let i = 0; i < 4; i++) {
+    suffix += alphabet[n % alphabet.length];
+    n = Math.floor(n / alphabet.length);
+  }
+  return `${slug}_${suffix}`;
+}
+
+export function isValidUsername(v: string | undefined | null): boolean {
+  return !!v && /^[a-z0-9]{1,8}_[a-z0-9]{4}$/.test(v.trim().toLowerCase());
+}

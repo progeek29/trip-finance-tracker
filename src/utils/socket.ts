@@ -83,14 +83,61 @@ export function joinTripRoom(
   joinedRooms.set(tripId, { me, count: (prev?.count || 0) + 1 });
   s.emit('room:join', { tripId, uid: me.uid || undefined, name: me.name || 'Friend' });
 
-  const msgFn = handlers.onMessage ? (m: ChatMessage) => handlers.onMessage!(m) : undefined;
-  const typeFn = handlers.onTyping ? (t: TypingPayload) => handlers.onTyping!(t) : undefined;
-  const presFn = handlers.onPresence ? (p: PresencePayload) => handlers.onPresence!(p) : undefined;
-  const readFn = handlers.onRead ? (r: { tripId: string; messageId: string; count: number }) => handlers.onRead!(r) : undefined;
-  const pinFn = handlers.onPin ? (p: { id: string; tripId: string; pinned: boolean }) => handlers.onPin!(p) : undefined;
-  const delFn = handlers.onDelete ? (d: { tripId: string; messageId: string }) => handlers.onDelete!(d) : undefined;
-  const bellFn = handlers.onBellRing ? (b: { tripId: string; uid?: string; name?: string }) => handlers.onBellRing!(b) : undefined;
-  const voiceFn = handlers.onVoiceBurst ? (v: { tripId: string; voiceUrl: string; senderId?: string; senderName?: string; clipId?: string }) => handlers.onVoiceBurst!(v) : undefined;
+  // The socket is shared app-wide with GLOBAL listeners — every 'chat:new'
+  // (typing/presence/read/pin/delete/bell/voice) fires EVERY registered
+  // callback. Filter by room here, or a DM buzzes the group badge, a group
+  // message lands in the 1:1 timeline, typing leaks across rooms, etc.
+  // Events without a room tag (defensive) still pass through.
+  const sameRoom = (tag: unknown): boolean =>
+    typeof tag !== 'string' || !tag || tag === tripId;
+  const msgFn = handlers.onMessage
+    ? (m: ChatMessage & { tripId?: string }) => {
+        if (!sameRoom(m.tripId)) return;
+        handlers.onMessage!(m);
+      }
+    : undefined;
+  const typeFn = handlers.onTyping
+    ? (t: TypingPayload) => {
+        if (!sameRoom(t.tripId)) return;
+        handlers.onTyping!(t);
+      }
+    : undefined;
+  const presFn = handlers.onPresence
+    ? (p: PresencePayload) => {
+        if (!sameRoom(p.tripId)) return;
+        handlers.onPresence!(p);
+      }
+    : undefined;
+  const readFn = handlers.onRead
+    ? (r: { tripId: string; messageId: string; count: number }) => {
+        if (!sameRoom(r.tripId)) return;
+        handlers.onRead!(r);
+      }
+    : undefined;
+  const pinFn = handlers.onPin
+    ? (p: { id: string; tripId: string; pinned: boolean }) => {
+        if (!sameRoom(p.tripId)) return;
+        handlers.onPin!(p);
+      }
+    : undefined;
+  const delFn = handlers.onDelete
+    ? (d: { tripId: string; messageId: string }) => {
+        if (!sameRoom(d.tripId)) return;
+        handlers.onDelete!(d);
+      }
+    : undefined;
+  const bellFn = handlers.onBellRing
+    ? (b: { tripId: string; uid?: string; name?: string }) => {
+        if (!sameRoom(b.tripId)) return;
+        handlers.onBellRing!(b);
+      }
+    : undefined;
+  const voiceFn = handlers.onVoiceBurst
+    ? (v: { tripId: string; voiceUrl: string; senderId?: string; senderName?: string; clipId?: string }) => {
+        if (!sameRoom(v.tripId)) return;
+        handlers.onVoiceBurst!(v);
+      }
+    : undefined;
 
   if (msgFn) s.on('chat:new', msgFn);
   if (typeFn) s.on('chat:typing', typeFn);
@@ -222,4 +269,38 @@ export function deleteChatMessage(tripId: string, messageId: string): Promise<vo
       reject(e instanceof Error ? e : new Error('delete failed'));
     }
   });
+}
+
+// ── WebRTC call signaling (groundwork) ────────────────────────────
+// Thin wrappers so webrtc.ts never touches the raw socket. Sender socket id
+// is stamped automatically so receivers can address answers/ICE back.
+export function getSocketId(): string | undefined {
+  try {
+    return ensureSocket().id || undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function emitCallSignal(ev: string, payload: Record<string, unknown>): void {
+  try {
+    const s = ensureSocket();
+    s.emit(ev, { ...payload, fromSocket: s.id || undefined });
+  } catch { /* offline — call setup retries on reconnect */ }
+}
+
+export function onCallSignal(
+  ev: string,
+  handler: (payload: Record<string, unknown> & { fromSocket?: string }) => void
+): () => void {
+  try {
+    const s = ensureSocket();
+    s.on(ev, handler);
+    return () => {
+      try {
+        s.off(ev, handler);
+      } catch { /* gone */ }
+    };
+  } catch {
+    return () => undefined;
+  }
 }

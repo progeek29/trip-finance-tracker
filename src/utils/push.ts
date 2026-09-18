@@ -48,7 +48,7 @@ export async function registerPushToken(tripId: string): Promise<string | null> 
 
 export interface PushPayload {
   tripId: string;
-  kind: 'voice' | 'siren' | 'chat';
+  kind: 'voice' | 'siren' | 'chat' | 'moment' | 'request';
   title: string;
   body: string;
   voiceUrl?: string;

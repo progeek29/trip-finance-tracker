@@ -1,5 +1,5 @@
 import { Trip, Expense, TransitReminder, DocumentVaultItem, SharedPhoto, PlaceRecommendation, TripTodo } from '../types';
-import { mintCardNo, cardSeed } from './cards';
+import { mintCardNo, cardSeed, mintUsername, isValidUsername, cleanGender, type Gender } from './cards';
 import { 
   INITIAL_TRIP, 
   INITIAL_EXPENSES, 
@@ -36,13 +36,21 @@ function safeSet(key: string, value: string): void {
 // browser sees the previous user's data until sync overwrites it (data leak).
 const DATA_OWNER_KEY = 'ws_data_uid_v1';
 
-/** Wipe every app cache key (local + session). Used on logout + account switch. */
-export function clearAllLocalData(): void {
+/** Wipe every app cache key (local + session). Used on logout + account switch.
+ *  keepToken (account SWITCH, e.g. impersonation): the incoming session's
+ *  token + impersonation flags survive — wiping them logs the new account
+ *  out instantly and every later call 401s into empty screens. */
+export function clearAllLocalData(opts?: { keepToken?: boolean }): void {
+  const keep = new Set(
+    opts?.keepToken
+      ? ['wandersync_token', 'ws_admin_token_backup', 'ws_impersonating_v1', 'ws_return_admin']
+      : []
+  );
   try {
     const kill: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && (k.startsWith('ws_') || k === 'wandersync_token' || k === 'wandersync_played_clips')) kill.push(k);
+      if (k && !keep.has(k) && (k.startsWith('ws_') || k === 'wandersync_token' || k === 'wandersync_played_clips')) kill.push(k);
     }
     kill.forEach((k) => {
       try { localStorage.removeItem(k); } catch { /* gone */ }
@@ -52,7 +60,7 @@ export function clearAllLocalData(): void {
     const killS: string[] = [];
     for (let i = 0; i < sessionStorage.length; i++) {
       const k = sessionStorage.key(i);
-      if (k && k.startsWith('ws_')) killS.push(k);
+      if (k && !keep.has(k) && k.startsWith('ws_')) killS.push(k);
     }
     killS.forEach((k) => {
       try { sessionStorage.removeItem(k); } catch { /* gone */ }
@@ -69,7 +77,9 @@ export function claimDataOwner(uid: string | null): void {
   try {
     if (!uid) return;
     const prev = localStorage.getItem(DATA_OWNER_KEY);
-    if (prev && prev !== uid) clearAllLocalData();
+    // New account (login/impersonate): wipe the PREVIOUS owner's cache but
+    // KEEP the incoming session token — else the new account 401s everywhere.
+    if (prev && prev !== uid) clearAllLocalData({ keepToken: true });
     localStorage.setItem(DATA_OWNER_KEY, uid);
   } catch { /* storage blocked */ }
 }
@@ -223,6 +233,10 @@ export interface UserProfile {
   joinedAt?: string;
   /** Permanent WanderSync pass number (`WSXX XXXX XXXX XXXX`) — minted once */
   cardNo?: string;
+  /** Permanent @handle (`name_xxxx`) for search + QR — minted once, server-unique */
+  username?: string;
+  /** Gender for search/profile icons — 'unspecified' until the user picks */
+  gender?: Gender;
 }
 
 export function getAdminStatus(name: string, phone: string): boolean {
@@ -236,7 +250,7 @@ export function loadUserProfile(): UserProfile | null {
     const saved = localStorage.getItem(PROFILE_KEY);
     if (saved) {
       const p = JSON.parse(saved);
-      if (p && typeof p.name === 'string' && p.name.trim()) return { name: p.name.trim(), phone: String(p.phone || ''), role: p.role, joinedAt: p.joinedAt, cardNo: typeof p.cardNo === 'string' ? p.cardNo : undefined };
+      if (p && typeof p.name === 'string' && p.name.trim()) return { name: p.name.trim(), phone: String(p.phone || ''), role: p.role, joinedAt: p.joinedAt, cardNo: typeof p.cardNo === 'string' ? p.cardNo : undefined, username: typeof p.username === 'string' ? p.username : undefined, gender: p.gender };
     }
   } catch (e) {
     console.error(e);
@@ -249,6 +263,16 @@ export function saveUserProfile(profile: UserProfile): void {
   // existing) owns one even before the server round-trip completes.
   if (!profile.cardNo) {
     profile = { ...profile, cardNo: mintCardNo(cardSeed(profile.phone, profile.name)) };
+  }
+  // Same for the @handle: minted once from name (+uid when known), never
+  // re-minted on renames — server unique index is the final authority.
+  if (!isValidUsername(profile.username)) {
+    profile = { ...profile, username: mintUsername(profile.name, cardSeed(profile.phone, profile.name)) };
+  }
+  if (!profile.gender) {
+    profile = { ...profile, gender: 'unspecified' };
+  } else {
+    profile = { ...profile, gender: cleanGender(profile.gender) };
   }
   safeSet(PROFILE_KEY, JSON.stringify(profile));
 }

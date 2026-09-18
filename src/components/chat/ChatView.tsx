@@ -33,6 +33,9 @@ interface ChatViewProps {
   myName: string;
   myUid: string | null;
   unreadIds: string[];
+  /** Embedded in DM/group screens (App renders its own header) — hides the
+   *  built-in Squadroom header so no duplicate title shows. */
+  bare?: boolean;
 }
 
 function fmtTime(createdAt: unknown): string {
@@ -154,7 +157,7 @@ function renderRichText(
   );
 }
 
-export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadIds }) => {
+export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadIds, bare }) => {
   const [msgs, setMsgs] = useState<RichMsg[]>([]);
   const [pending, setPending] = useState<ChatMessage[]>(() => {
     try {
@@ -184,6 +187,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
   const typingIdleTimer = useRef<number | null>(null);
   // Snapshot of unread at open — divider stays put while reading
   const [entryUnread] = useState<string[]>(() => [...unreadIds]);
+  // DM/group greeting: shown exactly once ever per room (first open with zero
+  // messages). After the first send it never returns.
+  const isDMRoom = trip.id.startsWith('dm_') || trip.id.startsWith('grp_');
+  const isGroupRoom = trip.id.startsWith('grp_');
+  const greetKey = `ws_dm_greeted_${trip.id}`;
+  const [greeted, setGreeted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(greetKey) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const markGreeted = () => {
+    setGreeted(true);
+    try {
+      localStorage.setItem(greetKey, '1');
+    } catch { /* private mode */ }
+  };
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -323,7 +344,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
     return () => off();
   }, [trip.id]);
 
-  // Presence: heartbeat while here + join/created line exactly once ever
+  // Presence: heartbeat while here + join line exactly once ever — but ONLY in
+  // real trip squad rooms. Bare rooms (1:1 DM / custom group) are not trip
+  // squads, so no "X joined the Y trip squad" system lines there.
   useEffect(() => {
     let stop = false;
     let timer: number | null = null;
@@ -331,7 +354,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
       try {
         const user = await ensureCloudUser();
         if (stop) return;
-        await announceJoinOnce(trip.id, user.uid, myName || 'Someone', trip.title);
+        if (!bare) await announceJoinOnce(trip.id, user.uid, myName || 'Someone', trip.title);
         await updatePresence(trip.id, user.uid, myName || 'Someone');
         timer = window.setInterval(() => {
           updatePresence(trip.id, user.uid, myName || 'Someone');
@@ -381,6 +404,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
   }, [text]);
 
   const isMine = (m: ChatMessage) => (myUid ? m.senderId === myUid : m.senderName === myName);
+
+  /** LIVE display name: trip member by sender uid first (rename-proof), stored name as fallback. */
+  const liveName = (m: ChatMessage): string => {
+    const hit = trip.members.find((x) => (m.senderId && x.uid === m.senderId) || x.name === m.senderName);
+    return hit?.name || m.senderName || 'Someone';
+  };
 
   const mentionsMe = (m: ChatMessage) => {
     const me = trip.members.find((x) => x.isCurrentUser);
@@ -482,6 +511,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
     if (!t || sendingRef.current) return;
     sendingRef.current = true;
     setSending(true);
+    if (isDMRoom && !greeted) markGreeted();
 
     const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date();
@@ -537,11 +567,47 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
         text: t.slice(0, 500),
         mentions: finalMentions,
         replyTo: optimistic.replyTo,
-      }).catch(() => {
+      }, msgId).catch(() => {
         // Offline — message stays in pending, still visible locally
       });
     }
   };
+
+  // Pending-send retry: outage-fossilized messages flush on open/focus/30s.
+  // Same id → server upsert dedupes; echo/history clears them as usual.
+  const pendingRef = useRef<ChatMessage[]>([]);
+  pendingRef.current = pending;
+  useEffect(() => {
+    if (!trip?.id) return;
+    let cancelled = false;
+    const flush = async () => {
+      const stuck = pendingRef.current;
+      if (cancelled || stuck.length === 0) return;
+      for (const p of stuck) {
+        if (cancelled) return;
+        try {
+          await sendChatMessage(trip.id, myName || 'Friend', {
+            type: p.type,
+            text: p.text,
+            lat: (p as { lat?: number }).lat,
+            lng: (p as { lng?: number }).lng,
+            replyTo: p.replyTo,
+            mentions: p.mentions,
+          }, p.id);
+        } catch { /* stays pending for next tick */ }
+      }
+    };
+    flush();
+    const onFocus = () => flush();
+    window.addEventListener('focus', onFocus);
+    const timer = window.setInterval(flush, 30000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trip.id]);
 
   const flashStatus = (msg: string) => {
     setLocStatus(msg);
@@ -759,7 +825,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
 
   return (
     <div className="relative w-full flex-1 min-h-0 flex flex-col">
-      {/* Header — selection mode replaces it */}
+      {/* Header — selection mode replaces it; bare mode (DM/group screens)
+          skips it entirely (App renders recipient header instead). */}
       {selected ? (
         <div className="flex items-center justify-between pb-1 flex-shrink-0">
           <span className="text-sm font-extrabold text-slate-900">{selected.length} selected</span>
@@ -794,7 +861,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
             </button>
           </div>
         </div>
-      ) : (
+      ) : bare ? null : (
       <div className="flex items-center justify-between pb-1 flex-shrink-0">
         <div>
           <h3 className="text-sm font-bold text-slate-900 font-display">Squadroom</h3>
@@ -863,6 +930,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
           // Bell/siren trigger no timeline logs — only real text + join lines stay
           if (m.type === 'siren' || (m as RichMsg & { type: string }).type === 'bell') return null;
           if (m.type === 'system') {
+            // Bare rooms (1:1 DM / custom group) hide trip-squad join lines —
+            // those belong to the Trip Group (also covers lines posted earlier).
+            if (bare && /joined the .+ trip squad/i.test(m.text || '')) return null;
             return (
               <div key={m.id} className="flex justify-center py-0.5">
                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#64748b]">
@@ -918,7 +988,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
                   className={`max-w-[80%] rounded-[16px] px-3 pt-2 pb-1.5 shadow-sm ${isSelected ? 'ring-2 ring-indigo-500' : ''} ${mine ? 'bg-[linear-gradient(135deg,#4f46e5,#4338ca)] text-white rounded-br-md' : 'bg-white border border-[#e2e8f0] text-slate-800 rounded-bl-md'}`}
                   style={slideDx > 0 && !isSelected ? { transform: `translateX(${slideDx}px)`, transition: slideDx === 0 ? 'transform 0.15s' : 'none' } : undefined}
                 >
-                  {!mine && <p className="text-[10px] font-extrabold text-indigo-600 mb-0.5">{m.senderName}</p>}
+                  {!mine && <p className="text-[10px] font-extrabold text-indigo-600 mb-0.5">{liveName(m)}</p>}
                   {m.replyTo && (
                     <button
                       onClick={() => jumpTo(m.replyTo!.id)}
@@ -991,8 +1061,30 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
             </div>
           </div>
         )}
-        {msgs.length === 0 && typingNames.length === 0 && (
-          <p className="text-[11px] text-slate-400 text-center py-8">No messages yet — say hi to the squad.</p>
+        {isDMRoom ? (
+          !greeted && msgs.length === 0 && pending.length === 0 && (
+            isGroupRoom ? (
+              <div className="text-center py-8">
+                <p className="text-[12px] font-bold text-slate-700">
+                  Welcome to {trip.title?.trim() || 'the group'} 🎉
+                </p>
+                <p className="text-[11px] text-slate-400 font-medium mt-1">
+                  Say hi — messages here reach all {trip.members.length} members.
+                </p>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-[12px] font-bold text-slate-700">
+                  You can send Hi to {trip.members.find((m) => !m.isCurrentUser)?.name?.split(' ')[0] || 'them'} to start the conversation
+                </p>
+                <p className="text-[11px] text-slate-400 font-medium mt-1">Anything you write here stays between you.</p>
+              </div>
+            )
+          )
+        ) : (
+          msgs.length === 0 && typingNames.length === 0 && (
+            <p className="text-[11px] text-slate-400 text-center py-8">No messages yet — say hi to the squad.</p>
+          )
         )}
       </div>
 
@@ -1075,7 +1167,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ trip, myName, myUid, unreadI
             window.setTimeout(() => setMentionQuery((q) => (document.activeElement === inputRef.current ? q : null)), 150);
           }}
           onKeyDown={onInputKeyDown}
-          placeholder="Message the squad (@ to mention)"
+          placeholder={
+            trip.id.startsWith('dm_')
+              ? `Message ${trip.members.find((m) => !m.isCurrentUser)?.name?.split(' ')[0] || 'them'}`
+              : isGroupRoom
+                ? `Message ${trip.title?.trim() || 'the group'}`
+                : 'Message the squad (@ to mention)'
+          }
           className="flex-1 rounded-xl bg-white border border-slate-200 px-3.5 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-indigo-500 placeholder-slate-400 resize-none"
           style={{ overflowY: 'hidden' }}
         />

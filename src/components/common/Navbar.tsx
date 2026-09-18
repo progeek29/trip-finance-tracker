@@ -1,6 +1,7 @@
 import React from 'react';
-import { Compass, Wallet, History, Plus, ArrowLeft, Bell, Home } from 'lucide-react';
+import { Compass, Wallet, History, Plus, ArrowLeft, Bell, Home, MessagesSquare } from 'lucide-react';
 import { Logo } from './Logo';
+import { ImpersonateBanner } from '../admin/ImpersonateBanner';
 
 export type CleanTab = 'trip' | 'todo' | 'expenses' | 'chat' | 'split' | 'vault';
 
@@ -37,8 +38,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'trip' as CleanTab, label: 'Trip', icon: Compass },
     { id: 'todo' as CleanTab, label: 'Timeline', icon: History },
     { id: 'expenses' as CleanTab, label: 'Expenses', icon: Wallet },
-    // CHAT HIDDEN (temp) — feature in progress, code intact. Re-enable by uncommenting:
-    // { id: 'chat' as CleanTab, label: 'Chat', icon: MessagesSquare },
+    // Trip-internal Squadroom chat — VISIBLE (group per trip stays).
+    // Landing-page global chat hub stays hidden (TripLandingView) until chat P2.
+    { id: 'chat' as CleanTab, label: 'Chat', icon: MessagesSquare },
     // VAULT DISABLED (temp) — data + views intact, button hidden. Re-add:
     // { id: 'vault' as CleanTab, label: 'Vault', icon: FolderOpen },
   ];
@@ -50,6 +52,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <>
+      <ImpersonateBanner />
       {/* Top Clean White Header */}
       <header className="sticky top-0 z-40 w-full bg-white/90 backdrop-blur-md border-b border-slate-200/80 shadow-sm flex-shrink-0">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
@@ -177,7 +180,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <Plus size={22} strokeWidth={2.5} />
                 </button>
               </span>
-              {[item(byId('todo')), item(byId('expenses'))].map(({ id, label, Icon, active, onClick }) => (
+              {[item(byId('todo')), item(byId('expenses')), item(byId('chat'))].map(({ id, label, Icon, active, onClick }) => (
                 <button
                   key={id}
                   onClick={onClick}

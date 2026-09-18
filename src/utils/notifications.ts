@@ -37,7 +37,7 @@ const MONEY_WORD_RE = /(splitwise|settl|expense|bill|budget|payment)/i;
 const LOCATION_WORD_RE = /(shared location|open in maps|maps\.google)/i;
 const SIREN_RE = /(rang the (bell|siren)|triggered the emergency siren)/i;
 const VOICE_RE = /is talking on walkie-talkie/i;
-const ACTOR_VERB_RE = /^(.+?)\s(added|updated|deleted|settled|mentioned|paid|logged|joined|triggered|rang|auto-logged|just logged)/i;
+const ACTOR_VERB_RE = /^(.+?)\s(added|updated|deleted|settled|mentioned|paid|logged|joined|triggered|rang|auto-logged|just logged|shared|posted|sent)/i;
 
 /** "9 Sep, 8:37 am" style absolute → human relative ("Today, 8:37 AM"). */
 export function relativeTime(at: number): string {
@@ -142,7 +142,9 @@ export function parseActivity(a: RawActivity, isUnread: boolean, meName?: string
   const av = ACTOR_VERB_RE.exec(title.trim());
   if (av) {
     let verb: string = av[2].toLowerCase();
-    if (verb === 'added' || verb === 'just logged') verb = 'paid';
+    // Expense-ese: "added Rs.5k" reads better as "paid" — but ONLY when money
+    // is actually involved (else "Krey added you to a group" becomes nonsense).
+    if ((verb === 'added' || verb === 'just logged') && money) verb = 'paid';
     body = `${verb} ${title.trim().slice(av[0].length).trim()}`.trim();
   } else {
     body = title;

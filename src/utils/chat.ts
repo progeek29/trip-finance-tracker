@@ -8,11 +8,13 @@ import type { ChatMessage } from '../types';
 export async function sendChatMessage(
   tripId: string,
   senderName: string,
-  msg: Pick<ChatMessage, 'type'> & Partial<Pick<ChatMessage, 'text' | 'lat' | 'lng' | 'replyTo' | 'mentions'>>
+  msg: Pick<ChatMessage, 'type'> & Partial<Pick<ChatMessage, 'text' | 'lat' | 'lng' | 'replyTo' | 'mentions'>>,
+  keepId?: string
 ): Promise<void> {
   const user = await ensureCloudUser();
   const { error } = await supabase.from('chat_messages').insert({
-    id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    // keepId: retry of a stuck pending reuses its id (server upsert dedupes).
+    id: keepId || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     tripId,
     type: msg.type,
     text: msg.text || '',
@@ -23,7 +25,9 @@ export async function sendChatMessage(
     senderId: user.uid,
     senderName,
   });
-  if (error) console.error('chat send error:', error);
+  // Throw (never swallow): callers decide retry vs user-facing error.
+  // Swallowed errors fossilized DMs as ghost pendings with zero server rows.
+  if (error) throw new Error(typeof error === 'string' ? error : error.message || 'send failed');
 }
 
 export function subscribeChat(tripId: string, cb: (msgs: ChatMessage[]) => void): () => void {

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Trip, Expense, PlaceRecommendation } from '../../types';
 import { MemberAvatar } from '../common/MemberAvatar';
+import { ImpersonateBanner } from '../admin/ImpersonateBanner';
 import { Logo } from '../common/Logo';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { CommunityExploreView } from '../discovery/CommunityExploreView';
@@ -44,6 +45,10 @@ interface TripLandingViewProps {
   onDummyAction?: (msg: string) => void;
   /** Unread badge per trip for the Chat hub. */
   unreadByTrip?: Record<string, number>;
+  /** Social hub content (DMs + requests + squad) for the Chat tab. */
+  chatList?: React.ReactNode;
+  /** Pending-request count → badge dot on the Chat tab. */
+  chatBadge?: number;
   recommendations?: PlaceRecommendation[];
   onAddRecommendation?: (rec: PlaceRecommendation) => void;
 }
@@ -304,7 +309,7 @@ function TripCard({
   );
 }
 
-export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange, unreadCount, onBellClick, bellPulse = 0, landingTab = 'trips', onLandingTabChange, onOpenChat, onOpenTripChat, onDummyAction, unreadByTrip, recommendations = [], onAddRecommendation }: TripLandingViewProps) {
+export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange, unreadCount, onBellClick, bellPulse = 0, landingTab = 'trips', onLandingTabChange, onOpenChat, onOpenTripChat, onDummyAction, unreadByTrip, chatList, chatBadge = 0, recommendations = [], onAddRecommendation }: TripLandingViewProps) {
   const [filter, setFilter] = useState<'all' | 'inprogress' | 'upcoming' | 'completed'>('all');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'owned' | 'joined'>(ownerFilterProp || 'all');
   const [confirmTrip, setConfirmTrip] = useState<Trip | null>(null);
@@ -344,6 +349,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <ImpersonateBanner />
       {/* Hero Header */}
       <div className="bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-700 px-4 pt-6 pb-6">
         <div className="max-w-2xl mx-auto">
@@ -402,14 +408,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
 
       {/* Filter chips + separate create button */}
       {landingTab === 'chat' ? (
-        <ChatHubView
-          trips={trips}
-          myUid={myUid}
-          myName={userName || 'Me'}
-          unreadByTrip={unreadByTrip}
-          onOpenTripChat={(trip) => (onOpenTripChat ? onOpenTripChat(trip) : onOpenChat?.())}
-          onDummyAction={(msg) => onDummyAction?.(msg)}
-        />
+        chatList ?? null
       ) : landingTab === 'trips' ? (
       <>
       <div className="max-w-2xl mx-auto px-4 pt-5 pb-1 flex items-center gap-2.5">
@@ -507,23 +506,27 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200/80 shadow-[0_-8px_30px_rgba(0,0,0,0.06)] [transform:translateZ(0)]">
         <nav className="max-w-2xl mx-auto px-4 pt-1.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex justify-around items-center">
           {([
-            { id: 'trips', label: 'Trips', Icon: Home, active: landingTab === 'trips', onClick: () => onLandingTabChange?.('trips') },
-            { id: 'explore', label: 'Explore', Icon: Search, active: landingTab === 'explore', onClick: () => onLandingTabChange?.('explore') },
-            // CHAT HIDDEN (temp) — feature in progress, code intact. Re-enable by uncommenting:
-            // { id: 'chat', label: 'Chat', Icon: MessagesSquare, active: landingTab === 'chat', onClick: () => onLandingTabChange?.('chat') },
-          ] as const).map(({ id, label, Icon, active, onClick }) => (
+            { id: 'trips', label: 'Trips', Icon: Home, active: landingTab === 'trips', onClick: () => onLandingTabChange?.('trips'), badge: 0 },
+            { id: 'explore', label: 'Explore', Icon: Search, active: landingTab === 'explore', onClick: () => onLandingTabChange?.('explore'), badge: 0 },
+            { id: 'chat', label: 'Chat', Icon: MessagesSquare, active: landingTab === 'chat', onClick: () => onLandingTabChange?.('chat'), badge: chatBadge || 0 },
+          ] as const).map(({ id, label, Icon, active, onClick, badge }) => (
             <button
               key={id}
               onClick={onClick}
               aria-label={label}
               title={label}
-              className="flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-colors cursor-pointer"
+              className="relative flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-colors cursor-pointer"
             >
               <Icon
                 size={22}
                 strokeWidth={active ? 2.2 : 1.8}
                 className={active ? 'text-indigo-600' : 'text-slate-400'}
               />
+              {badge > 0 && (
+                <span className="absolute top-0.5 ml-5 min-w-[16px] h-4 px-0.5 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
+                  {badge > 99 ? '99+' : badge}
+                </span>
+              )}
               <span className={`text-[10px] leading-tight ${active ? 'text-indigo-600 font-bold' : 'text-slate-400 font-medium'}`}>
                 {label}
               </span>

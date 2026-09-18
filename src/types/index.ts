@@ -153,6 +153,9 @@ export interface SharedPhoto {
   caption?: string;
   uploadedByMemberId: string;
   uploadedByName: string;
+  /** Author account uid — display names resolve LIVE from trip members at
+   *  render (profile renames propagate everywhere, never frozen). */
+  uploadedByUid?: string;
   uploadedAt: string;
   likesCount: number;
   locationTag?: string;

@@ -64,7 +64,13 @@ export async function ensureCloudUser(): Promise<{ uid: string }> {
   }
   const token = getToken();
   if (!token) throw new Error('NOT_LOGGED_IN');
-  const { data } = await api('/auth/user', { headers: { Authorization: `Bearer ${token}` } });
+  let data: { user?: { id: string; email?: string } } | null;
+  try {
+    ({ data } = await api('/auth/user', { headers: { Authorization: `Bearer ${token}` } }));
+  } catch {
+    // Offline/backend hiccup: keep the token (mystery-logout fix) — caller retries.
+    throw new Error('OFFLINE');
+  }
   if (data?.user) {
     cachedUid = data.user.id;
     cachedIsAdmin = data.user.email === ADMIN_EMAIL;
@@ -79,10 +85,10 @@ export function isAdminUser(): boolean {
   return cachedIsAdmin;
 }
 
-export async function authSignUp(email: string, password: string, name: string, phone: string, cardNo?: string): Promise<{ uid: string; isAdmin: boolean }> {
+export async function authSignUp(email: string, password: string, name: string, phone: string, cardNo?: string, gender?: string): Promise<{ uid: string; isAdmin: boolean }> {
   const { data, error } = await api('/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ email, password, name, phone, cardNo }),
+    body: JSON.stringify({ email, password, name, phone, cardNo, gender }),
   });
   if (error) throw new Error(error);
   setToken(data.token);
@@ -103,7 +109,7 @@ export async function authSignIn(email: string, password: string): Promise<{ uid
   return { uid: data.user.id, isAdmin: cachedIsAdmin };
 }
 
-export async function authUpdateProfile(patch: { name: string; phone: string; cardNo?: string }): Promise<{ name: string; phone: string; cardNo: string }> {
+export async function authUpdateProfile(patch: { name: string; phone: string; cardNo?: string; gender?: string }): Promise<{ name: string; phone: string; cardNo: string; username: string; gender: string }> {
   const { data, error } = await api('/auth/profile', {
     method: 'POST',
     body: JSON.stringify(patch),
@@ -151,7 +157,7 @@ export async function authSignOutAll(): Promise<void> {
   await authSignOut();
 }
 
-export async function authGetUser(): Promise<{ uid: string; email: string; isAdmin: boolean; name: string; phone: string; role: string; cardNo: string } | null> {
+export async function authGetUser(): Promise<{ uid: string; email: string; isAdmin: boolean; name: string; phone: string; role: string; cardNo: string; username: string; gender: string } | null> {
   const token = getToken();
   if (!token) return null;
   const { data } = await api('/auth/user', { headers: { Authorization: `Bearer ${token}` } });
@@ -166,6 +172,8 @@ export async function authGetUser(): Promise<{ uid: string; email: string; isAdm
     phone: data.user.phone || '',
     role: data.user.role || 'user',
     cardNo: data.user.cardNo || '',
+    username: data.user.username || '',
+    gender: data.user.gender || 'unspecified',
   };
 }
 
@@ -315,6 +323,8 @@ export interface ManagedUser {
   phone: string;
   role: string;
   createdAt: string;
+  username?: string;
+  gender?: string;
 }
 
 export async function getAllUsers(): Promise<ManagedUser[]> {
@@ -356,6 +366,69 @@ export async function adminDeleteUser(uid: string): Promise<void> {
     body: JSON.stringify({ adminId, userId: uid }),
   });
   if (error) throw new Error(error);
+}
+
+// ─── Impersonation (master key): admin becomes any user, then back ─────
+// Backup lives in localStorage (survives reload), flag in sessionStorage
+// (per-tab: another tab stays whoever it is).
+const ADMIN_TOKEN_BACKUP_KEY = 'ws_admin_token_backup';
+const IMPERSONATE_FLAG_KEY = 'ws_impersonating_v1';
+
+export interface ImpersonationInfo {
+  adminName: string;
+  targetName: string;
+}
+
+export async function adminImpersonate(userId: string, adminName: string, targetName: string): Promise<void> {
+  const { data, error } = await api('/admin/impersonate', {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
+  if (error || !data?.token) throw new Error(error || 'Impersonation failed');
+  try {
+    const cur = localStorage.getItem(tokenKey);
+    if (cur) localStorage.setItem(ADMIN_TOKEN_BACKUP_KEY, cur);
+    sessionStorage.setItem(IMPERSONATE_FLAG_KEY, JSON.stringify({ adminName, targetName }));
+  } catch { /* private mode — token swap still works, banner may hide */ }
+  cachedUid = null;
+  cachedIsAdmin = false;
+  setToken(data.token);
+  try {
+    // Land on THEIR My Trips (never restore admin's stale trip_dashboard view).
+    sessionStorage.removeItem('ws_app_view');
+    sessionStorage.removeItem('ws_active_tab');
+  } catch { /* ignore */ }
+  window.location.reload();
+}
+
+export function getImpersonation(): ImpersonationInfo | null {
+  try {
+    const raw = sessionStorage.getItem(IMPERSONATE_FLAG_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (p && typeof p.targetName === 'string') {
+      return { adminName: String(p.adminName || 'Admin'), targetName: p.targetName };
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+export function stopImpersonation(): void {
+  try {
+    const backup = localStorage.getItem(ADMIN_TOKEN_BACKUP_KEY);
+    localStorage.removeItem(ADMIN_TOKEN_BACKUP_KEY);
+    sessionStorage.removeItem(IMPERSONATE_FLAG_KEY);
+    // Admin also lands fresh on My Trips (no stale target view).
+    sessionStorage.removeItem('ws_app_view');
+    sessionStorage.removeItem('ws_active_tab');
+    // ...then the boot check below reroutes to the Admin Dashboard.
+    sessionStorage.setItem('ws_return_admin', '1');
+    if (backup) setToken(backup);
+    else clearToken();
+  } catch { /* ignore */ }
+  cachedUid = null;
+  cachedIsAdmin = false;
+  window.location.reload();
 }
 
 export function makeInviteCode(): string {

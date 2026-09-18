@@ -40,11 +40,15 @@ import { Navbar, CleanTab } from './components/common/Navbar';
 import { AtSign, Bell, Check, MapPin, MessageCircle, Radio } from 'lucide-react';
 import { WelcomeScreen } from './components/trip/WelcomeScreen';
 import { ChatView } from './components/chat/ChatView';
+import { ChatListView } from './components/chat/ChatListView';
+import { getRequests, getFriends, getMyGroups, renameGroup, updateGroupMembers, dmRoomId, type ChatRequest, type CoTraveler, type ChatGroup } from './utils/requests';
+import { sendChatMessage } from './utils/chat';
+import { ServerGroupSheet } from './components/chat/ServerGroupSheet';
 import { TripMomentsView } from './components/trip/TripMomentsView';
 import { publishTripInvite, lookupInvite, joinTripById, shareMessage } from './utils/invites';
 import { ensureCloudUser, authGetUser, authSignOut, supabase } from './utils/supabaseClient';
 import { pushTripShared, subscribeTripShared, pushTombstone, deleteTripFromFirestore, deleteInviteByCode, type RemoteSnapshot } from './utils/sync';
-import { subscribeMoments } from './utils/momentsSync';
+import { subscribeMoments, flushTombstones } from './utils/momentsSync';
 import { joinTripRoom } from './utils/socket';
 import { playReceiverSiren, playChime as playChimeSoft } from './utils/chime';
 import { registerPushToken } from './utils/push';
@@ -71,8 +75,10 @@ import { viewerBudget, tripOwnerUid } from './utils/budget';
 import {
   parseActivity,
   parseChatMessage,
+  relativeTime,
   type FeedItem,
 } from './utils/notifications';
+import { NotifFeedPanel } from './components/common/NotifFeedPanel';
 import { isNativeApp, NativeSms } from './utils/nativeBridge';
 import { systemShare } from './utils/share';
 import { parseBankSMS, isDateWithinTrip, isRecurringDebit } from './utils/smsParser';
@@ -170,6 +176,41 @@ export function App() {
   // Center + FAB → Timeline composer: bumps to open it (Timeline mounts on tab switch).
   const [composerSignal, setComposerSignal] = useState(0);
   const [landingTab, setLandingTab] = useState<'trips' | 'explore' | 'chat'>('trips');
+  // Social hub (Chat tab): open DM, inbox lists, refresh trigger.
+  const [dmFriend, setDmFriend] = useState<CoTraveler | null>(null);
+  const [groupRoom, setGroupRoom] = useState<ChatGroup | null>(null);
+  const [renamingGroup, setRenamingGroup] = useState(false);
+  const [groupNameDraft, setGroupNameDraft] = useState('');
+  const [groupInfoOpen, setGroupInfoOpen] = useState(false);
+  const [groupBusy, setGroupBusy] = useState(false);
+  // Per-room unread (persists across reloads, cleared on open).
+  const [dmUnread, setDmUnread] = useState<Record<string, { count: number; preview: string; at: number }>>(() => {
+    try {
+      const s = localStorage.getItem('ws_dm_unread_v1');
+      return s ? JSON.parse(s) : {};
+    } catch {
+      return {};
+    }
+  });
+  const dmUnreadRef = useRef<Record<string, { count: number; preview: string; at: number }>>({});
+  dmUnreadRef.current = dmUnread;
+  const persistDmUnread = (m: Record<string, { count: number; preview: string; at: number }>) => {
+    setDmUnread(m);
+    try {
+      localStorage.setItem('ws_dm_unread_v1', JSON.stringify(m));
+    } catch { /* quota */ }
+  };
+  const clearDmUnread = (roomId: string) => {
+    if (!dmUnreadRef.current[roomId]) return;
+    const next = { ...dmUnreadRef.current };
+    delete next[roomId];
+    persistDmUnread(next);
+  };
+  const [reqReceived, setReqReceived] = useState<ChatRequest[]>([]);
+  const [reqSent, setReqSent] = useState<ChatRequest[]>([]);
+  const [friendsList, setFriendsList] = useState<CoTraveler[]>([]);
+  const [groupsList, setGroupsList] = useState<ChatGroup[]>([]);
+  const [peopleTick, setPeopleTick] = useState(0);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [isTripEditorOpen, setIsTripEditorOpen] = useState(false);
@@ -594,7 +635,20 @@ export function App() {
 
   useEffect(() => {
     ensureCloudUser()
-      .then(async (u) => { setMyUid(u.uid); await hydrateRemoteTrips(u.uid); })
+      .then(async (u) => {
+        setMyUid(u.uid);
+        // Exit-to-admin: land straight on the Admin Dashboard (not My Trips).
+        try {
+          if (sessionStorage.getItem('ws_return_admin')) {
+            sessionStorage.removeItem('ws_return_admin');
+            const me = await authGetUser().catch(() => null);
+            if (me && (me.role === 'admin' || me.isAdmin)) {
+              setAppView('admin_activity');
+            }
+          }
+        } catch { /* landing fallback stands */ }
+        await hydrateRemoteTrips(u.uid);
+      })
       .catch(() => setMyUid(null));
 
     // Deep link auto-join: ?join=CODE
@@ -883,7 +937,9 @@ export function App() {
   }, [activeTrip?.id, appView]);
 
   useEffect(() => {
-    if (!activeTrip || appView !== 'trip_dashboard') return;
+    // Feed stays live on dashboard AND landing (badges + WhatsApp-style
+    // notifications need it without opening the chat).
+    if (!activeTrip || (appView !== 'trip_dashboard' && appView !== 'landing')) return;
     const tripId = activeTrip.id;
     let cancelled = false;
     // History (REST) + live socket — bell/mentions stay live without opening chat
@@ -913,20 +969,73 @@ export function App() {
   }, [activeTrip?.id, appView]);
 
   // Timeline moments: Supabase is truth (any device), local Blob copies stay for instant render
+  // Newcomer watch: first load seeds silently — later arrivals from squad mates
+  // ring the bell panel + flash + phone buzz (same pattern as expense watcher).
+  // Delete sync: server-known ids that vanish from a GOOD poll are dropped
+  // (deleted elsewhere) — local-only pendings (never seen) are always kept.
+  // Failed poll (null) keeps everything — never wipe on offline.
+  const seenMomTripRef = useRef<string | null>(null);
+  const momKnownRef = useRef<Set<string>>(new Set());
+  const momServerSeenRef = useRef<Set<string>>(new Set());
+  // Live mirror of photos state (seed logic needs prev photos inside the poll callback).
+  const photosRef = useRef<SharedPhoto[]>([]);
+  useEffect(() => {
+    photosRef.current = photos;
+  });
   useEffect(() => {
     if (!activeTrip || appView !== 'trip_dashboard') return;
     const tripId = activeTrip.id;
     let cancelled = false;
     const unsub = subscribeMoments(tripId, (rows) => {
       if (cancelled) return;
+      if (rows === null) return;
+      // Good connection: flush any tombstones that failed while offline.
+      void flushTombstones();
+      if (seenMomTripRef.current !== tripId) {
+        seenMomTripRef.current = tripId;
+        momKnownRef.current = new Set(rows.map((r) => r.id));
+        // Zombie killer: local photos with server URLs (http) were synced in a
+        // PAST session — treat them as server-known from the start, so a first
+        // poll returning [] drops them instead of sheltering them as "pending".
+        // True offline pendings (non-http url, never synced) stay protected.
+        const localHttpIds = photosRef.current
+          .filter((p) => p.tripId === tripId && /^https?:/i.test(p.url || ''))
+          .map((p) => p.id);
+        momServerSeenRef.current = new Set([...rows.map((r) => r.id), ...localHttpIds]);
+      } else {
+        const uid = myUidRef.current;
+        const myMemberId =
+          (uid && membersRef.current.find((m) => m.uid === uid)?.id) ||
+          membersRef.current.find((m) => m.isCurrentUser)?.id;
+        for (const r of rows) {
+          if (momKnownRef.current.has(r.id)) continue;
+          momKnownRef.current.add(r.id);
+          if (r.uploadedByMemberId && r.uploadedByMemberId === myMemberId) continue; // own echo
+          const who = r.uploadedByName || 'Someone';
+          const when = fmtWhen();
+          const sub = (r.caption || '').slice(0, 80) || activeTrip.title;
+          pushActivity({ id: `mom_${r.id}`, title: `${who} shared a trip moment`, sub: when, at: Date.now() });
+          showNotifFlash(`${who} shared a trip moment • ${when}`, who);
+          loudNotify(`${who} shared a trip moment`, sub, ticketNotifId(`mom_${r.id}`));
+        }
+      }
+      const remoteIds = new Set(rows.map((r) => r.id));
+      // Server knew these, now gone, poll is good → deleted elsewhere: drop.
+      // (Local-only pendings were never server-seen, so they always survive.)
+      const goneIds = new Set(
+        [...momServerSeenRef.current].filter((id) => !remoteIds.has(id))
+      );
+      momServerSeenRef.current = new Set([...momServerSeenRef.current, ...remoteIds]);
       setPhotos((prev) => {
         const remoteById = new Map(rows.map((r) => [r.id, r]));
-        const merged = prev.map((p) => {
-          const r = remoteById.get(p.id);
-          if (!r) return p; // local-only (offline post) — keep
-          remoteById.delete(p.id);
-          return { ...r, localRef: p.localRef };
-        });
+        const merged = prev
+          .map((p) => {
+            const r = remoteById.get(p.id);
+            if (!r) return p; // local-only (offline post) — keep
+            remoteById.delete(p.id);
+            return { ...r, localRef: p.localRef };
+          })
+          .filter((p) => !goneIds.has(p.id));
         const fresh = [...remoteById.values()]
           .filter((r) => r.tripId === tripId)
           .sort((a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt));
@@ -939,6 +1048,133 @@ export function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTrip?.id, appView]);
+
+  // Chat requests inbox: poll received/sent/friends/groups. First load seeds
+  // silently — later arrivals ring bell + flash + phone buzz (never silent).
+  const reqSeededRef = useRef(false);
+  const reqKnownRef = useRef<Set<string>>(new Set());
+  const grpKnownRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!authed) return;
+    let cancelled = false;
+    const loadPeople = async () => {
+      try {
+        const [rec, sent, fr, grps] = await Promise.all([
+          getRequests('received'),
+          getRequests('sent'),
+          getFriends(),
+          getMyGroups(),
+        ]);
+        if (cancelled) return;
+        const normFr = (fr as (CoTraveler & { uid?: string })[]).map((f) => ({
+          ...f,
+          id: f.uid ?? f.id,
+        }));
+        if (!reqSeededRef.current) {
+          reqSeededRef.current = true;
+          reqKnownRef.current = new Set(rec.map((r) => r.id));
+          grpKnownRef.current = new Set(grps.map((g) => g.id));
+        } else {
+          for (const r of rec) {
+            if (reqKnownRef.current.has(r.id)) continue;
+            reqKnownRef.current.add(r.id);
+            const when = fmtWhen();
+            const handle = r.username ? `@${r.username}` : r.name;
+            pushActivity({ id: `req_${r.id}`, title: `${handle} sent you a chat request`, sub: when, at: Date.now() });
+            showNotifFlash(`${handle} sent you a chat request • ${when}`, r.name);
+            loudNotify('New chat request', `${handle} wants to connect`, ticketNotifId(`req_${r.id}`));
+          }
+          for (const g of grps) {
+            if (grpKnownRef.current.has(g.id)) continue;
+            grpKnownRef.current.add(g.id);
+            if (g.createdBy === myUid) continue; // own group (other device) — no self-ping
+            const when = fmtWhen();
+            // Creator name: friends list → server creatorName → fallback.
+            // Never "Someone" when the server knows who it was.
+            const creator =
+              normFr.find((f) => f.id === g.createdBy)?.name ||
+              (g.creatorName || '').trim() ||
+              'Someone';
+            const gName = (g.name || '').trim();
+            const title = gName ? `${creator} added you to "${gName}"` : `${creator} added you to a group`;
+            pushActivity({ id: `grp_${g.id}`, title, sub: when, at: Date.now() });
+            showNotifFlash(`${title} • ${when}`, creator);
+            loudNotify(gName ? `New group: ${gName}` : 'New group chat', title, ticketNotifId(`grp_${g.id}`));
+          }
+        }
+        setReqReceived(rec);
+        setReqSent(sent);
+        setFriendsList(normFr);
+        setGroupsList(grps);
+      } catch { /* offline — keep last lists */ }
+    };
+    loadPeople();
+    const timer = window.setInterval(loadPeople, 20000);
+    const onFocus = () => loadPeople();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed, peopleTick]);
+
+  // DM + group rooms live watch: join every Squad room; incoming from others
+  // (while NOT viewing that room) → unread badge + sound + banner + buzz.
+  // Viewing room shows live via ChatView (skip notify, still clear badge).
+  useEffect(() => {
+    if (!authed || !myUid) return;
+    const myName = profile?.name || 'Friend';
+    const rooms: { id: string; label: string }[] = [
+      ...friendsList.map((f) => ({ id: dmRoomId(myUid, f.id), label: f.name })),
+      ...groupsList.map((g) => ({
+        id: g.id,
+        label: g.name?.trim() || 'Group',
+      })),
+    ];
+    if (rooms.length === 0) return;
+    const leaves = rooms.map((r) =>
+      joinTripRoom(r.id, { uid: myUid, name: myName }, {
+        onMessage: (m) => {
+          const rich = m as ChatMessage & { _deleted?: boolean };
+          if (rich._deleted) return;
+          if (rich.senderId === myUid) return;
+          const viewing =
+            (dmFriend && dmRoomId(myUid, dmFriend.id) === r.id) ||
+            (groupRoom && groupRoom.id === r.id);
+          const text = (rich.text || (rich.type === 'location' ? 'Shared location' : 'message')).slice(0, 100);
+          if (viewing) {
+            // Open room shows it live — keep badge cleared, no noise.
+            clearDmUnread(r.id);
+            return;
+          }
+          const prev = dmUnreadRef.current[r.id];
+          persistDmUnread({
+            ...dmUnreadRef.current,
+            [r.id]: { count: (prev?.count || 0) + 1, preview: text, at: Date.now() },
+          });
+          // No sound on messages (never asked for) — banner + buzz only, and
+          // only for live arrivals (skip reconnect replays of old messages).
+          if (msgTimeMs(rich.createdAt) > sessionStartRef.current) {
+            try {
+              (navigator as Navigator & { vibrate?: (p: number) => boolean }).vibrate?.(80);
+            } catch { /* desktop */ }
+            showNotifFlash(chatToastText(rich.senderName, text), rich.senderName);
+            loudNotify(`${rich.senderName} (${r.label})`, text, ticketNotifId(`dm_${rich.id}`));
+          }
+        },
+      })
+    );
+    return () => {
+      leaves.forEach((leave) => {
+        try {
+          leave();
+        } catch { /* gone */ }
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed, myUid, friendsList, groupsList, dmFriend, groupRoom]);
 
   // Mark read while chat is open
   useEffect(() => {
@@ -962,6 +1198,8 @@ export function App() {
     for (const m of chatFeed) {
       if (notifiedRef.current.has(m.id)) continue;
       notifiedRef.current.add(m.id);
+      // Login catch-up history never pings — only live mentions do.
+      if (msgTimeMs(m.createdAt) <= sessionStartRef.current) continue;
       const mentionsMe =
         m.senderId !== myUid &&
         (m.mentions || []).some(
@@ -980,7 +1218,62 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatFeed, activeTab, activeTrip?.id, myUid]);
 
-  // ── Live sync (shared trips only) + split/personal notifications ──
+  // Session start: banners/flashes fire ONLY for messages that arrive AFTER
+  // app open. History catching up at login stays silent (badges still count).
+  const sessionStartRef = useRef<number>(Date.now());
+
+  /** Toast text for a chat message — strips a leading "Name:" when the stored
+   *  text already carries the sender prefix (pasted copies), so the toast
+   *  never reads "Zon: Zon : vvvv". */
+  const chatToastText = (senderName: string, text: string): string => {
+    const clean = (text || '').replace(
+      new RegExp(`^${senderName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*`, 'i'),
+      ''
+    ).trim() || text;
+    return `${senderName}: ${clean}`;
+  };
+
+  // WhatsApp rule for trip chats: open chat = silent (live), anywhere else =
+  // banner + phone buzz for every LIVE incoming message (no sound — never
+  // asked for; mentions already handled above with their own ping, so skip
+  // those here — no double buzz).
+  const msgSeenTripRef = useRef<string | null>(null);
+  const msgKnownRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!activeTrip) return;
+    if (msgSeenTripRef.current !== activeTrip.id) {
+      msgSeenTripRef.current = activeTrip.id;
+      msgKnownRef.current = new Set(chatFeed.map((m) => m.id));
+      return;
+    }
+    const viewingThisChat =
+      appView === 'trip_dashboard' && activeTab === 'chat';
+    if (viewingThisChat) {
+      chatFeed.forEach((m) => msgKnownRef.current.add(m.id));
+      return;
+    }
+    const me = activeTrip.members.find((m) => m.isCurrentUser);
+    for (const m of chatFeed) {
+      if (msgKnownRef.current.has(m.id)) continue;
+      msgKnownRef.current.add(m.id);
+      if (m.type === 'system' || m.type === 'siren' || m.type === 'bell') continue;
+      if (myUid && m.senderId === myUid) continue;
+      const mentionsMe = (m.mentions || []).some(
+        (x) => (me && x.id === me.id) || (me && me.name ? x.name === me.name : false)
+      );
+      if (mentionsMe) continue; // mention watcher pings these
+      // Login catch-up history stays silent — only live arrivals flash.
+      // (No sound on messages either — banner + buzz only.)
+      if (msgTimeMs(m.createdAt) <= sessionStartRef.current) continue;
+      const text = (m.text || (m.type === 'location' ? 'Shared location' : 'message')).slice(0, 100);
+      try {
+        (navigator as Navigator & { vibrate?: (p: number) => boolean }).vibrate?.(80);
+      } catch { /* desktop */ }
+      showNotifFlash(chatToastText(m.senderName, text), m.senderName);
+      loudNotify(`Message from ${m.senderName}`, text, ticketNotifId(`chat_${m.id}`));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatFeed, activeTab, appView, activeTrip?.id, myUid]);
   const [activity, setActivity] = useState<{ id: string; title: string; sub: string; at: number }[]>(() => {
     try {
       const s = localStorage.getItem('ws_activity_v1');
@@ -1180,6 +1473,10 @@ export function App() {
 
   // Expense alerts: add/update/delete → ONLY that split's members
   // (spec §3.4). Never notify yourself for your own changes.
+  // bootTimeRef: entries born BEFORE this session stay silent even if they
+  // arrive late via sync (kills the login/first-open notification spam —
+  // only genuinely NEW activity rings).
+  const bootTimeRef = useRef(Date.now());
   const seenExpTripRef = useRef<string | null>(null);
   const expSeenAt = useRef<Map<string, number>>(new Map());
   const deletedExpQueue = useRef<{ id: string; title: string; amount: number; by?: string; splitIds: string[] }[]>([]);
@@ -1209,10 +1506,12 @@ export function App() {
     const myMemberId =
       (uid && activeTrip.members.find((m) => m.uid === uid)?.id) ||
       activeTrip.members.find((m) => m.isCurrentUser)?.id;
-    // Deletes (tombstones from server) — split members only
+    // Deletes (tombstones from server) — split members only, and only for
+    // entries we actually saw live (died-before-arrival stays silent).
     for (const q of deletedExpQueue.current) {
       if (q.by && uid && q.by === uid) continue;
       if (myMemberId && !q.splitIds.includes(myMemberId)) continue;
+      if (!expSeenAt.current.has(q.id)) continue;
       const who = actorName(q.by);
       const when = fmtWhen();
       const title = `${who} deleted "${q.title}" (Rs.${Number(q.amount).toLocaleString('en-IN')})`;
@@ -1238,6 +1537,8 @@ export function App() {
       const when = fmtWhen();
       if (prevAt === undefined) {
         expSeenAt.current.set(e.id, e.updatedAt || 0);
+        // Late arrival of an entry born before this session → seed silently.
+        if ((e.updatedAt || 0) < bootTimeRef.current) continue;
         const withList = e.splits
           .map((s) => activeTrip.members.find((mm) => mm.id === s.memberId)?.name?.replace(/\(You\)/g, '').trim() || '')
           .filter((n) => n && n !== payerName);
@@ -1604,6 +1905,65 @@ export function App() {
     );
   }
 
+  // ─── Unified notifications (trip header bell + landing header bell open
+  // the SAME panel — synced by construction). Base = activity + current
+  // trip chat feed, latest first, cap 30.
+  const markAllNotifRead = () => {
+    const now = Date.now();
+    setNotifSeenAt(now);
+    try { localStorage.setItem('ws_notif_seen_v1', String(now)); } catch { /* private mode */ }
+    setLastSeen(now);
+    try { if (activeTrip) localStorage.setItem(`ws_chat_seen_${activeTrip.id}`, String(now)); } catch { /* private mode */ }
+  };
+  const buildBaseFeed = (): FeedItem[] => ([
+    ...activity.flatMap((a) => {
+      const it = parseActivity(a, a.at > notifSeenAt, profile?.name);
+      return it ? [it] : [];
+    }),
+    ...chatFeed.flatMap((m) => {
+      const it = parseChatMessage(
+        m,
+        myUid,
+        msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system'
+      );
+      return it ? [it] : [];
+    }),
+  ])
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 30);
+
+  // Landing-wide counts: active-trip unread + DM unreads + pending requests.
+  const dmUnreadTotal = Object.values(dmUnread).reduce((n, r) => n + (r?.count || 0), 0);
+  const tripUnreadNow = chatFeed.filter(
+    (m) => msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system'
+  ).length;
+  const landingBellUnread =
+    tripUnreadNow +
+    dmUnreadTotal +
+    activity.filter((a) => a.at > notifSeenAt).length;
+  const chatBadgeTotal = tripUnreadNow + dmUnreadTotal + reqReceived.length;
+
+  // DM unread rows for the landing panel (open the right room on tap).
+  const dmFeedRows: FeedItem[] = Object.entries(dmUnread).flatMap(([roomId, r]) => {
+    if (!r || !r.count) return [];
+    const friend = friendsList.find((f) => myUid && dmRoomId(myUid, f.id) === roomId);
+    const group = !friend ? groupsList.find((g) => g.id === roomId) : undefined;
+    const label = friend?.name || group?.name || 'Chat';
+    const preview = (r.preview || 'sent you a message').slice(0, 80);
+    return [{
+      id: `dmroom-${roomId}`,
+      category: 'message' as const,
+      actor: label,
+      messageBody: preview,
+      highlightData: r.count > 1 ? `${r.count} new` : null,
+      previewText: null,
+      relativeTime: relativeTime(r.at),
+      isUnread: true,
+      at: r.at,
+      opensChat: true,
+    }];
+  });
+
   if (appView === 'coming_soon') {
     return (
       <div className="min-h-screen bg-slate-50 panel-enter">
@@ -1640,6 +2000,248 @@ export function App() {
   }
 
   if (appView === 'landing') {
+    // Group room (from Squad) — same synthetic-trip trick as DMs.
+    if (groupRoom && myUid) {
+      const gMembers = (groupRoom.memberUids || []).map((uid) => {
+        if (uid === myUid) {
+          return { id: 'me', uid: myUid, name: profile?.name || 'Me', isCurrentUser: true };
+        }
+        const f = friendsList.find((x) => x.id === uid);
+        return { id: uid, uid, name: f?.name || 'Squad member' };
+      });
+      const gTitle = groupRoom.name?.trim() ||
+        gMembers
+          .filter((m) => !m.isCurrentUser)
+          .map((m) => String(m.name).split(' ')[0])
+          .join(', ')
+          .slice(0, 42) || 'Group';
+      const grpTrip = { id: groupRoom.id, title: gTitle, members: gMembers } as unknown as Trip;
+      const grpMemberNames = new Map<string, string>(
+        gMembers.map((m) => [m.uid || m.id, m.isCurrentUser ? (profile?.name || 'Me') : m.name])
+      );
+      const grpCandidates = friendsList.filter((f) => !(groupRoom.memberUids || []).includes(f.id));
+      const postGroupLine = async (text: string) => {
+        try {
+          await sendChatMessage(groupRoom.id, profile?.name || 'Someone', { type: 'system', text });
+        } catch { /* timeline line is best-effort */ }
+      };
+      // Add members → API + timeline line (once): "Krey added Zon to the conversation".
+      const handleGroupAdd = async (ids: string[]) => {
+        if (groupBusy || ids.length === 0) return;
+        setGroupBusy(true);
+        try {
+          const names = ids.map((id) => friendsList.find((f) => f.id === id)?.name || 'Someone');
+          const r = await updateGroupMembers(groupRoom.id, { add: ids });
+          if (r.deleted) {
+            setGroupRoom(null);
+            setGroupInfoOpen(false);
+          } else {
+            setGroupRoom({ ...groupRoom, memberUids: r.memberUids, createdBy: r.createdBy || groupRoom.createdBy });
+            const me = profile?.name || 'Someone';
+            await postGroupLine(`${me} added ${names.join(', ')} to the conversation`);
+            showNotifFlash(`${names.join(', ')} added to the group`);
+          }
+          setPeopleTick((n) => n + 1);
+        } catch (e) {
+          showNotifFlash(e instanceof Error ? e.message : 'Could not add members');
+        } finally {
+          setGroupBusy(false);
+        }
+      };
+      // Remove a member → API + timeline line (once): "Krey removed Zon…".
+      const handleGroupRemove = async (uid: string) => {
+        if (groupBusy) return;
+        const name = grpMemberNames.get(uid) || 'Someone';
+        if (!window.confirm(`Remove ${name} from the group?`)) return;
+        setGroupBusy(true);
+        try {
+          const r = await updateGroupMembers(groupRoom.id, { remove: [uid] });
+          if (r.deleted) {
+            setGroupRoom(null);
+            setGroupInfoOpen(false);
+          } else {
+            setGroupRoom({ ...groupRoom, memberUids: r.memberUids, createdBy: r.createdBy || groupRoom.createdBy });
+            await postGroupLine(`${profile?.name || 'Someone'} removed ${name}`);
+            showNotifFlash(`${name} removed from the group`);
+          }
+          setPeopleTick((n) => n + 1);
+        } catch (e) {
+          showNotifFlash(e instanceof Error ? e.message : 'Could not remove member');
+        } finally {
+          setGroupBusy(false);
+        }
+      };
+      // Leave → API + timeline line (once): "Krey left the group".
+      const handleGroupLeave = async () => {
+        if (groupBusy || !myUid) return;
+        if (!window.confirm('Leave this group?')) return;
+        setGroupBusy(true);
+        try {
+          const r = await updateGroupMembers(groupRoom.id, { remove: [myUid] });
+          await postGroupLine(`${profile?.name || 'Someone'} left this group chat`);
+          setGroupRoom(null);
+          setGroupInfoOpen(false);
+          if (!r.deleted) setPeopleTick((n) => n + 1);
+          showNotifFlash('You left the group');
+        } catch (e) {
+          showNotifFlash(e instanceof Error ? e.message : 'Could not leave group');
+        } finally {
+          setGroupBusy(false);
+        }
+      };
+      const saveGroupName = async () => {
+        const name = groupNameDraft.trim().slice(0, 60);
+        if (!name) {
+          setRenamingGroup(false);
+          return;
+        }
+        try {
+          await renameGroup(groupRoom.id, name);
+          setGroupRoom({ ...groupRoom, name });
+          setPeopleTick((n) => n + 1);
+        } catch {
+          showNotifFlash('Could not rename group. Check internet.');
+        }
+        setRenamingGroup(false);
+      };
+      return (
+        <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col">
+          <div className="bg-white/95 backdrop-blur border-b border-slate-200 flex-shrink-0">
+            <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setGroupRoom(null)}
+                aria-label="Back to chats"
+                title="Back to chats"
+                className="p-1.5 -ml-1 rounded-full text-slate-700 hover:text-indigo-600 hover:bg-slate-100 active:scale-95 transition-all cursor-pointer"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+              </button>
+              <span className="w-8 h-8 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center flex-shrink-0 text-xs font-extrabold">
+                {(groupRoom.memberUids || []).length}
+              </span>
+              <span className="min-w-0 flex-1">
+                {renamingGroup ? (
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      autoFocus
+                      value={groupNameDraft}
+                      onChange={(e) => setGroupNameDraft(e.target.value.slice(0, 60))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void saveGroupName();
+                        if (e.key === 'Escape') setRenamingGroup(false);
+                      }}
+                      placeholder="Group name"
+                      className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-slate-50 border border-indigo-300 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void saveGroupName()}
+                      className="px-3 h-8 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer flex-shrink-0"
+                    >
+                      Save
+                    </button>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setGroupInfoOpen(true)}
+                      title="Group info — members, add, remove"
+                      className="block text-sm font-extrabold text-slate-900 truncate hover:text-indigo-600 active:scale-[0.98] transition-all cursor-pointer text-left"
+                    >
+                      {gTitle}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGroupNameDraft(groupRoom.name || '');
+                        setRenamingGroup(true);
+                      }}
+                      aria-label="Rename group"
+                      title="Rename group (any member can)"
+                      className="p-1 rounded-full text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer flex-shrink-0"
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+                    </button>
+                  </span>
+                )}
+                <span className="block text-[11px] text-slate-400 font-medium truncate">
+                  Group · {(groupRoom.memberUids || []).length} members
+                </span>
+              </span>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 max-w-3xl mx-auto w-full px-3 sm:px-6 pt-1 pb-1 flex flex-col overflow-hidden">
+            <ChatView
+              trip={grpTrip}
+              myName={profile?.name || 'Me'}
+              myUid={myUid}
+              unreadIds={[]}
+              bare
+            />
+          </div>
+          {groupInfoOpen && (
+            <ServerGroupSheet
+              group={groupRoom}
+              myUid={myUid}
+              memberNames={grpMemberNames}
+              candidates={grpCandidates}
+              busy={groupBusy}
+              onAdd={(ids) => void handleGroupAdd(ids)}
+              onRemove={(uid) => void handleGroupRemove(uid)}
+              onLeave={() => void handleGroupLeave()}
+              onClose={() => setGroupInfoOpen(false)}
+            />
+          )}
+        </div>
+      );
+    }
+    // 1:1 DM room (from Squad) — full-screen over landing, synthetic trip so the
+    // existing ChatView (socket/history/typing/reads) works unchanged.
+    if (dmFriend && myUid) {
+      const dmTrip = {
+        id: dmRoomId(myUid, dmFriend.id),
+        title: dmFriend.name,
+        members: [
+          { id: 'me', uid: myUid, name: profile?.name || 'Me', isCurrentUser: true },
+          { id: dmFriend.id, uid: dmFriend.id, name: dmFriend.name },
+        ],
+      } as unknown as Trip;
+      return (
+        <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col">
+          <div className="bg-white/95 backdrop-blur border-b border-slate-200 flex-shrink-0">
+            <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setDmFriend(null)}
+                aria-label="Back to chats"
+                title="Back to chats"
+                className="p-1.5 -ml-1 rounded-full text-slate-700 hover:text-indigo-600 hover:bg-slate-100 active:scale-95 transition-all cursor-pointer"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+              </button>
+              <span className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-extrabold flex-shrink-0">
+                {(dmFriend.name || 'M').trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-extrabold text-slate-900 truncate">{dmFriend.name}</span>
+                <span className="block text-[11px] text-slate-400 font-medium truncate">@{dmFriend.username}</span>
+              </span>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 max-w-3xl mx-auto w-full px-3 sm:px-6 pt-1 pb-1 flex flex-col overflow-hidden">
+            <ChatView
+              trip={dmTrip}
+              myName={profile?.name || 'Me'}
+              myUid={myUid}
+              unreadIds={[]}
+              bare
+            />
+          </div>
+        </div>
+      );
+    }
     return (
       <>
         {SirenBanner}
@@ -1658,13 +2260,35 @@ export function App() {
           myUid={myUid}
           ownerFilter={ownerFilter}
           onOwnerFilterChange={setOwnerFilter}
-          unreadCount={chatFeed.filter((m) => msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system').length}
+          unreadCount={landingBellUnread}
           bellPulse={bellPulse}
-          onBellClick={() => {
-            setAppView('coming_soon');
-          }}
+          onBellClick={() => setNotifOpen(true)}
           landingTab={landingTab}
           onLandingTabChange={setLandingTab}
+          chatBadge={chatBadgeTotal}
+          chatList={
+            <ChatListView
+              myUid={myUid}
+              myName={profile?.name || 'Me'}
+              received={reqReceived}
+              sent={reqSent}
+              friends={friendsList}
+              groups={groupsList}
+              dmUnread={dmUnread}
+              onOpenDM={(f) => {
+                setLandingTab('chat');
+                if (myUid) clearDmUnread(dmRoomId(myUid, f.id));
+                setDmFriend(f);
+              }}
+              onOpenGroupRoom={(g) => {
+                setLandingTab('chat');
+                clearDmUnread(g.id);
+                setGroupRoom(g);
+              }}
+              onChanged={() => setPeopleTick((n) => n + 1)}
+              notify={(msg) => showNotifFlash(msg)}
+            />
+          }
           onOpenChat={() => {
             setLandingTab('chat');
           }}
@@ -1689,6 +2313,51 @@ export function App() {
           recommendations={recommendations}
           onAddRecommendation={handleAddPlace}
         />
+        {notifOpen && (() => {
+          // Landing panel: SAME unified feed as the trip page (activity +
+          // trip chat) plus DM unread rows — latest first, cap 30.
+          const feed: FeedItem[] = [...dmFeedRows, ...buildBaseFeed()]
+            .sort((a, b) => b.at - a.at)
+            .slice(0, 30);
+          const unreadCount = feed.filter((f) => f.isUnread).length;
+          return (
+            <NotifFeedPanel
+              feed={feed}
+              unreadCount={unreadCount}
+              memberNames={activeTrip?.members.map((m) => m.name) ?? []}
+              onClose={() => setNotifOpen(false)}
+              onOpenItem={(f) => {
+                setNotifOpen(false);
+                if (f.id.startsWith('dmroom-')) {
+                  const roomId = f.id.slice('dmroom-'.length);
+                  const friend = friendsList.find((x) => myUid && dmRoomId(myUid, x.id) === roomId);
+                  if (friend) {
+                    setLandingTab('chat');
+                    if (myUid) clearDmUnread(dmRoomId(myUid, friend.id));
+                    setDmFriend(friend);
+                    return;
+                  }
+                  const group = groupsList.find((g) => g.id === roomId);
+                  if (group) {
+                    setLandingTab('chat');
+                    clearDmUnread(group.id);
+                    setGroupRoom(group);
+                    return;
+                  }
+                  setLandingTab('chat');
+                  return;
+                }
+                // Trip chat row → open that trip's chat dashboard.
+                if (activeTrip) {
+                  setActiveTripId(activeTrip.id);
+                  setActiveTab('chat');
+                  setAppView('trip_dashboard');
+                }
+              }}
+              onMarkAllRead={markAllNotifRead}
+            />
+          );
+        })()}
         <TripCreateModal
           isOpen={isTripCreateOpen}
           onClose={() => setIsTripCreateOpen(false)}
@@ -1758,23 +2427,8 @@ export function App() {
           setNotifOpen(false);
           setActiveTab('chat');
         };
-        // Unified smart feed: latest first, cap 30 — splitwise no longer sticks to the top
-        const feed: FeedItem[] = [
-          ...activity.flatMap((a) => {
-            const it = parseActivity(a, a.at > notifSeenAt, profile?.name);
-            return it ? [it] : [];
-          }),
-          ...chatFeed.flatMap((m) => {
-            const it = parseChatMessage(
-              m,
-              myUid,
-              msgTimeMs(m.createdAt) > lastSeen && m.senderId !== myUid && m.type !== 'system'
-            );
-            return it ? [it] : [];
-          }),
-        ]
-          .sort((a, b) => b.at - a.at)
-          .slice(0, 30);
+        // Unified smart feed (shared builder — same feed as the landing bell).
+        const feed: FeedItem[] = buildBaseFeed();
         const unreadCount = feed.filter((f) => f.isUnread).length;
         const META: Record<FeedItem['category'], { icon: React.ReactNode; box: string }> = {
           transaction: {
