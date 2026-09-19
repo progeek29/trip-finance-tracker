@@ -7,6 +7,7 @@ import { mintCardNo, cardSeed, isValidCardNo, mintUsername, isValidUsername, cle
 import type { UserProfile } from '../../utils/storage';
 import type { SharedPhoto, Trip } from '../../types';
 import { PostDetailModal } from '../discovery/PostDetailModal';
+import { OtpFlow } from './OtpFlow';
 import { MomentGridCell } from '../discovery/MomentGridCell';
 import { getUserMainPosts } from '../../utils/requests';
 
@@ -65,6 +66,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [joinMsg, setJoinMsg] = useState<string | null>(null);
   const [choices, setChoices] = useState<Trip[] | null>(null);
   const [detailPhoto, setDetailPhoto] = useState<SharedPhoto | null>(null);
+  const [showPassOtp, setShowPassOtp] = useState(false);
   // Main-timeline posts never enter App photo state — fetch + merge here so
   // My-posts shows EVERYTHING (trip + main), newest first, deduped by id.
   const [mainPosts, setMainPosts] = useState<SharedPhoto[]>([]);
@@ -529,6 +531,24 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                   <p className={`text-[11px] font-bold rounded-lg px-3 py-1.5 ${emailMsg.ok ? 'text-emerald-600 bg-emerald-50' : 'text-rose-500 bg-rose-50'}`}>
                     {emailMsg.text}
                   </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowPassOtp((v) => !v)}
+                  className="self-start text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                >
+                  {showPassOtp ? 'Close password reset' : 'Set / reset password via email code'}
+                </button>
+                {showPassOtp && (
+                  <OtpFlow
+                    purpose="reset"
+                    initialEmail={savedEmail || email}
+                    onDone={() => {
+                      setShowPassOtp(false);
+                      setSaveMsg('Password updated! Use it next login.');
+                      setTimeout(() => setSaveMsg(null), 3000);
+                    }}
+                  />
                 )}
               </div>
 

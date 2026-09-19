@@ -140,6 +140,37 @@ export async function authUpdateProfile(patch: { name: string; phone: string; ca
   return data.user;
 }
 
+/** Email OTP (Brevo): verify + password reset/set for password users.
+ *  Google users never need it (verified by Google). Responses stay generic. */
+export async function requestOtp(email: string, purpose: 'verify' | 'reset'): Promise<void> {
+  const { error } = await api('/otp/request', {
+    method: 'POST',
+    body: JSON.stringify({ email: String(email || '').trim(), purpose }),
+  });
+  if (error) throw new Error(error);
+}
+
+export async function verifyOtp(
+  email: string,
+  purpose: 'verify' | 'reset',
+  code: string
+): Promise<{ verified?: boolean; resetToken?: string }> {
+  const { data, error } = await api('/otp/verify', {
+    method: 'POST',
+    body: JSON.stringify({ email: String(email || '').trim(), purpose, code: code.trim() }),
+  });
+  if (error) throw new Error(error);
+  return data || {};
+}
+
+export async function resetPasswordWithToken(token: string, newPassword: string): Promise<void> {
+  const { error } = await api('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, newPassword }),
+  });
+  if (error) throw new Error(error);
+}
+
 export async function authForgotPassword(email: string, newPassword: string): Promise<void> {
   const { error } = await api('/auth/forgot-password', {
     method: 'POST',

@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { googleClientId, authSignInWithGoogle } from '../../utils/supabaseClient';
 
 interface GoogleIdentity {
   accounts: {
     id: {
-      initialize: (opts: { client_id: string; callback: (resp: { credential?: string }) => void }) => void;
+      initialize: (opts: { client_id: string; callback: (resp: { credential?: string }) => void; use_fedcm_for_prompt?: boolean; use_fedcm_for_button?: boolean }) => void;
+      renderButton: (el: HTMLElement, opts: Record<string, unknown>) => void;
       prompt: () => void;
     };
   };
@@ -51,60 +52,106 @@ function GoogleG() {
 interface GoogleButtonProps {
   onSuccess: () => void;
   onError: (msg: string) => void;
+  /** Fire One Tap on mount (auto prompt for logged-in Google sessions).
+   *  Silent when no session — the popup button stays as fallback. */
+  oneTap?: boolean;
 }
 
-/** Continue with Google — ALWAYS visible (sexy G, app-rounded). Without a
- *  configured Client ID it explains instead of silently vanishing. */
-export const GoogleButton: React.FC<GoogleButtonProps> = ({ onSuccess, onError }) => {
+/** Continue with Google — official GIS popup button (works with or without a
+ *  prior Google session: no session → Google asks to log in first, then
+ *  returns). Falls back to an identical-looking button that explains setup
+ *  when no Client ID is configured yet. */
+export const GoogleButton: React.FC<GoogleButtonProps> = ({ onSuccess, onError, oneTap }) => {
+  const clientId = googleClientId();
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [fullWidth, setFullWidth] = useState(300);
+  const promptedRef = useRef(false);
+  const cbRef = useRef({ onSuccess, onError });
+  cbRef.current = { onSuccess, onError };
 
-  const handleClick = () => {
-    const clientId = googleClientId();
-    if (!clientId) {
-      onError('Google sign-in is setting up — continue with email for now.');
-      return;
-    }
-    if (busy) return;
-    setBusy(true);
+  // Measure the card width so the official button fills it edge-to-edge.
+  useEffect(() => {
+    const measure = () => {
+      const w = wrapRef.current?.offsetWidth || 300;
+      setFullWidth(Math.max(200, Math.min(400, Math.floor(w))));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  useEffect(() => {
+    if (!clientId) return;
+    let live = true;
     loadGis()
       .then(() => {
-        if (!window.google) throw new Error('Google failed to load.');
+        if (!live || !btnRef.current || !window.google) return;
         window.google.accounts.id.initialize({
           client_id: clientId,
+          use_fedcm_for_prompt: true,
+          use_fedcm_for_button: true,
           callback: (resp) => {
             if (!resp?.credential) {
-              setBusy(false);
-              onError('Google sign-in was cancelled.');
+              cbRef.current.onError('Google sign-in was cancelled.');
               return;
             }
+            setBusy(true);
             authSignInWithGoogle(resp.credential)
-              .then(() => onSuccess())
-              .catch((e) => onError(e instanceof Error ? e.message : 'Google sign-in failed.'))
-              .finally(() => setBusy(false));
+              .then(() => {
+                if (live) cbRef.current.onSuccess();
+              })
+              .catch((e) => {
+                if (live) cbRef.current.onError(e instanceof Error ? e.message : 'Google sign-in failed.');
+              })
+              .finally(() => {
+                if (live) setBusy(false);
+              });
           },
         });
-        window.google.accounts.id.prompt();
-        // One Tap may stay silent (dismissed/cooldown) — release the button.
-        window.setTimeout(() => setBusy(false), 8000);
+        btnRef.current.innerHTML = '';
+        window.google.accounts.id.renderButton(btnRef.current, {
+          theme: 'outline',
+          size: 'large',
+          text: 'continue_with',
+          shape: 'pill',
+          width: fullWidth,
+        });
+        // One Tap: auto prompt for logged-in sessions (silent otherwise).
+        if (oneTap && !promptedRef.current) {
+          promptedRef.current = true;
+          try {
+            window.google.accounts.id.prompt();
+          } catch { /* cooldown/dismissed — button fallback stays */ }
+        }
       })
       .catch(() => {
-        setBusy(false);
-        onError('Google failed to load. Check internet and retry.');
+        if (live) setFailed(true);
       });
-  };
+    return () => {
+      live = false;
+    };
+  }, [clientId, fullWidth, oneTap]);
 
+  // No Client ID yet (or script blocked): same look, explains on tap.
+  if (!clientId || failed) {
+    return (
+      <button
+        type="button"
+        onClick={() => onError('Google sign-in is setting up — continue with email for now.')}
+        className="w-full h-12 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:shadow-md flex items-center justify-center gap-3 transition-all cursor-pointer"
+      >
+        <GoogleG />
+        <span className="text-sm font-bold text-slate-800">Continue with Google</span>
+      </button>
+    );
+  }
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={busy}
-      className="w-full h-12 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:shadow-md disabled:opacity-60 flex items-center justify-center gap-3 transition-all cursor-pointer"
-    >
-      <GoogleG />
-      <span className="text-sm font-bold text-slate-800">
-        {busy ? 'Connecting…' : 'Continue with Google'}
-      </span>
-    </button>
+    <div ref={wrapRef} className="w-full">
+      <div ref={btnRef} className={`w-full flex justify-center ${busy ? 'opacity-60 pointer-events-none' : ''}`} />
+    </div>
   );
 };
 

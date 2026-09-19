@@ -62,6 +62,34 @@ const STMTS = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS gender text DEFAULT 'unspecified'`,
   // Google sign-on: stable subject id (never trust email alone for linking).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub text`,
+  // Email verification flag (password users verify via Brevo OTP; Google
+  // users are verified by definition).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean DEFAULT false`,
+  // OTP codes: hashed, purpose-tagged, short-lived. Attempts capped.
+  `CREATE TABLE IF NOT EXISTS email_otps (
+    id text primary key,
+    email text not null,
+    purpose text not null,
+    code_hash text not null,
+    expires_at bigint not null,
+    attempts smallint default 0,
+    consumed boolean default false,
+    "createdAt" bigint
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_otps_email ON email_otps(email, purpose)`,
+  // Single-use reset tokens (OTP-verified): exchange for a password write.
+  `CREATE TABLE IF NOT EXISTS password_resets (
+    token text primary key,
+    email text not null,
+    expires_at bigint not null,
+    consumed boolean default false,
+    "createdAt" bigint
+  )`,
+  // Tiny KV for housekeeping (Brevo last-send timestamp for the heartbeat).
+  `CREATE TABLE IF NOT EXISTS app_meta (
+    key text primary key,
+    value text default ''
+  )`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS pinned boolean DEFAULT false`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS "_deleted" boolean DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS message_reads (

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Mail, Lock, ArrowRight, User } from 'lucide-react';
-import { authSignUp, authSignIn, authForgotPassword } from '../../utils/supabaseClient';
+import { authSignUp, authSignIn, authForgotPassword, requestOtp } from '../../utils/supabaseClient';
 import { PhoneInput, isValidPhone } from './PhoneInput';
 import { GoogleButton } from './GoogleButton';
+import { OtpFlow } from './OtpFlow';
 import { Logo } from './Logo';
 
 interface AuthScreenProps {
@@ -45,6 +46,9 @@ export function useAuthForm(onAuth: AuthScreenProps['onAuth']): AuthFormProps {
   const [fMsg, setFMsg] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [fLoading, setFLoading] = useState(false);
+  // Post-signup email verify (OTP): profile waits here until code passes.
+  const [verifyEmail, setVerifyEmail] = useState<string | null>(null);
+  const [pendingProfile, setPendingProfile] = useState<{ name: string; phone: string; cardNo?: string; inviteCode?: string } | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,12 +84,19 @@ export function useAuthForm(onAuth: AuthScreenProps['onAuth']): AuthFormProps {
         const { mintCardNo, cardSeed } = await import('../../utils/cards');
         const cardNo = mintCardNo(cardSeed(email.trim(), phone.trim()));
         await authSignUp(email.trim(), password, name.trim(), phone.trim(), cardNo);
-        onAuth({
+        // Email OTP verify first (Google users skip this entirely) — then enter.
+        try {
+          await requestOtp(email.trim(), 'verify');
+        } catch {
+          // Mail hiccup: still gate on code (resend inside the flow).
+        }
+        setPendingProfile({
           name: name.trim(),
           phone: phone.trim(),
           cardNo,
           inviteCode: inviteCode.trim().toUpperCase() || undefined,
         });
+        setVerifyEmail(email.trim());
       }
     } catch (err: any) {
       setError(err?.message || 'Something went wrong');
@@ -129,6 +140,7 @@ export function useAuthForm(onAuth: AuthScreenProps['onAuth']): AuthFormProps {
     password, setPassword, inviteCode, setInviteCode, loading, error, setError,
     showForgot, setShowForgot, fNewPass, setFNewPass, fMsg, setFMsg,
     successMessage, setSuccessMessage, fLoading, hasInvite,
+    verifyEmail, setVerifyEmail, pendingProfile,
     onSubmit: handleSubmit, onForgot: handleForgot,
   };
 }
@@ -161,7 +173,11 @@ interface AuthFormProps {
   hasInvite: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onForgot: (e: React.FormEvent) => void;
-  googleAuth?: { onSuccess: () => void; onError: (msg: string) => void };
+  googleAuth?: { onSuccess: () => void; onError: (msg: string) => void; oneTap?: boolean };
+  verifyEmail: string | null;
+  setVerifyEmail: (v: string | null) => void;
+  pendingProfile: { name: string; phone: string; cardNo?: string; inviteCode?: string } | null;
+  onVerifiedSignup?: (profile: { name: string; phone: string; cardNo?: string; inviteCode?: string }) => void;
 }
 
 /** The real login/signup/forgot form — shared by AuthScreen and LoginLanding. */
@@ -170,13 +186,35 @@ export function AuthForm(props: AuthFormProps) {
     isLogin, setIsLogin, name, setName, email, setEmail, phone, setPhone,
     password, setPassword, inviteCode, setInviteCode, loading, error, setError,
     showForgot, setShowForgot, fNewPass, setFNewPass, fMsg, setFMsg, successMessage,
-    setSuccessMessage, fLoading, hasInvite, onSubmit, onForgot, googleAuth,
+    setSuccessMessage, fLoading, hasInvite,     onSubmit, onForgot, googleAuth,
+    verifyEmail, setVerifyEmail, pendingProfile, onVerifiedSignup,
   } = props;
+  // Post-signup gate: verify email over OTP before entering the app.
+  if (verifyEmail && pendingProfile && onVerifiedSignup) {
+    return (
+      <div className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
+        <div>
+          <h3 className="text-base font-extrabold text-slate-900">Verify your email</h3>
+          <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+            One code stands between you and WanderSync.
+          </p>
+        </div>
+        <OtpFlow
+          purpose="verify"
+          initialEmail={verifyEmail}
+          onDone={() => {
+            setVerifyEmail(null);
+            onVerifiedSignup(pendingProfile);
+          }}
+        />
+      </div>
+    );
+  }
   return (
         <form onSubmit={onSubmit} className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
           {!showForgot && googleAuth && (
             <>
-              <GoogleButton onSuccess={googleAuth.onSuccess} onError={googleAuth.onError} />
+              <GoogleButton onSuccess={googleAuth.onSuccess} onError={googleAuth.onError} oneTap={googleAuth.oneTap} />
               <div className="flex items-center gap-3">
                 <span className="flex-1 h-px bg-slate-200" />
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
@@ -187,52 +225,16 @@ export function AuthForm(props: AuthFormProps) {
             </>
           )}
           {showForgot ? (
-            <div className="space-y-3 rounded-2xl bg-slate-50 border border-slate-200 p-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Email</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@email.com"
-                    className="w-full rounded-xl border border-slate-200 pl-10 pr-3 py-2.5 text-sm bg-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">New password</label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="password"
-                    value={fNewPass}
-                    onChange={(e) => setFNewPass(e.target.value)}
-                    placeholder="Min 6 characters"
-                    className="w-full rounded-xl border border-slate-200 pl-10 pr-3 py-2.5 text-sm bg-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  />
-                </div>
-              </div>
-              {fMsg && (
-                <p className="text-xs text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2">{fMsg}</p>
-              )}
-              <button
-                type="button"
-                onClick={onForgot}
-                disabled={fLoading}
-                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold text-sm cursor-pointer"
-              >
-                {fLoading ? 'Resetting…' : 'Reset Password'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowForgot(false); setError(''); setFMsg(''); setSuccessMessage(''); }}
-                className="w-full text-center text-xs text-slate-500 font-bold hover:underline cursor-pointer"
-              >
-                Back to login
-              </button>
-            </div>
+            <OtpFlow
+              purpose="reset"
+              initialEmail={email}
+              onDone={() => {
+                setShowForgot(false);
+                setIsLogin(true);
+                setSuccessMessage('Password reset successful. Please login with your new password.');
+              }}
+              onBack={() => { setShowForgot(false); setError(''); setFMsg(''); setSuccessMessage(''); }}
+            />
           ) : (
             <>
               {/* Name - signup only */}

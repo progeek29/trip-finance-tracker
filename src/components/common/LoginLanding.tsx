@@ -173,7 +173,9 @@ export function LoginLanding({ onAuth }: LoginLandingProps) {
             googleAuth={{
               onSuccess: () => setJustGoogled(true),
               onError: (msg) => showToast(msg),
+              oneTap: true,
             }}
+            onVerifiedSignup={(profile) => onAuth(profile)}
           />
         </div>
       </main>

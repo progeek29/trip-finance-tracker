@@ -751,6 +751,245 @@ app.get('/api/users', requireSession, async (req, res) => {
   }
 });
 
+// ─── Email OTP (Brevo): verify + password reset/set ───────────────────────
+// One system for three jobs: signup verify, forgot-password, Google-user
+// set-password. Codes are bcrypt-hashed, 10-min, 3 attempts. Sends are
+// rate-limited (5/hour/email). Responses are ALWAYS generic — never reveal
+// whether an address is registered.
+async function touchBrevoHeartbeat() {
+  try {
+    await pool.query(
+      `INSERT INTO app_meta (key, value) VALUES ('brevo_last_send', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [String(Date.now())]
+    );
+  } catch { /* housekeeping must never break auth */ }
+}
+
+async function sendBrevoMail(to, subject, text, html) {
+  const key = process.env.BREVO_API_KEY || '';
+  const sender = process.env.BREVO_SENDER || '';
+  if (!key || !sender) throw new Error('mail-not-configured');
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'api-key': key },
+    body: JSON.stringify({
+      sender: { email: sender, name: 'WanderSync' },
+      to: [{ email: to }],
+      subject,
+      textContent: text,
+      ...(html ? { htmlContent: html } : {}),
+    }),
+  });
+  if (!res.ok) throw new Error('mail-send-failed: ' + res.status);
+  await touchBrevoHeartbeat();
+}
+
+// 90-day key heartbeat: any Brevo send resets the clock, but if the app goes
+// quiet for 70 days, mail ourselves once so the free key never expires.
+const HEARTBEAT_QUIET_MS = 70 * 24 * 3600 * 1000;
+async function brevoHeartbeatCheck() {
+  try {
+    if (!process.env.BREVO_API_KEY) return;
+    const { rows } = await pool.query("SELECT value FROM app_meta WHERE key = 'brevo_last_send'");
+    const last = Number(rows[0]?.value || 0);
+    if (Date.now() - last < HEARTBEAT_QUIET_MS) return;
+    const to = process.env.BREVO_HEARTBEAT_TO || process.env.BREVO_SENDER || '';
+    if (!to) return;
+    await sendBrevoMail(
+      to,
+      'WanderSync key heartbeat 💓',
+      'Ignore this mail — it keeps our free email key alive.\nSent automatically after ~70 days without any app mail.'
+    );
+    console.log('Heartbeat mail sent to', to);
+  } catch (e) {
+    console.error('brevo heartbeat:', e.message);
+  }
+}
+setInterval(brevoHeartbeatCheck, 24 * 3600 * 1000).unref();
+setTimeout(() => void brevoHeartbeatCheck(), 60 * 1000).unref();
+
+const OTP_PURPOSES = new Set(['verify', 'reset']);
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 3;
+const OTP_MAX_PER_HOUR = 5;
+
+function otpMailSubject(purpose) {
+  return purpose === 'verify' ? 'Verify your WanderSync email' : 'Reset your WanderSync password';
+}
+
+function otpMailText(code, purpose) {
+  const what = purpose === 'verify' ? 'verify your WanderSync email' : 'reset your WanderSync password';
+  return `Your WanderSync code: ${code}\n\nUse it within 10 minutes to ${what}.\nNever share this code with anyone.`;
+}
+
+// Premium branded HTML (email-safe: tables + inline styles only — Gmail
+// strips JS/CSS files, so no copy button is possible; the code block is
+// big + letter-spaced for one-tap select instead).
+function otpMailHtml(code, purpose) {
+  const title = purpose === 'verify' ? 'Verify your email' : 'Reset your password';
+  const line =
+    purpose === 'verify'
+      ? 'Enter this code in WanderSync to verify your email address.'
+      : 'Enter this code in WanderSync to set a new password.';
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
+<tr><td align="center">
+<table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;background:#ffffff;border-radius:24px;overflow:hidden;box-shadow:0 8px 30px rgba(79,70,229,0.12);">
+<tr><td align="center" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:34px 24px 26px;">
+<div style="color:#ffffff;font-size:26px;font-weight:800;letter-spacing:-0.5px;">WanderSync</div>
+<div style="color:rgba(255,255,255,0.85);font-size:12px;margin-top:6px;letter-spacing:2px;">TRIPS · SPLITS · SQUAD CHAT</div>
+</td></tr>
+<tr><td align="center" style="padding:28px 40px 8px;">
+<div style="color:#0f172a;font-size:15px;font-weight:800;">${title}</div>
+<p style="color:#64748b;font-size:13px;margin:8px 0 0;">${line}</p>
+</td></tr>
+<tr><td align="center" style="padding:16px 40px 8px;">
+<div style="display:inline-block;background:#eef2ff;border:1px dashed #c7d2fe;border-radius:16px;padding:18px 40px;color:#4338ca;font-size:36px;font-weight:800;letter-spacing:12px;">${code}</div>
+<p style="color:#94a3b8;font-size:11px;margin:14px 0 0;">Valid 10 minutes</p>
+</td></tr>
+<tr><td align="center" style="padding:8px 32px 28px;">
+<p style="color:#94a3b8;font-size:11px;margin:0;">Didn't ask for this? Ignore — your account is safe.</p>
+<p style="color:#cbd5e1;font-size:11px;margin:8px 0 0;">Never share this code with anyone.</p>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
+// POST /api/otp/request {email, purpose} — always generic {ok:true}.
+app.post('/api/otp/request', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const purpose = String(req.body?.purpose || '');
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !OTP_PURPOSES.has(purpose)) {
+      return res.json({ data: { ok: true }, error: null });
+    }
+    const hourAgo = Date.now() - 3600 * 1000;
+    try {
+      const { rows: recent } = await pool.query(
+        "SELECT COUNT(*)::int AS n FROM email_otps WHERE email = $1 AND \"createdAt\" > $2",
+        [email, hourAgo]
+      );
+      if ((recent[0]?.n || 0) >= OTP_MAX_PER_HOUR) return res.json({ data: { ok: true }, error: null });
+    } catch { /* table missing — fall through to generic ok */ }
+    // No account → no mail (quota-safe), same generic answer (no enumeration).
+    const { rows: users } = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    if (users.length === 0) return res.json({ data: { ok: true }, error: null });
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const hash = await bcrypt.hash(code, 10);
+    const now = Date.now();
+    await pool.query("DELETE FROM email_otps WHERE email = $1 AND purpose = $2 AND consumed = false", [email, purpose]);
+    await pool.query(
+      'INSERT INTO email_otps (id, email, purpose, code_hash, expires_at, attempts, consumed, "createdAt") VALUES ($1,$2,$3,$4,$5,0,false,$6)',
+      [`otp_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`, email, purpose, hash, now + OTP_TTL_MS, now]
+    );
+    try {
+      await sendBrevoMail(email, otpMailSubject(purpose), otpMailText(code, purpose), otpMailHtml(code, purpose));
+    } catch (e) {
+      console.error('OTP mail failed:', e.message);
+      return res.json({ data: { ok: true }, error: null });
+    }
+    return res.json({ data: { ok: true }, error: null });
+  } catch (e) {
+    console.error('OTP request error:', e.message);
+    return res.json({ data: { ok: true }, error: null });
+  }
+});
+
+// POST /api/otp/verify {email, purpose, code} — verify → {verified:true};
+// reset → {resetToken} (15-min, single-use) for the password write.
+app.post('/api/otp/verify', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const purpose = String(req.body?.purpose || '');
+    const code = String(req.body?.code || '').trim();
+    if (!email || !OTP_PURPOSES.has(purpose) || !/^\d{6}$/.test(code)) {
+      return fail(res, 400, 'Invalid code. Check the 6-digit code and retry.');
+    }
+    // Resend-race safe: a rapid double-tap can leave two live rows behind
+    // (both mails sent). EVERY active row is tried newest-first; the one
+    // that matches is consumed and all older siblings die with it — so no
+    // "two valid codes" confusion is possible.
+    const { rows } = await pool.query(
+      'SELECT * FROM email_otps WHERE email = $1 AND purpose = $2 AND consumed = false ORDER BY "createdAt" DESC LIMIT 5',
+      [email, purpose]
+    );
+    const live = (rows || []).filter((r) => r.expires_at >= Date.now() && r.attempts < OTP_MAX_ATTEMPTS);
+    if (live.length === 0) {
+      return fail(res, 401, 'Code expired. Request a fresh one.');
+    }
+    let row = null;
+    for (const cand of live) {
+      if (await bcrypt.compare(code, cand.code_hash)) {
+        row = cand;
+        break;
+      }
+    }
+    if (!row) {
+      await pool.query(
+        'UPDATE email_otps SET attempts = attempts + 1 WHERE id = ANY($1)',
+        [live.map((r) => r.id)]
+      );
+      return fail(res, 401, 'Wrong code. Check and retry.');
+    }
+    await pool.query('UPDATE email_otps SET consumed = true WHERE email = $1 AND purpose = $2 AND consumed = false', [
+      email,
+      purpose,
+    ]);
+    if (purpose === 'verify') {
+      try {
+        await pool.query('UPDATE users SET email_verified = true WHERE LOWER(email) = LOWER($1)', [email]);
+      } catch (e) {
+        if (!(e && /email_verified/i.test(e.message || ''))) throw e;
+      }
+      return res.json({ data: { verified: true }, error: null });
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    const now = Date.now();
+    await pool.query(
+      'INSERT INTO password_resets (token, email, expires_at, consumed, "createdAt") VALUES ($1,$2,$3,false,$4)',
+      [token, email, now + 15 * 60 * 1000, now]
+    );
+    return res.json({ data: { resetToken: token }, error: null });
+  } catch (e) {
+    console.error('OTP verify error:', e.message);
+    return fail(res, 500, e.message);
+  }
+});
+
+// POST /api/auth/reset-password {token, newPassword} — OTP-verified write.
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const token = String(req.body?.token || '');
+    const newPassword = String(req.body?.newPassword || '');
+    if (!token || !newPassword || newPassword.length < 6) {
+      return fail(res, 400, 'Valid token and 6+ character password required');
+    }
+    const { rows } = await pool.query(
+      'SELECT * FROM password_resets WHERE token = $1 AND consumed = false',
+      [token]
+    );
+    const row = rows[0];
+    if (!row || row.expires_at < Date.now()) {
+      return fail(res, 401, 'Reset session expired. Start over.');
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2)', [hash, row.email]);
+    try {
+      await pool.query('UPDATE users SET email_verified = true WHERE LOWER(email) = LOWER($1)', [row.email]);
+    } catch (e) {
+      if (!(e && /email_verified/i.test(e.message || ''))) throw e;
+    }
+    await pool.query('UPDATE password_resets SET consumed = true WHERE token = $1', [token]);
+    res.json({ data: { ok: true }, error: null });
+  } catch (e) {
+    console.error('Reset password error:', e.message);
+    return fail(res, 500, e.message);
+  }
+});
+
 // POST /api/auth/forgot-password — DISABLED (was: email-only reset with zero
 // verification = anyone could take over anyone's account). Recovery path:
 // admin resets via /api/admin/reset-password (session-verified). OTP-based
