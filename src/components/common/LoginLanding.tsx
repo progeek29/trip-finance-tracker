@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { LogIn, Megaphone, MoreVertical, X, Zap } from 'lucide-react';
 import { AuthForm, useAuthForm } from './AuthScreen';
 import { PhoneGate } from './PhoneGate';
+import { authGetUser } from '../../utils/supabaseClient';
 import { Logo } from './Logo';
 
 interface LoginLandingProps {
@@ -66,8 +67,45 @@ export function LoginLanding({ onAuth }: LoginLandingProps) {
   };
 
   // Post-Google phone gate (Skip allowed) before entering the app.
+  // Phone gate shows ONCE: only when the DB phone is empty AND the user
+  // hasn't skipped in the last 30 days. Saved phone → straight inside.
+  const SKIP_KEY = 'ws_phone_gate_skip_v1';
+  const skippedRecently = (): boolean => {
+    try {
+      const t = Number(localStorage.getItem(SKIP_KEY) || 0);
+      return Date.now() - t < 30 * 24 * 3600 * 1000;
+    } catch {
+      return false;
+    }
+  };
+  const handleGoogleSuccess = () => {
+    void (async () => {
+      try {
+        const u = await authGetUser();
+        if ((u?.phone || '').trim() || skippedRecently()) {
+          onAuth();
+          return;
+        }
+      } catch { /* fall through to gate */ }
+      setJustGoogled(true);
+    })();
+  };
   if (justGoogled) {
-    return <PhoneGate onDone={() => { setJustGoogled(false); onAuth(); }} />;
+    return (
+      <PhoneGate
+        onDone={() => {
+          setJustGoogled(false);
+          onAuth();
+        }}
+        onSkip={() => {
+          try {
+            localStorage.setItem(SKIP_KEY, String(Date.now()));
+          } catch { /* private mode */ }
+          setJustGoogled(false);
+          onAuth();
+        }}
+      />
+    );
   }
 
   return (
@@ -171,7 +209,7 @@ export function LoginLanding({ onAuth }: LoginLandingProps) {
           <AuthForm
             {...auth}
             googleAuth={{
-              onSuccess: () => setJustGoogled(true),
+              onSuccess: handleGoogleSuccess,
               onError: (msg) => showToast(msg),
               oneTap: true,
             }}

@@ -1932,6 +1932,28 @@ app.get('/api/comments', requireSession, async (req, res) => {
   }
 });
 
+// GET /api/comments/counts?ids=a,b,c — comment counts for grids/hover.
+app.get('/api/comments/counts', requireSession, async (req, res) => {
+  try {
+    const ids = String(req.query.ids || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => MOMENT_ID.test(s))
+      .slice(0, 100);
+    if (ids.length === 0) return res.json({ data: {}, error: null });
+    const { rows } = await pool.query(
+      'SELECT "photoId", COUNT(*)::int AS n FROM photo_comments WHERE "photoId" = ANY($1) GROUP BY "photoId"',
+      [ids]
+    );
+    const out = {};
+    for (const r of rows) out[r.photoId] = r.n;
+    res.json({ data: out, error: null });
+  } catch (e) {
+    if (e && /photo_comments|relation/i.test(e.message || '')) return res.json({ data: {}, error: null });
+    res.json({ data: null, error: e.message });
+  }
+});
+
 // DELETE /api/comments/:id — comment author OR post author (cleanup duty).
 app.delete('/api/comments/:id', requireSession, async (req, res) => {
   try {

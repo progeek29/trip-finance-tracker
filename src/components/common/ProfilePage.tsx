@@ -10,6 +10,7 @@ import { PostDetailModal } from '../discovery/PostDetailModal';
 import { OtpFlow } from './OtpFlow';
 import { MomentGridCell } from '../discovery/MomentGridCell';
 import { getUserMainPosts } from '../../utils/requests';
+import { fetchCommentCounts } from '../../utils/mainFeed';
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '';
@@ -67,6 +68,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [choices, setChoices] = useState<Trip[] | null>(null);
   const [detailPhoto, setDetailPhoto] = useState<SharedPhoto | null>(null);
   const [showPassOtp, setShowPassOtp] = useState(false);
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   // Main-timeline posts never enter App photo state — fetch + merge here so
   // My-posts shows EVERYTHING (trip + main), newest first, deduped by id.
   const [mainPosts, setMainPosts] = useState<SharedPhoto[]>([]);
@@ -96,6 +98,19 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     }
     return out.sort((a, b) => +new Date(b.uploadedAt || 0) - +new Date(a.uploadedAt || 0));
   })();
+  // Comment counts for hover overlays (one batched call).
+  useEffect(() => {
+    let live = true;
+    const ids = allMyPosts.map((p) => p.id);
+    if (ids.length === 0) return;
+    fetchCommentCounts(ids).then((m) => {
+      if (live) setCommentCounts(m);
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allMyPosts.map((p) => p.id).join(',')]);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -629,9 +644,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             Nothing posted yet — moments you share will appear here.
           </p>
         ) : (
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-5 gap-1.5">
             {allMyPosts.map((p) => (
-              <MomentGridCell key={p.id} photo={p} onOpen={() => setDetailPhoto(p)} />
+              <MomentGridCell
+                key={p.id}
+                photo={p}
+                onOpen={() => setDetailPhoto(p)}
+                likes={Number(p.likesCount || 0)}
+                comments={commentCounts[p.id] ?? 0}
+              />
             ))}
           </div>
         )}

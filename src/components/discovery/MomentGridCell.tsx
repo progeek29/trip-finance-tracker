@@ -1,4 +1,5 @@
 import React from 'react';
+import { Heart, MessageCircle } from 'lucide-react';
 import { MediaImg } from '../common/MediaImg';
 import type { SharedPhoto } from '../../types';
 
@@ -16,27 +17,42 @@ export function textGradient(id: string): string {
   return TEXT_GRADIENTS[h % TEXT_GRADIENTS.length];
 }
 
+interface MomentGridCellProps {
+  photo: SharedPhoto;
+  onOpen: () => void;
+  /** Instagram-style hover overlay (desktop) — shown when provided. */
+  likes?: number;
+  comments?: number;
+}
+
 /** Instagram-style square cell — SAME component on Timeline, Trip page and
  *  Profile grids. Text-only posts become gradient quote cards. */
-export const MomentGridCell: React.FC<{ photo: SharedPhoto; onOpen: () => void }> = ({ photo, onOpen }) => {
-  if (!photo.url) {
-    return (
-      <button
-        onClick={onOpen}
-        className={`rounded-xl overflow-hidden bg-gradient-to-br ${textGradient(photo.id)} aspect-square p-2 text-left cursor-pointer active:scale-[0.98] transition-transform`}
-      >
-        <p className="text-white text-[10px] font-bold leading-snug line-clamp-6">
-          “{(photo.caption || '').slice(0, 90)}”
-        </p>
-      </button>
-    );
-  }
+export const MomentGridCell: React.FC<MomentGridCellProps> = ({ photo, onOpen, likes, comments }) => {
+  const showStats = likes !== undefined || comments !== undefined;
   return (
     <button
       onClick={onOpen}
-      className="rounded-xl overflow-hidden bg-slate-100 aspect-square cursor-pointer active:scale-[0.98] transition-transform"
+      className="group relative rounded-xl overflow-hidden bg-slate-100 aspect-square cursor-pointer active:scale-[0.98] transition-transform"
     >
-      <MediaImg srcRef={photo.url} alt={photo.caption || 'Moment'} className="w-full h-full object-cover" />
+      {photo.url ? (
+        <MediaImg srcRef={photo.url} alt={photo.caption || 'Moment'} className="w-full h-full object-cover" />
+      ) : (
+        <span className={`w-full h-full flex items-center justify-center bg-gradient-to-br ${textGradient(photo.id)} p-2`}>
+          <span className="text-white text-[10px] font-bold leading-snug line-clamp-6">
+            “{(photo.caption || '').slice(0, 90)}”
+          </span>
+        </span>
+      )}
+      {showStats && (
+        <span className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 pointer-events-none">
+          <span className="flex items-center gap-1 text-white text-xs font-extrabold">
+            <Heart size={15} className="fill-white" /> {likes ?? 0}
+          </span>
+          <span className="flex items-center gap-1 text-white text-xs font-extrabold">
+            <MessageCircle size={15} className="fill-white" /> {comments ?? 0}
+          </span>
+        </span>
+      )}
     </button>
   );
 };

@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutGrid, List, Plus, ImageIcon, Globe, Search, X } from 'lucide-react';
+import { LayoutGrid, List, Plus, ImageIcon, Search, X } from 'lucide-react';
 import { MediaImg } from '../common/MediaImg';
+import { MemberAvatar } from '../common/MemberAvatar';
 import { MainComposer } from './MainComposer';
 import { PostDetailModal } from './PostDetailModal';
 import { MomentGridCell, textGradient } from './MomentGridCell';
-import { fetchMainFeed } from '../../utils/mainFeed';
+import { DandelionLike } from '../trip/DandelionLike';
+import { fetchMainFeed, fetchCommentCounts, togglePostLike } from '../../utils/mainFeed';
 import type { SharedPhoto, Trip } from '../../types';
 
 interface MainTimelineViewProps {
@@ -40,6 +42,7 @@ export const MainTimelineView: React.FC<MainTimelineViewProps> = ({
   const [view, setView] = useState<'normal' | 'grid'>('normal');
   const [composerOpen, setComposerOpen] = useState(false);
   const [detail, setDetail] = useState<SharedPhoto | null>(null);
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
 
   const refresh = async () => {
     setLoading(true);
@@ -92,6 +95,25 @@ export const MainTimelineView: React.FC<MainTimelineViewProps> = ({
     if (id === 'main') return 'Public';
     if (id === 'trips') return 'Trips';
     return trips.find((t) => t.id === id)?.title || 'Trip';
+  };
+
+  // Comment counts for visible items (one batched call — grid hover + cards).
+  useEffect(() => {
+    let live = true;
+    const ids = items.map((p) => p.id);
+    if (ids.length === 0) return;
+    fetchCommentCounts(ids).then((m) => {
+      if (live) setCommentCounts(m);
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map((p) => p.id).join(',')]);
+
+  const bumpLike = (id: string, count: number, liked: boolean) => {
+    setServerFeed((prev) => prev.map((p) => (p.id === id ? { ...p, likesCount: count, likedByMe: liked } : p)));
+    setDetail((d) => (d && d.id === id ? { ...d, likesCount: count, likedByMe: liked } : d));
   };
 
   return (
@@ -178,7 +200,13 @@ export const MainTimelineView: React.FC<MainTimelineViewProps> = ({
       ) : view === 'grid' ? (
         <div className="grid grid-cols-3 gap-1.5">
           {items.map((p) => (
-            <MomentGridCell key={p.id} photo={p} onOpen={() => setDetail(p)} />
+            <MomentGridCell
+              key={p.id}
+              photo={p}
+              onOpen={() => setDetail(p)}
+              likes={Number(p.likesCount || 0)}
+              comments={commentCounts[p.id] ?? 0}
+            />
           ))}
         </div>
       ) : (
@@ -188,9 +216,13 @@ export const MainTimelineView: React.FC<MainTimelineViewProps> = ({
               key={p.id}
               photo={p}
               trips={trips}
+              myUid={myUid}
+              notify={notify}
+              commentCount={commentCounts[p.id] ?? 0}
               onOpen={() => setDetail(p)}
               onOpenTrip={onOpenTrip}
               onOpenAuthor={onOpenAuthor}
+              onLiked={bumpLike}
             />
           ))}
         </div>
@@ -222,10 +254,7 @@ export const MainTimelineView: React.FC<MainTimelineViewProps> = ({
             setServerFeed((prev) => prev.filter((p) => p.id !== id));
             setDetail(null);
           }}
-          onLiked={(id, count, liked) => {
-            setServerFeed((prev) => prev.map((p) => (p.id === id ? { ...p, likesCount: count, likedByMe: liked } : p)));
-            setDetail((d) => (d && d.id === id ? { ...d, likesCount: count, likedByMe: liked } : d));
-          }}
+          onLiked={bumpLike}
           onEdited={(updated) => {
             setServerFeed((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)));
             setDetail((d) => (d && d.id === updated.id ? { ...d, ...updated } : d));
@@ -236,35 +265,58 @@ export const MainTimelineView: React.FC<MainTimelineViewProps> = ({
   );
 };
 
-function FeedCard({ photo, trips, onOpen, onOpenTrip, onOpenAuthor }: {
+function FeedCard({ photo, trips, myUid, notify, commentCount, onOpen, onOpenTrip, onOpenAuthor, onLiked }: {
   photo: SharedPhoto;
   trips: Trip[];
+  myUid: string | null;
+  notify: (msg: string) => void;
+  commentCount: number;
   onOpen: () => void;
   onOpenTrip: (trip: Trip) => void;
   onOpenAuthor: (uid: string, name: string) => void;
+  onLiked: (id: string, count: number, liked: boolean) => void;
 }) {
   const trip = photo.tripId ? trips.find((t) => t.id === photo.tripId) : undefined;
   const author = photo.uploadedByName || 'Someone';
+  const [liked, setLiked] = useState(!!photo.likedByMe);
+  const [likeBusy, setLikeBusy] = useState(false);
+  useEffect(() => {
+    setLiked(!!photo.likedByMe);
+  }, [photo.id, photo.likedByMe]);
+  const doToggleLike = () => {
+    if (!myUid || likeBusy) return;
+    const toLiked = !liked;
+    setLiked(toLiked);
+    setLikeBusy(true);
+    void togglePostLike(photo.id, toLiked)
+      .then((r) => {
+        if (!r) {
+          setLiked(!toLiked);
+          notify('Could not update like. Check internet.');
+          return;
+        }
+        onLiked(photo.id, r.count, r.liked);
+        if (r.liked !== toLiked) setLiked(r.liked);
+      })
+      .finally(() => setLikeBusy(false));
+  };
   return (
     <article className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2">
+        <MemberAvatar name={author} memberId={photo.uploadedByUid || photo.uploadedByMemberId} index={0} size="xs" />
         <button
           onClick={() => photo.uploadedByUid && onOpenAuthor(photo.uploadedByUid, author)}
           className="text-xs font-extrabold text-slate-900 hover:text-indigo-600 truncate cursor-pointer"
         >
           {author}
         </button>
-        {trip ? (
+        {trip && (
           <button
             onClick={() => onOpenTrip(trip)}
             className="ml-auto flex-shrink-0 text-[10px] font-bold text-indigo-600 bg-indigo-50 rounded-md px-1.5 py-0.5 hover:bg-indigo-100 cursor-pointer truncate max-w-[140px]"
           >
             {trip.title}
           </button>
-        ) : (
-          <span title="Main timeline · visible to everyone" className="ml-auto flex-shrink-0 text-emerald-600 bg-emerald-50 rounded-md p-1">
-            <Globe size={12} />
-          </span>
         )}
       </div>
       <button onClick={onOpen} className="block w-full text-left cursor-pointer">
@@ -279,6 +331,22 @@ function FeedCard({ photo, trips, onOpen, onOpenTrip, onOpenAuthor }: {
           <span className="block px-3 py-2 text-xs text-slate-600 line-clamp-2">{photo.caption}</span>
         )}
       </button>
+      {/* Actions — same row as trip timeline cards */}
+      <div className="flex items-center gap-1 px-2 py-1">
+        <DandelionLike liked={liked} count={Number(photo.likesCount || 0)} onToggle={doToggleLike} />
+        <button
+          onClick={onOpen}
+          aria-label="Comments"
+          className="flex items-center justify-center gap-1.5 h-8 text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
+        >
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="block">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641l-.318 1.235c-.149.574.419 1.1 1.025.92l1.647-.489a1.692 1.692 0 011.53.284C10.42 20.106 11.2 20.25 12 20.25z" />
+          </svg>
+          {commentCount > 0 && (
+            <span className="text-[11px] font-bold leading-none">{commentCount}</span>
+          )}
+        </button>
+      </div>
     </article>
   );
 }

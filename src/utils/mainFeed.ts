@@ -123,6 +123,22 @@ export async function deleteComment(id: string): Promise<boolean> {
   }
 }
 
+/** Comment counts for a batch of posts (one call — grids + hover). */
+export async function fetchCommentCounts(ids: string[]): Promise<Record<string, number>> {
+  const clean = [...new Set(ids.filter(Boolean))].slice(0, 100);
+  if (clean.length === 0) return {};
+  try {
+    const res = await fetch(
+      `${apiBaseUrl()}/comments/counts?ids=${clean.map(encodeURIComponent).join(',')}`,
+      { headers: authHeaders() }
+    );
+    const body = await res.json().catch(() => null);
+    return body && !body.error && body.data ? body.data : {};
+  } catch {
+    return {};
+  }
+}
+
 /** All photoIds the session user liked (one call — seeds every screen). */
 export async function fetchMyLikes(): Promise<Set<string>> {
   try {

@@ -5,11 +5,12 @@ import { Logo } from './Logo';
 
 interface PhoneGateProps {
   onDone: () => void;
+  onSkip?: () => void;
 }
 
 /** Post-Google step (roadmap §6): collect mobile (+optional gender chips,
  *  free ride). Skip allowed — Profile nudges later. */
-export const PhoneGate: React.FC<PhoneGateProps> = ({ onDone }) => {
+export const PhoneGate: React.FC<PhoneGateProps> = ({ onDone, onSkip }) => {
   const [phone, setPhone] = useState('');
   const [gender, setGender] = useState<'male' | 'female' | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,7 +75,7 @@ export const PhoneGate: React.FC<PhoneGateProps> = ({ onDone }) => {
           {busy ? 'Saving…' : 'Continue'}
         </button>
         <button
-          onClick={onDone}
+          onClick={() => (onSkip ? onSkip() : onDone())}
           className="w-full mt-1.5 h-10 text-xs text-slate-400 font-bold hover:text-slate-600 cursor-pointer"
         >
           Skip for now
