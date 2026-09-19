@@ -321,7 +321,16 @@ function FeedCard({ photo, trips, myUid, notify, commentCount, onOpen, onOpenTri
       </div>
       <button onClick={onOpen} className="block w-full text-left cursor-pointer">
         {photo.url ? (
-          <MediaImg srcRef={photo.url} alt={photo.caption || 'Moment'} className="w-full max-h-96 object-cover bg-slate-100" />
+          <MediaImg
+            srcRef={photo.url}
+            alt={photo.caption || 'Moment'}
+            className="w-full object-cover bg-slate-100"
+            style={
+              photo.aspect && photo.aspect > 0
+                ? { aspectRatio: `${photo.aspect}` }
+                : { maxHeight: '24rem' }
+            }
+          />
         ) : (
           <span className={`block bg-gradient-to-br ${textGradient(photo.id)} px-5 py-8`}>
             <span className="block text-white text-base font-extrabold leading-snug">“{photo.caption}”</span>

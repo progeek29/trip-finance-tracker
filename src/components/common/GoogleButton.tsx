@@ -4,7 +4,7 @@ import { googleClientId, authSignInWithGoogle } from '../../utils/supabaseClient
 interface GoogleIdentity {
   accounts: {
     id: {
-      initialize: (opts: { client_id: string; callback: (resp: { credential?: string }) => void; use_fedcm_for_prompt?: boolean; use_fedcm_for_button?: boolean }) => void;
+      initialize: (opts: { client_id: string; callback: (resp: { credential?: string }) => void; use_fedcm_for_prompt?: boolean; use_fedcm_for_button?: boolean; auto_select?: boolean }) => void;
       renderButton: (el: HTMLElement, opts: Record<string, unknown>) => void;
       prompt: () => void;
     };
@@ -68,6 +68,7 @@ export const GoogleButton: React.FC<GoogleButtonProps> = ({ onSuccess, onError, 
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [fullWidth, setFullWidth] = useState(300);
+  const [gisReady, setGisReady] = useState(false);
   const promptedRef = useRef(false);
   const cbRef = useRef({ onSuccess, onError });
   cbRef.current = { onSuccess, onError };
@@ -83,41 +84,47 @@ export const GoogleButton: React.FC<GoogleButtonProps> = ({ onSuccess, onError, 
     return () => window.removeEventListener('resize', measure);
   }, []);
 
+  // Init ONCE per clientId (re-init mid-click drops callbacks — the flaky logins).
   useEffect(() => {
     if (!clientId) return;
     let live = true;
     loadGis()
       .then(() => {
-        if (!live || !btnRef.current || !window.google) return;
+        if (!live || !window.google) return;
+        setGisReady(true);
         window.google.accounts.id.initialize({
           client_id: clientId,
           use_fedcm_for_prompt: true,
           use_fedcm_for_button: true,
+          // Returning user + single Google session = instant login, zero clicks.
+          // Multi-account → Google shows its chooser (their UI, not ours).
+          auto_select: true,
           callback: (resp) => {
             if (!resp?.credential) {
               cbRef.current.onError('Google sign-in was cancelled.');
               return;
             }
             setBusy(true);
+            // Safety net: hanging network must NEVER stuck the UI.
+            const timeout = window.setTimeout(() => {
+              if (live) {
+                setBusy(false);
+                cbRef.current.onError('Taking too long — check internet and retry.');
+              }
+            }, 25000);
             authSignInWithGoogle(resp.credential)
               .then(() => {
+                window.clearTimeout(timeout);
                 if (live) cbRef.current.onSuccess();
               })
               .catch((e) => {
-                if (live) cbRef.current.onError(e instanceof Error ? e.message : 'Google sign-in failed.');
+                window.clearTimeout(timeout);
+                if (live) cbRef.current.onError(e instanceof Error ? e.message : 'Google sign-in failed. Tap again to retry.');
               })
               .finally(() => {
                 if (live) setBusy(false);
               });
           },
-        });
-        btnRef.current.innerHTML = '';
-        window.google.accounts.id.renderButton(btnRef.current, {
-          theme: 'outline',
-          size: 'large',
-          text: 'continue_with',
-          shape: 'pill',
-          width: fullWidth,
         });
         // One Tap: auto prompt for logged-in sessions (silent otherwise).
         if (oneTap && !promptedRef.current) {
@@ -133,7 +140,22 @@ export const GoogleButton: React.FC<GoogleButtonProps> = ({ onSuccess, onError, 
     return () => {
       live = false;
     };
-  }, [clientId, fullWidth, oneTap]);
+  }, [clientId, oneTap]);
+
+  // Button render follows width only (never re-initializes GIS).
+  useEffect(() => {
+    if (!clientId || !gisReady || !window.google?.accounts?.id || !btnRef.current) return;
+    btnRef.current.innerHTML = '';
+    try {
+      window.google.accounts.id.renderButton(btnRef.current, {
+        theme: 'outline',
+        size: 'large',
+        text: 'continue_with',
+        shape: 'pill',
+        width: fullWidth,
+      });
+    } catch { /* next width tick retries */ }
+  }, [clientId, fullWidth, gisReady]);
 
   // No Client ID yet (or script blocked): same look, explains on tap.
   if (!clientId || failed) {
