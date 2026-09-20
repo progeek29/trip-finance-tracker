@@ -407,7 +407,40 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
   return (
     <div className="min-h-screen bg-slate-50">
       <ImpersonateBanner />
-      {/* Hero Header */}
+      {/* Hero Header — hidden on Discover (slim bar keeps bell + profile). */}
+      {landingTab === 'home' ? (
+        <div className="bg-white/80 backdrop-blur border-b border-slate-200/70 px-4 py-2.5 sticky top-0 z-30">
+          <div className="max-w-2xl mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Logo size={28} />
+              <p className="text-slate-900 text-xs font-extrabold uppercase tracking-widest">WanderSync</p>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={onBellClick}
+                className="relative w-8 h-8 flex items-center justify-center text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
+                title="Notifications"
+              >
+                <span className="inline-flex">
+                  <Bell size={22} strokeWidth={2} />
+                </span>
+                {(unreadCount || 0) > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-0.5 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
+                    {(unreadCount || 0) > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={onOpenProfile}
+                className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-base font-extrabold hover:bg-indigo-700 active:scale-95 transition-all shadow cursor-pointer"
+                title={userName || 'Your profile'}
+              >
+                {(userName || 'Y').trim().charAt(0).toUpperCase()}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
       <div className="bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-700 px-4 pt-6 pb-6">
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center justify-between mb-1">
@@ -462,6 +495,7 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
         </div>
         </div>
       </div>
+      )}
 
       {/* Filter chips + separate create button */}
       {landingTab === 'chat' ? (
