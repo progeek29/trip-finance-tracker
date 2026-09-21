@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, AtSign, Check, Copy, LogOut, Mail, Phone, Shield, User } from 'lucide-react';
+import { ArrowLeft, AtSign, Check, Copy, LogOut, Mail, Phone, Settings, Shield, User, X } from 'lucide-react';
 import { PhoneInput, isValidPhone } from './PhoneInput';
 import { lookupInvite, joinTripById } from '../../utils/invites';
 import { authGetUser, authUpdateProfile, supabase } from '../../utils/supabaseClient';
@@ -11,6 +11,7 @@ import { OtpFlow } from './OtpFlow';
 import { MomentGridCell } from '../discovery/MomentGridCell';
 import { getUserMainPosts } from '../../utils/requests';
 import { fetchCommentCounts } from '../../utils/mainFeed';
+import { fetchMyBlogs, listDrafts, deleteDraft, deleteBlog, type BlogPost } from '../../utils/blogs';
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '';
@@ -24,6 +25,7 @@ interface ProfilePageProps {
   onSave: (profile: UserProfile) => void;
   onJoinTrip: (trip: Trip) => void;
   onBack: () => void;
+  isAdmin?: boolean;
   onOpenAdmin?: () => void;
   onLogout?: () => void;
   /** Own posts across both timelines (for the My-posts grid). */
@@ -31,6 +33,8 @@ interface ProfilePageProps {
   allTrips?: Trip[];
   notify?: (msg: string) => void;
   onOpenTrip?: (trip: Trip) => void;
+  onEditBlog?: (blogId?: string, draftId?: string) => void;
+  onOpenBlog?: (id: string) => void;
 }
 
 export const ProfilePage: React.FC<ProfilePageProps> = ({
@@ -38,12 +42,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   onSave,
   onJoinTrip,
   onBack,
+  isAdmin: isAdminProp,
   onOpenAdmin,
   onLogout,
   myMoments = [],
   allTrips = [],
   notify,
   onOpenTrip,
+  onEditBlog,
+  onOpenBlog,
 }) => {
   const [name, setName] = useState(profile?.name || '');
   const [phone, setPhone] = useState(profile?.phone || '');
@@ -66,8 +73,28 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinMsg, setJoinMsg] = useState<string | null>(null);
   const [choices, setChoices] = useState<Trip[] | null>(null);
+  const [serverAdmin, setServerAdmin] = useState(false);
+  useEffect(() => {
+    authGetUser().then((u) => {
+      if (u?.isAdmin) setServerAdmin(true);
+    }).catch(() => { });
+  }, []);
   const [detailPhoto, setDetailPhoto] = useState<SharedPhoto | null>(null);
   const [showPassOtp, setShowPassOtp] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [myBlogs, setMyBlogs] = useState<BlogPost[]>([]);
+  const [myDrafts, setMyDrafts] = useState(() => listDrafts());
+  useEffect(() => {
+    let live = true;
+    fetchMyBlogs()
+      .then((rows) => {
+        if (live) setMyBlogs(rows);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   // Main-timeline posts never enter App photo state — fetch + merge here so
   // My-posts shows EVERYTHING (trip + main), newest first, deduped by id.
@@ -84,6 +111,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       live = false;
     };
   }, [uid]);
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  // My-posts filter: trip moments vs main-timeline posts are merged above —
+  // pills let the user split them instead of one mixed grid.
+  const [postFilter, setPostFilter] = useState<'all' | 'trip' | 'timeline'>('all');
   const allMyPosts = (() => {
     const seen = new Set<string>();
     const out: SharedPhoto[] = [];
@@ -92,7 +123,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       (!!p.uploadedByUid && !!uid && p.uploadedByUid === uid) ||
       (!p.uploadedByUid && !!name && !!p.uploadedByName && p.uploadedByName === name);
     for (const p of [...myMoments, ...mainPosts]) {
-      if (!isMine(p) || seen.has(p.id)) continue;
+      if (!isMine(p) || seen.has(p.id) || deletedIds.has(p.id)) continue;
       seen.add(p.id);
       out.push(p);
     }
@@ -176,7 +207,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, serverUsername, profile?.username]);
 
-  const isAdmin = profile?.role === 'admin';
+  const isAdmin = isAdminProp || serverAdmin || profile?.role === 'admin';
   const cardNo = profile?.cardNo && isValidCardNo(profile.cardNo)
     ? profile.cardNo
     : serverCardNo || mintCardNo(cardSeed(savedEmail, uid, profile?.phone));
@@ -351,6 +382,14 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             <ArrowLeft size={20} strokeWidth={2} />
           </button>
           <h1 className="font-extrabold text-slate-900 text-lg font-display tracking-tight">Profile</h1>
+          <button
+            onClick={() => setShowSettings(true)}
+            aria-label="Settings"
+            title="Settings"
+            className="ml-auto p-2 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+          >
+            <Settings size={19} />
+          </button>
         </div>
       </header>
 
@@ -547,24 +586,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                     {emailMsg.text}
                   </p>
                 )}
-                <button
-                  type="button"
-                  onClick={() => setShowPassOtp((v) => !v)}
-                  className="self-start text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
-                >
-                  {showPassOtp ? 'Close password reset' : 'Set / reset password via email code'}
-                </button>
-                {showPassOtp && (
-                  <OtpFlow
-                    purpose="reset"
-                    initialEmail={savedEmail || email}
-                    onDone={() => {
-                      setShowPassOtp(false);
-                      setSaveMsg('Password updated! Use it next login.');
-                      setTimeout(() => setSaveMsg(null), 3000);
-                    }}
-                  />
-                )}
               </div>
 
               <div className="flex flex-col gap-1.5">
@@ -636,25 +657,180 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       {/* My posts — trip + main timelines together (Instagram grid).
           Main posts never enter App photo state, so they merge in here. */}
       <div className="max-w-5xl mx-auto px-4 pb-4">
-        <h3 className="text-sm font-extrabold text-slate-900 mb-2.5">
+        <h3 className="text-sm font-extrabold text-slate-900 mb-0.5">
           My posts · {allMyPosts.length}
         </h3>
-        {allMyPosts.length === 0 ? (
+        <p className="text-[11px] text-slate-400 font-medium mb-2">Photos & moments you shared — these also show in the Discover feed and trips. Blogs never appear here.</p>
+        {(() => {
+          const tripPosts = allMyPosts.filter((p) => !!p.tripId);
+          const timelinePosts = allMyPosts.filter((p) => !p.tripId);
+          const visiblePosts = postFilter === 'trip' ? tripPosts : postFilter === 'timeline' ? timelinePosts : allMyPosts;
+          const pill = (id: 'all' | 'trip' | 'timeline', label: string, n: number) => (
+            <button
+              key={id}
+              onClick={() => setPostFilter(id)}
+              className={`flex-shrink-0 h-7 px-3 rounded-full text-[11px] font-bold transition-colors cursor-pointer ${
+                postFilter === id ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-500'
+              }`}
+            >
+              {label} · {n}
+            </button>
+          );
+          return (
+            <>
+              <div className="flex gap-1.5 mb-2.5">
+                {pill('all', 'All', allMyPosts.length)}
+                {pill('trip', 'Trip posts', tripPosts.length)}
+                {pill('timeline', 'Timeline', timelinePosts.length)}
+              </div>
+              {visiblePosts.length === 0 ? (
+                <p className="text-[11px] text-slate-400 text-center py-6 bg-white rounded-2xl border border-slate-200/70">
+                  {allMyPosts.length === 0
+                    ? 'Nothing posted yet — moments you share will appear here.'
+                    : postFilter === 'trip'
+                      ? 'No trip posts yet — moments you add inside a trip will appear here.'
+                      : 'No timeline posts yet — moments you share to Discover will appear here.'}
+                </p>
+              ) : (
+                <div
+                  className="grid grid-cols-5 gap-2"
+                  style={{ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))' }}
+                >
+                  {visiblePosts.map((p) => (
+              <div key={p.id} className="relative group min-w-0">
+                <MomentGridCell
+                  photo={p}
+                  onOpen={() => setDetailPhoto(p)}
+                  likes={Number(p.likesCount || 0)}
+                  comments={commentCounts[p.id] ?? 0}
+                />
+                <button
+                  onClick={() => {
+                    if (!window.confirm('Delete this post everywhere? Discover, stories and timelines will lose it permanently.')) return;
+                    import('../../utils/momentsSync').then(({ deleteMomentRemote }) =>
+                      deleteMomentRemote(p.id).then(() => {
+                        setDeletedIds((prev) => new Set(prev).add(p.id));
+                        setMainPosts((prev) => prev.filter((x) => x.id !== p.id));
+                        notify?.('Post deleted everywhere.');
+                        try {
+                          window.dispatchEvent(new CustomEvent('ws_blogs_changed'));
+                          window.dispatchEvent(new CustomEvent('ws_moments_changed'));
+                        } catch { /* ignore */ }
+                      }).catch(() => notify?.('Could not delete. Check internet and retry.'))
+                    );
+                  }}
+                  aria-label="Delete post everywhere"
+                  title="Delete post everywhere"
+                  className="absolute top-1 right-1 p-1 rounded-full bg-black/55 text-white opacity-0 group-hover:opacity-100 hover:bg-rose-600 cursor-pointer"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </div>
+      {/* My stories — blogs + autosaved drafts */}
+      <div className="max-w-5xl mx-auto px-4 pb-4">
+        <div className="flex items-center justify-between mb-0.5">
+          <h3 className="text-sm font-extrabold text-slate-900">
+            My stories · {myBlogs.length}
+          </h3>
+          <button
+            onClick={() => onEditBlog?.()}
+            className="h-8 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer"
+          >
+            + Write
+          </button>
+        </div>
+        <p className="text-[11px] text-slate-400 font-medium mb-2.5">Your blogs — unpublished drafts stay on top, posted stories go live in Discover → Community after admin approval.</p>
+        {myDrafts.length > 0 && (
+          <>
+            <p className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 mb-1.5">Drafts · only you see these</p>
+            <div className="mb-2.5 space-y-1.5">
+            {myDrafts.slice(0, 3).map((d) => (
+              <div
+                key={d.id}
+                className="w-full flex items-center gap-2 bg-amber-50/60 border border-amber-200/60 rounded-xl px-3 py-2"
+              >
+                <button
+                  onClick={() => onEditBlog?.(d.blogId, d.id)}
+                  className="min-w-0 flex-1 text-left cursor-pointer"
+                >
+                  <span className="block text-[11px] font-bold text-slate-700 truncate">
+                    Draft: {d.title || '(untitled)'}
+                  </span>
+                  <span className="block text-[10px] text-slate-400 font-medium">Tap to resume</span>
+                </button>
+                <button
+                  onClick={() => {
+                    if (window.confirm('Delete this draft?')) {
+                      deleteDraft(d.id);
+                      setMyDrafts(listDrafts());
+                    }
+                  }}
+                  aria-label="Delete draft"
+                  title="Delete draft"
+                  className="p-1.5 rounded-full text-slate-300 hover:text-rose-500 hover:bg-rose-50 cursor-pointer flex-shrink-0"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+            </div>
+          </>
+        )}
+        {myBlogs.length === 0 && myDrafts.length === 0 ? (
           <p className="text-[11px] text-slate-400 text-center py-6 bg-white rounded-2xl border border-slate-200/70">
-            Nothing posted yet — moments you share will appear here.
+            No stories yet — write your first travel story.
           </p>
         ) : (
-          <div className="grid grid-cols-5 gap-1.5">
-            {allMyPosts.map((p) => (
-              <MomentGridCell
-                key={p.id}
-                photo={p}
-                onOpen={() => setDetailPhoto(p)}
-                likes={Number(p.likesCount || 0)}
-                comments={commentCounts[p.id] ?? 0}
-              />
+          <>
+            {myBlogs.length > 0 && (
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">Posted · Edit or delete anytime</p>
+            )}
+            <div className="space-y-1.5">
+            {myBlogs.map((b) => (
+              <div key={b.id} className="flex items-center gap-2 bg-white border border-slate-200/70 rounded-xl px-3 py-2">
+                <button onClick={() => onOpenBlog?.(b.id)} className="min-w-0 flex-1 text-left cursor-pointer">
+                  <span className="block text-xs font-bold text-slate-800 truncate">{b.title || '(untitled)'}</span>
+                  <span className="block text-[10px] text-slate-400 font-medium">
+                    {b.status}
+                    {b.status === 'pending' ? ' · in review' : ''}
+                    {b.status === 'rejected' ? ' · needs changes' : ''} · {b.views} reads
+                  </span>
+                </button>
+                <button
+                  onClick={() => onEditBlog?.(b.id)}
+                  className="flex-shrink-0 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => {
+                    if (!window.confirm(`Delete "${b.title || '(untitled)'}" everywhere? Discover, My posts, login cards and search will lose it (with its photos) permanently.`)) return;
+                    void deleteBlog(b.id).then(() => {
+                      setMyBlogs((prev) => prev.filter((x) => x.id !== b.id));
+                      notify?.('Story deleted everywhere.');
+                      try {
+                        window.dispatchEvent(new CustomEvent('ws_blogs_changed'));
+                        window.dispatchEvent(new CustomEvent('ws_moments_changed'));
+                      } catch { /* ignore */ }
+                    }).catch(() => notify?.('Could not delete. Check internet and retry.'));
+                  }}
+                  aria-label="Delete story everywhere"
+                  title="Delete story everywhere"
+                  className="flex-shrink-0 p-1.5 rounded-full text-slate-300 hover:text-rose-500 hover:bg-rose-50 cursor-pointer"
+                >
+                  <X size={14} />
+                </button>
+              </div>
             ))}
-          </div>
+            </div>
+          </>
         )}
       </div>
       {detailPhoto && (
@@ -669,7 +845,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             setDetailPhoto(null);
             onOpenTrip?.(t);
           }}
-          onDeleted={(id) => setDetailPhoto(null)}
+          onDeleted={(id) => {
+            setDetailPhoto(null);
+            setDeletedIds((prev) => new Set(prev).add(id));
+            setMainPosts((prev) => prev.filter((x) => x.id !== id));
+            try {
+              window.dispatchEvent(new CustomEvent('ws_blogs_changed'));
+              window.dispatchEvent(new CustomEvent('ws_moments_changed'));
+            } catch { /* ignore */ }
+          }}
           onLiked={(id, count, liked) => {
             setDetailPhoto((d) => (d && d.id === id ? { ...d, likesCount: count, likedByMe: liked } : d));
           }}
@@ -679,16 +863,69 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         />
       )}
 
-      {/* Logout — end of page */}
-      {onLogout && (
-        <div className="max-w-5xl mx-auto px-4 pb-10 flex justify-center">
-          <button
-            onClick={onLogout}
-            className="flex items-center gap-2 text-[13px] font-bold text-red-500 hover:bg-red-50 px-6 py-2.5 rounded-xl transition-colors cursor-pointer"
-          >
-            <LogOut size={16} strokeWidth={2.5} />
-            Logout Account
-          </button>
+      {/* Settings — gear opens this: account details, password, logout */}
+      {showSettings && (
+        <div className="fixed inset-0 z-[60] bg-slate-50 flex flex-col" role="dialog" aria-modal="true">
+          <div className="bg-white/95 backdrop-blur border-b border-slate-200 flex-shrink-0">
+            <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
+              <button
+                onClick={() => setShowSettings(false)}
+                aria-label="Back to profile"
+                className="p-1.5 -ml-1 rounded-full text-slate-700 hover:text-indigo-600 hover:bg-slate-100 cursor-pointer"
+              >
+                <ArrowLeft size={20} strokeWidth={2} />
+              </button>
+              <h2 className="text-sm font-extrabold text-slate-900">Settings</h2>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
+            <div className="max-w-2xl mx-auto px-4 pt-5 pb-32 space-y-3">
+              <div className="bg-white border border-slate-200/70 rounded-2xl p-4">
+                <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">Account</h3>
+                {[
+                  ['Email', savedEmail || email || '—'],
+                  ['Username', username ? `@${username}` : '—'],
+                  ['Pass number', serverCardNo || cardNo || '—'],
+                ].map(([label, value]) => (
+                  <p key={label} className="flex justify-between gap-3 py-1.5 border-b border-slate-50 last:border-0">
+                    <span className="text-[11px] font-bold text-slate-400">{label}</span>
+                    <span className="text-xs font-bold text-slate-800 truncate">{value}</span>
+                  </p>
+                ))}
+              </div>
+              <div className="bg-white border border-slate-200/70 rounded-2xl p-4">
+                <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">Password</h3>
+                {!showPassOtp ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowPassOtp(true)}
+                    className="w-full h-11 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold cursor-pointer"
+                  >
+                    Set / reset password via email code
+                  </button>
+                ) : (
+                  <OtpFlow
+                    purpose="reset"
+                    initialEmail={savedEmail || email}
+                    onDone={() => {
+                      setShowPassOtp(false);
+                      notify?.('Password updated! Use it next login.');
+                    }}
+                    onBack={() => setShowPassOtp(false)}
+                  />
+                )}
+              </div>
+              {onLogout && (
+                <button
+                  onClick={onLogout}
+                  className="w-full h-11 rounded-xl bg-white border border-slate-200 hover:border-rose-300 text-rose-500 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <LogOut size={15} strokeWidth={2.5} />
+                  Logout Account
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

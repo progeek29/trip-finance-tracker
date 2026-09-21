@@ -139,6 +139,54 @@ export async function fetchCommentCounts(ids: string[]): Promise<Record<string, 
   }
 }
 
+/** Shareable deep links (paste into blogs, chats, anywhere). */
+export function momentLink(id: string): string {
+  try {
+    return `${window.location.origin}/?moment=${encodeURIComponent(id)}`;
+  } catch {
+    return `?moment=${encodeURIComponent(id)}`;
+  }
+}
+
+export function blogLink(idOrSlug: string): string {
+  try {
+    return `${window.location.origin}/?blog=${encodeURIComponent(idOrSlug)}`;
+  } catch {
+    return `?blog=${encodeURIComponent(idOrSlug)}`;
+  }
+}
+
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Single moment by id (deep-link opens). */
+export async function fetchMoment(id: string): Promise<SharedPhoto | null> {
+  try {
+    const res = await fetch(`${apiBaseUrl()}/moments/one/${encodeURIComponent(id)}`, { headers: authHeaders() });
+    const body = await res.json().catch(() => null);
+    if (!body || body.error || !body.data) return null;
+    return body.data as SharedPhoto;
+  } catch {
+    return null;
+  }
+}
+
 /** All photoIds the session user liked (one call — seeds every screen). */
 export async function fetchMyLikes(): Promise<Set<string>> {
   try {

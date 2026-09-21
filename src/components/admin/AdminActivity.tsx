@@ -2,17 +2,33 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Users, MapPin, Trash2, Plus, Pencil, Shield, User, X, LogIn } from 'lucide-react';
 import { supabase, getAllUsers, adminDeleteUser, adminCreateUser, adminUpdateUser, adminResetPassword, adminImpersonate, type ManagedUser } from '../../utils/supabaseClient';
 import type { Trip } from '../../types';
+import { BlogReviewQueue } from './BlogReviewQueue';
+import { fetchPendingBlogs } from '../../utils/blogs';
 
 interface AdminActivityProps {
   onBack: () => void;
   myUid: string | null;
+  notify?: (msg: string) => void;
+  onOpenBlog?: (id: string) => void;
 }
 
-export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
+export function AdminActivity({ onBack, myUid, notify, onOpenBlog }: AdminActivityProps) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'users' | 'trips'>('users');
+  const [tab, setTab] = useState<'users' | 'trips' | 'review'>('users');
+  const [pendingCount, setPendingCount] = useState(0);
+  useEffect(() => {
+    let live = true;
+    fetchPendingBlogs()
+      .then((rows) => {
+        if (live) setPendingCount(rows.length);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
   const [viewUser, setViewUser] = useState<ManagedUser | null>(null);
   const [showAddUser, setShowAddUser] = useState(false);
@@ -163,6 +179,19 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
         >
           Trips ({trips.length})
         </button>
+        <button
+          onClick={() => setTab('review')}
+          className={`relative px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+            tab === 'review' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'
+          }`}
+        >
+          Review
+          {pendingCount > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center border-2 border-slate-50">
+              {pendingCount > 99 ? '99+' : pendingCount}
+            </span>
+          )}
+        </button>
       </div>
 
       {loading ? (
@@ -236,7 +265,7 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
             </div>
           ))}
         </div>
-      ) : (
+      ) : tab === 'trips' ? (
         <div className="px-4 space-y-2 pb-24">
           {trips.length === 0 && (
             <p className="text-center text-sm text-slate-400 py-8">No trips yet</p>
@@ -267,6 +296,12 @@ export function AdminActivity({ onBack, myUid }: AdminActivityProps) {
             );
           })}
         </div>
+      ) : (
+        <BlogReviewQueue
+          notify={(msg) => notify?.(msg)}
+          onOpenBlog={(id) => onOpenBlog?.(id)}
+          onChanged={() => setPendingCount((n) => Math.max(0, n - 1))}
+        />
       )}
 
       {/* Add User Modal */}

@@ -7,9 +7,9 @@ import {
   inr,
   type DiscoverPackage,
 } from '../../data/discover';
-import { CommunityExploreView } from './CommunityExploreView';
 import type { PlaceRecommendation } from '../../types';
 import { PackageDetailsModal } from './PackageDetailsModal';
+import { BlogStories } from './BlogStories';
 
 const PKG_ICONS = {
   mountain: Mountain,
@@ -28,6 +28,12 @@ interface DiscoverViewProps {
   onAddRecommendation: (rec: PlaceRecommendation) => void;
   onEnquire: (msg: string) => void;
   onSharePackage: (pkg: DiscoverPackage) => void;
+  myUid: string | null;
+  myName: string;
+  notify: (msg: string) => void;
+  onOpenBlog: (id: string) => void;
+  onWriteBlog: () => void;
+  onEditBlog?: (blogId: string) => void;
 }
 
 /** Discover home (P1 skeleton) — curated static feed in the trip-card
@@ -38,7 +44,14 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
   onAddRecommendation,
   onEnquire,
   onSharePackage,
+  myUid,
+  myName,
+  notify,
+  onOpenBlog,
+  onWriteBlog,
+  onEditBlog,
 }) => {
+  void myName;
   const [openPkg, setOpenPkg] = useState<DiscoverPackage | null>(null);
 
   return (
@@ -117,14 +130,13 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
         })}
       </div>
 
-      {/* Saved places (existing Explore, kept as-is) */}
-      <div className="mt-6">
-        <CommunityExploreView
-          recommendations={recommendations}
-          trip={null}
-          onAddRecommendation={onAddRecommendation}
-        />
-      </div>
+      <BlogStories
+        myUid={myUid}
+        notify={notify}
+        onOpenBlog={onOpenBlog}
+        onWrite={onWriteBlog}
+        onEditBlog={onEditBlog}
+      />
 
       {openPkg && (
         <PackageDetailsModal

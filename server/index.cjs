@@ -1484,6 +1484,576 @@ app.post('/api/groups/:id/members', requireSession, async (req, res) => {
   }
 });
 
+// ─── Blogs: long-form travel stories ────────────────────────────────────
+// Statuses: draft → pending → published / rejected. Admin approves +
+// features (login cards). Users CRUD own; admin everything.
+const BLOG_TAGS = new Set(['itinerary', 'journal', 'tip', 'food', 'stay']);
+const BLOG_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+function blogSlug(title, id) {
+  const slug =
+    String(title || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) ||
+    'story';
+  return `${slug}-${String(id).slice(-6)}`;
+}
+
+function blogExcerpt(body) {
+  return String(body || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
+// Blog cover_url looks like {origin}/api/moments/<photoId>/bytes — recover
+// the backing photo id (null for empty/external covers).
+function photoIdFromCoverUrl(url) {
+  const m = String(url || '').match(/\/api\/moments\/([^/]+)\/bytes/);
+  return m ? m[1] : null;
+}
+
+async function blogCounts(id) {
+  const [l, c] = await Promise.all([
+    pool.query('SELECT COUNT(*)::int AS n FROM blog_likes WHERE "blogId" = $1', [id]).catch(() => ({ rows: [{ n: 0 }] })),
+    pool.query('SELECT COUNT(*)::int AS n FROM blog_comments WHERE "blogId" = $1', [id]).catch(() => ({ rows: [{ n: 0 }] })),
+  ]);
+  return { likes: l.rows[0]?.n || 0, comments: c.rows[0]?.n || 0 };
+}
+
+// GET /api/blogs?status=&tag=&featured=&limit= — published = public.
+// Other statuses need admin. likedByMe rides along when a session exists.
+app.get('/api/blogs', async (req, res) => {
+  try {
+    const status = String(req.query.status || 'published');
+    const tag = String(req.query.tag || '');
+    const featured = String(req.query.featured || '') === 'true';
+    const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+    let me = null;
+    if (status !== 'published') {
+      const tok = bearerToken(req);
+      if (!tok) return fail(res, 401, 'Login required');
+      const u = await userByToken(tok).catch(() => null);
+      if (!u || u.role !== 'admin') return fail(res, 403, 'Admin only');
+    } else {
+      try {
+        const tok = bearerToken(req);
+        if (tok) {
+          const u = await userByToken(tok).catch(() => null);
+          if (u) me = u.id;
+        }
+      } catch { /* public read proceeds */ }
+    }
+    const conds = ['b.status = $1'];
+    const vals = [status];
+    if (tag && BLOG_TAGS.has(tag)) {
+      conds.push(`b.tag = $${vals.length + 1}`);
+      vals.push(tag);
+    }
+    if (featured) conds.push('b.featured = true');
+    vals.push(limit);
+    const orderBy = featured
+      ? 'b.sort_order ASC, b."updatedAt" DESC'
+      : 'b."updatedAt" DESC';
+    const { rows } = await pool.query(
+      `SELECT b.id, b.author_uid, b.title, b.slug, b.cover_url, b.tag,
+        b.status, b.featured, b.sort_order, b.views, b."createdAt", b."updatedAt",
+        u.name AS author_name, u.username AS author_username,
+        (SELECT COUNT(*)::int FROM blog_likes l WHERE l."blogId" = b.id) AS "likeCount"
+       FROM blog_posts b LEFT JOIN users u ON u.id = b.author_uid
+       WHERE ${conds.join(' AND ')}
+       ORDER BY ${orderBy} LIMIT $${vals.length}`,
+      vals
+    );
+    let liked = new Set();
+    if (me) {
+      try {
+        const { rows: lr } = await pool.query('SELECT "blogId" FROM blog_likes WHERE uid = $1', [me]);
+        liked = new Set(lr.map((r) => r.blogId));
+      } catch { /* table missing — all false */ }
+    }
+    res.json({
+      data: rows.map((r) => ({
+        id: r.id,
+        authorUid: r.author_uid,
+        authorName: r.author_name || 'Someone',
+        authorUsername: r.author_username || '',
+        title: r.title || '',
+        slug: r.slug || '',
+        excerpt: blogExcerpt(r.body),
+        coverUrl: r.cover_url || '',
+        tag: r.tag || 'journal',
+        status: r.status,
+        featured: !!r.featured,
+        sortOrder: Number(r.sort_order || 0),
+        views: Number(r.views || 0),
+        likesCount: Number(r.likeCount || 0),
+        likedByMe: liked.has(r.id),
+        createdAt: Number(r.createdAt || 0),
+        updatedAt: Number(r.updatedAt || 0),
+      })),
+      error: null,
+    });
+  } catch (e) {
+    console.error('GET /api/blogs error:', e.message);
+    res.json({ data: [], error: e.message });
+  }
+});
+
+// GET /api/blogs/mine — own posts in every status (composer + profile).
+app.get('/api/blogs/mine', requireSession, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT b.id, b.author_uid, b.title, b.slug, b.cover_url, b.tag,
+        b.status, b.featured, b.views, b."createdAt", b."updatedAt",
+        u.name AS author_name, u.username AS author_username,
+        (SELECT COUNT(*)::int FROM blog_likes l WHERE l."blogId" = b.id) AS "likeCount"
+       FROM blog_posts b LEFT JOIN users u ON u.id = b.author_uid
+       WHERE b.author_uid = $1
+       ORDER BY b."updatedAt" DESC LIMIT 100`,
+      [req.user.id]
+    );
+    res.json({
+      data: rows.map((r) => ({
+        id: r.id,
+        authorUid: r.author_uid,
+        authorName: r.author_name || 'Someone',
+        authorUsername: r.author_username || '',
+        title: r.title || '',
+        slug: r.slug || '',
+        coverUrl: r.cover_url || '',
+        tag: r.tag || 'journal',
+        status: r.status,
+        featured: !!r.featured,
+        views: Number(r.views || 0),
+        likesCount: Number(r.likeCount || 0),
+        createdAt: Number(r.createdAt || 0),
+        updatedAt: Number(r.updatedAt || 0),
+      })),
+      error: null,
+    });
+  } catch (e) {
+    res.json({ data: [], error: e.message });
+  }
+});
+
+// GET /api/blogs/:id — full body + embedded moments. Public if published
+// (non-registered view-only); otherwise author/admin only. Views +1.
+app.get('/api/blogs/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!BLOG_ID.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query(
+      `SELECT b.*, u.name AS author_name, u.username AS author_username,
+        (SELECT COUNT(*)::int FROM blog_likes l WHERE l."blogId" = b.id) AS "likeCount",
+        (SELECT COUNT(*)::int FROM blog_comments c WHERE c."blogId" = b.id) AS "commentCount"
+       FROM blog_posts b LEFT JOIN users u ON u.id = b.author_uid
+       WHERE b.id = $1 OR b.slug = $1`,
+      [id]
+    );
+    const b = rows[0];
+    if (!b) return fail(res, 404, 'Not found');
+    let me = null;
+    try {
+      const tok = bearerToken(req);
+      if (tok) {
+        const u = await userByToken(tok).catch(() => null);
+        if (u) me = u.id;
+      }
+    } catch { /* public read proceeds */ }
+    const canSee =
+      b.status === 'published' || (me && (me === b.author_uid || (await isAdminUid(me))));
+    if (!canSee) return fail(res, 404, 'Not found');
+    let likedByMe = false;
+    if (me) {
+      try {
+        const { rows: lr } = await pool.query('SELECT 1 FROM blog_likes WHERE "blogId" = $1 AND uid = $2', [
+          b.id,
+          me,
+        ]);
+        likedByMe = lr.length > 0;
+      } catch { /* ignore */ }
+    }
+    let moments = [];
+    try {
+      const { rows: mr } = await pool.query(
+        `SELECT p.id, p.caption, p."uploadedByName", p."uploadedAt", p."likesCount",
+          octet_length(p.data) AS bytes, p.aspect
+         FROM blog_moments m JOIN photos p ON p.id = m."photoId"
+         WHERE m."blogId" = $1 AND NOT COALESCE(p."_deleted", false)
+         ORDER BY m.at ASC`,
+        [b.id]
+      );
+      moments = mr.map((r) => ({
+        id: r.id,
+        url: Number(r.bytes || 0) > 0 ? momentBytesUrl(req, r.id) : '',
+        caption: r.caption || '',
+        uploadedByName: r.uploadedByName || '',
+        uploadedAt: r.uploadedAt || '',
+        likesCount: Number(r.likesCount || 0),
+        ...(r.aspect ? { aspect: Number(r.aspect) } : {}),
+      }));
+    } catch { /* table missing — no embeds */ }
+    pool.query('UPDATE blog_posts SET views = COALESCE(views, 0) + 1 WHERE id = $1', [b.id]).catch(() => undefined);
+    res.json({
+      data: {
+        id: b.id,
+        authorUid: b.author_uid,
+        authorName: b.author_name || 'Someone',
+        authorUsername: b.author_username || '',
+        title: b.title || '',
+        slug: b.slug || '',
+        body: b.body || '',
+        coverUrl: b.cover_url || '',
+        tag: b.tag || 'journal',
+        status: b.status,
+        featured: !!b.featured,
+        views: Number(b.views || 0) + 1,
+        likesCount: Number(b.likeCount || 0),
+        likedByMe,
+        commentsCount: Number(b.commentCount || 0),
+        createdAt: Number(b.createdAt || 0),
+        updatedAt: Number(b.updatedAt || 0),
+        moments,
+      },
+      error: null,
+    });
+  } catch (e) {
+    console.error('GET /api/blogs/:id error:', e.message);
+    res.json({ data: null, error: e.message });
+  }
+});
+
+async function isAdminUid(uid) {
+  try {
+    const { rows } = await pool.query('SELECT role FROM users WHERE id = $1', [uid]);
+    return rows[0]?.role === 'admin';
+  } catch {
+    return false;
+  }
+}
+
+// POST /api/blogs — create draft (session). Returns the row.
+app.post('/api/blogs', requireSession, async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim().slice(0, 120);
+    const body = String(req.body?.body || '').slice(0, 50000);
+    const coverUrl = String(req.body?.coverUrl || '').slice(0, 500);
+    const tag = BLOG_TAGS.has(req.body?.tag) ? req.body.tag : 'journal';
+    if (!title) return fail(res, 400, 'Title required');
+    const id = 'blog_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const now = Date.now();
+    await pool.query(
+      'INSERT INTO blog_posts (id, author_uid, title, body, cover_url, tag, status, featured, views, "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,\'draft\',false,0,$7,$7)',
+      [id, req.user.id, title, body, coverUrl, tag, now]
+    );
+    res.json({ data: { id, status: 'draft' }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// PUT /api/blogs/:id — author edits own (published → back to pending),
+// admin edits anything + sets status directly.
+app.put('/api/blogs/:id', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!BLOG_ID.test(id)) return fail(res, 400, 'Bad id');
+    const { rows } = await pool.query('SELECT * FROM blog_posts WHERE id = $1', [id]);
+    const b = rows[0];
+    if (!b) return fail(res, 404, 'Not found');
+    const admin = await isAdminUid(req.user.id);
+    const mine = b.author_uid === req.user.id;
+    if (!mine && !admin) return fail(res, 403, 'Only the author can edit');
+    const sets = [];
+    const vals = [];
+    const push = (col, v) => {
+      vals.push(v);
+      sets.push(`"${col}" = $${vals.length}`);
+    };
+    if (req.body?.title !== undefined) push('title', String(req.body.title).trim().slice(0, 120));
+    if (req.body?.body !== undefined) push('body', String(req.body.body).slice(0, 50000));
+    if (req.body?.coverUrl !== undefined) push('cover_url', String(req.body.coverUrl).slice(0, 500));
+    if (req.body?.tag !== undefined && BLOG_TAGS.has(req.body.tag)) push('tag', req.body.tag);
+    if (admin && req.body?.status !== undefined && ['draft', 'pending', 'published', 'rejected'].includes(req.body.status)) {
+      push('status', req.body.status);
+      if (req.body.status === 'published' && !b.slug) push('slug', blogSlug(req.body?.title || b.title, id));
+    } else if (mine && !admin && b.status === 'published' && sets.length > 0) {
+      push('status', 'pending'); // re-review after editing published work
+    }
+    if (req.body?.featured !== undefined && admin) push('featured', !!req.body.featured);
+    if (sets.length === 0) return res.json({ data: { id }, error: null });
+    vals.push(Date.now());
+    sets.push(`"updatedAt" = $${vals.length}`);
+    vals.push(id);
+    await pool.query(`UPDATE blog_posts SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
+    res.json({ data: { id }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/blogs/:id/submit — author sends draft/rejected → pending review.
+app.post('/api/blogs/:id/submit', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const { rows } = await pool.query('SELECT author_uid, status FROM blog_posts WHERE id = $1', [id]);
+    if (!rows[0]) return fail(res, 404, 'Not found');
+    if (rows[0].author_uid !== req.user.id) return fail(res, 403, 'Only the author can submit');
+    if (!['draft', 'rejected'].includes(rows[0].status)) return fail(res, 400, 'Nothing to submit');
+    await pool.query('UPDATE blog_posts SET status = \'pending\', "updatedAt" = $2 WHERE id = $1', [id, Date.now()]);
+    res.json({ data: { id, status: 'pending' }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/blogs/:id/review {approve} — admin only.
+app.post('/api/blogs/:id/review', requireSession, async (req, res) => {
+  try {
+    if (!(await isAdminUid(req.user.id))) return fail(res, 403, 'Admin only');
+    const id = String(req.params.id || '');
+    const { rows } = await pool.query('SELECT * FROM blog_posts WHERE id = $1', [id]);
+    if (!rows[0]) return fail(res, 404, 'Not found');
+    const status = req.body?.approve ? 'published' : 'rejected';
+    if (req.body?.approve && !rows[0].slug) {
+      await pool.query('UPDATE blog_posts SET status = $2, slug = $3, "updatedAt" = $4 WHERE id = $1', [
+        id,
+        status,
+        blogSlug(rows[0].title, id),
+        Date.now(),
+      ]);
+    } else {
+      await pool.query('UPDATE blog_posts SET status = $2, "updatedAt" = $3 WHERE id = $1', [id, status, Date.now()]);
+    }
+    res.json({ data: { id, status }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/blogs/:id/feature {featured} — admin picks login-page cards.
+app.post('/api/blogs/:id/feature', requireSession, async (req, res) => {
+  try {
+    if (!(await isAdminUid(req.user.id))) return fail(res, 403, 'Admin only');
+    const id = String(req.params.id || '');
+    await pool.query('UPDATE blog_posts SET featured = $2, "updatedAt" = $3 WHERE id = $1', [
+      id,
+      !!req.body?.featured,
+      Date.now(),
+    ]);
+    res.json({ data: { id }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// POST /api/blogs/:id/move {dir} — admin reorders featured cards (up/down
+// swaps sort_order with the neighbour). Touch-friendly, no drag needed.
+app.post('/api/blogs/:id/move', requireSession, async (req, res) => {
+  try {
+    if (!(await isAdminUid(req.user.id))) return fail(res, 403, 'Admin only');
+    const id = String(req.params.id || '');
+    const dir = req.body?.dir === 'down' ? 1 : -1;
+    // Normalize first (old rows all sit at 0 — swaps would no-op).
+    await pool.query(
+      `UPDATE blog_posts b SET sort_order = ranked.n FROM
+       (SELECT id, ROW_NUMBER() OVER (ORDER BY sort_order ASC, "updatedAt" DESC) - 1 AS n
+        FROM blog_posts WHERE featured = true) AS ranked
+       WHERE b.id = ranked.id`
+    ).catch(() => undefined);
+    const { rows } = await pool.query(
+      `SELECT id, sort_order FROM blog_posts WHERE featured = true ORDER BY sort_order ASC, "updatedAt" DESC`,
+    );
+    const idx = rows.findIndex((r) => r.id === id);
+    if (idx < 0) return fail(res, 404, 'Not a featured post');
+    const other = rows[idx + dir];
+    if (!other) return res.json({ data: { id, moved: false }, error: null });
+    await pool.query('UPDATE blog_posts SET sort_order = $2 WHERE id = $1', [id, other.sort_order]);
+    await pool.query('UPDATE blog_posts SET sort_order = $2 WHERE id = $1', [other.id, rows[idx].sort_order]);
+    res.json({ data: { id, moved: true }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// DELETE /api/blogs/:id — author or admin. Likes/comments/embeds cascade.
+// Delete-everywhere: also hard-deletes the author's own photos embedded in
+// this blog AND its dedicated cover upload, so My posts / timelines don't
+// keep showing a deleted story's pics. Covers picked from the author's
+// existing posts are left alone (still their posts).
+app.delete('/api/blogs/:id', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const { rows } = await pool.query('SELECT author_uid, cover_url FROM blog_posts WHERE id = $1', [id]);
+    if (!rows[0]) return fail(res, 404, 'Not found');
+    const author = rows[0].author_uid;
+    const admin = await isAdminUid(req.user.id);
+    if (author !== req.user.id && !admin) return fail(res, 403, 'Only the author can delete');
+    const linked = await pool.query('SELECT "photoId" FROM blog_moments WHERE "blogId" = $1', [id]);
+    const photoIds = linked.rows.map((r) => r.photoId).filter(Boolean);
+    // Dedicated cover upload for this blog (flagged at upload, owned by the
+    // author) — dies with the blog. Picked-from-existing covers stay.
+    const coverPhotoId = photoIdFromCoverUrl(rows[0].cover_url);
+    if (coverPhotoId) {
+      const own = await pool.query(
+        'SELECT id FROM photos WHERE id = $1 AND "uploadedByUid" = $2 AND COALESCE(is_cover, false) = true',
+        [coverPhotoId, author]
+      );
+      if (own.rows[0]) photoIds.push(own.rows[0].id);
+    }
+    let deletedPhotos = [];
+    if (photoIds.length > 0) {
+      const own = await pool.query(
+        'SELECT id FROM photos WHERE id = ANY($1) AND "uploadedByUid" = $2',
+        [photoIds, author]
+      );
+      deletedPhotos = own.rows.map((r) => r.id);
+      if (deletedPhotos.length > 0) {
+        await pool.query('DELETE FROM photo_comments WHERE "photoId" = ANY($1)', [deletedPhotos]);
+        await pool.query('DELETE FROM photo_likes WHERE "photoId" = ANY($1)', [deletedPhotos]);
+        await pool.query('DELETE FROM photos WHERE id = ANY($1)', [deletedPhotos]);
+      }
+    }
+    // blog_* side tables have no FK cascade — clean them explicitly.
+    await pool.query('DELETE FROM blog_likes WHERE "blogId" = $1', [id]).catch(() => undefined);
+    await pool.query('DELETE FROM blog_comments WHERE "blogId" = $1', [id]).catch(() => undefined);
+    await pool.query('DELETE FROM blog_moments WHERE "blogId" = $1', [id]).catch(() => undefined);
+    await pool.query('DELETE FROM blog_posts WHERE id = $1', [id]);
+    res.json({ data: { id, deleted: true, deletedPhotos }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// Blog likes: POST/DELETE /api/blogs/:id/likes (session). Same row pattern.
+app.post('/api/blogs/:id/likes', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    await pool.query('INSERT INTO blog_likes ("blogId", uid, at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [
+      id,
+      req.user.id,
+      Date.now(),
+    ]);
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM blog_likes WHERE "blogId" = $1', [id]);
+    res.json({ data: { liked: true, count: rows[0]?.n || 0 }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+app.delete('/api/blogs/:id/likes', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    await pool.query('DELETE FROM blog_likes WHERE "blogId" = $1 AND uid = $2', [id, req.user.id]);
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM blog_likes WHERE "blogId" = $1', [id]);
+    res.json({ data: { liked: false, count: rows[0]?.n || 0 }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// Blog comments: GET public, POST session, DELETE author-or-post-author.
+app.get('/api/blogs/:id/comments', async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const { rows } = await pool.query(
+      'SELECT id, uid, name, text, at FROM blog_comments WHERE "blogId" = $1 ORDER BY at ASC LIMIT 200',
+      [id]
+    );
+    res.json({ data: rows, error: null });
+  } catch (e) {
+    if (e && /blog_comments|relation/i.test(e.message || '')) return res.json({ data: [], error: null });
+    res.json({ data: null, error: e.message });
+  }
+});
+
+app.post('/api/blogs/:id/comments', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const text = String(req.body?.text || '').trim().slice(0, 500);
+    if (!text) return fail(res, 400, 'Comment is empty');
+    const cid = 'bcm_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const at = Date.now();
+    await pool.query('INSERT INTO blog_comments (id, "blogId", uid, name, text, at) VALUES ($1,$2,$3,$4,$5,$6)', [
+      cid,
+      id,
+      req.user.id,
+      req.user.name || 'Someone',
+      text,
+      at,
+    ]);
+    res.json({ data: { id: cid, uid: req.user.id, name: req.user.name || 'Someone', text, at }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+app.delete('/api/blogs/:id/comments/:cid', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const cid = String(req.params.cid || '');
+    const { rows } = await pool.query(
+      `SELECT c.uid AS "commentUid", p.author_uid AS "postUid" FROM blog_comments c
+       LEFT JOIN blog_posts p ON p.id = c."blogId" WHERE c.id = $1 AND c."blogId" = $2`,
+      [cid, id]
+    );
+    if (!rows[0]) return fail(res, 404, 'Not found');
+    if (rows[0].commentUid !== req.user.id && rows[0].postUid !== req.user.id) {
+      return fail(res, 403, 'Only the author can delete this comment');
+    }
+    await pool.query('DELETE FROM blog_comments WHERE id = $1', [cid]);
+    res.json({ data: { id: cid }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+// Blog ↔ moments: POST /api/blogs/:id/moments {photoIds[]} (own moments,
+// own blogs only — both sides must belong to the session user; admin bypass
+// intentionally NOT added). DELETE one link. Appended at the end, in order.
+app.post('/api/blogs/:id/moments', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const ids = [...new Set((Array.isArray(req.body?.photoIds) ? req.body.photoIds : []).map((x) => String(x || '')))]
+      .filter((x) => MOMENT_ID.test(x))
+      .slice(0, 20);
+    const { rows } = await pool.query('SELECT author_uid FROM blog_posts WHERE id = $1', [id]);
+    if (!rows[0]) return fail(res, 404, 'Not found');
+    if (rows[0].author_uid !== req.user.id) return fail(res, 403, 'Only your own blogs');
+    let added = 0;
+    for (const pid of ids) {
+      const { rows: pr } = await pool.query('SELECT "uploadedByUid" FROM photos WHERE id = $1', [pid]);
+      if (!pr[0]) continue;
+      // Legacy rows without uid: match by author name against session name.
+      const mine = pr[0].uploadedByUid
+        ? pr[0].uploadedByUid === req.user.id
+        : false;
+      if (!mine) continue;
+      try {
+        await pool.query('INSERT INTO blog_moments ("blogId", "photoId", at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [
+          id,
+          pid,
+          Date.now(),
+        ]);
+        added++;
+      } catch { /* missing table — skip */ }
+    }
+    res.json({ data: { id, added }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
+app.delete('/api/blogs/:id/moments/:pid', requireSession, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const pid = String(req.params.pid || '');
+    const { rows } = await pool.query('SELECT author_uid FROM blog_posts WHERE id = $1', [id]);
+    if (!rows[0]) return fail(res, 404, 'Not found');
+    if (rows[0].author_uid !== req.user.id) return fail(res, 403, 'Only your own blogs');
+    await pool.query('DELETE FROM blog_moments WHERE "blogId" = $1 AND "photoId" = $2', [id, pid]);
+    res.json({ data: { id }, error: null });
+  } catch (e) {
+    res.json({ data: null, error: e.message });
+  }
+});
+
 // ─── Generic table CRUD (AFTER specific routes) ────────────
 
 app.use('/api/:table', (req, res, next) => {
@@ -1517,6 +2087,9 @@ app.post('/api/moments', async (req, res) => {
     const mime = String(b.mime || 'image/jpeg').slice(0, 64);
     const aspect = Number(b.aspect) > 0 ? Number(b.aspect) : null;
     const uploadedByUid = String(b.uploadedByUid || '').slice(0, 128) || null;
+    // BlogComposer "Upload new" cover: dedicated trip-less moment, flagged so
+    // feeds / My-posts never show it as a standalone post.
+    const blogCover = b.blogCover === true || b.blogCover === 'true';
     if (typeof b.data === 'string' && b.data.length > 0) {
       const b64 = b.data.includes(',') ? b.data.split(',').pop() : b.data;
       if (b64.length > 15 * 1024 * 1024) return fail(res, 413, 'Photo too large');
@@ -1527,8 +2100,8 @@ app.post('/api/moments', async (req, res) => {
       await pool.query(
         `INSERT INTO photos (id, "tripId", caption, "locationTag", "uploadedByMemberId",
           "uploadedByName", "uploadedAt", "likesCount", mime, data, aspect, "uploadedByUid",
-          "_deleted", "updatedAt", "updatedBy")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,$13,$14)
+          "_deleted", "updatedAt", "updatedBy", is_cover)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,$13,$14,$15)
          ON CONFLICT (id) DO UPDATE SET
            caption = EXCLUDED.caption,
            "locationTag" = EXCLUDED."locationTag",
@@ -1539,7 +2112,8 @@ app.post('/api/moments', async (req, res) => {
            "uploadedByUid" = COALESCE(EXCLUDED."uploadedByUid", photos."uploadedByUid"),
            "_deleted" = EXCLUDED."_deleted",
            "updatedAt" = EXCLUDED."updatedAt",
-           "updatedBy" = EXCLUDED."updatedBy"`,
+           "updatedBy" = EXCLUDED."updatedBy",
+           is_cover = photos.is_cover OR EXCLUDED.is_cover`,
         [
           id, tripId,
           String(b.caption || '').slice(0, 500),
@@ -1551,10 +2125,11 @@ app.post('/api/moments', async (req, res) => {
           mime, buf, aspect, uploadedByUid,
           Date.now(),
           String(b.updatedBy || b.uploadedByMemberId || '').slice(0, 128),
+          blogCover,
         ]
       );
     } catch (e) {
-      if (e && /uploadedByUid|aspect/i.test(e.message || '')) {
+      if (e && /uploadedByUid|aspect|is_cover/i.test(e.message || '')) {
         // Column not migrated yet — legacy write keeps posting alive.
         await pool.query(
           `INSERT INTO photos (id, "tripId", caption, "locationTag", "uploadedByMemberId",
@@ -1678,6 +2253,87 @@ app.get('/api/moments', async (req, res) => {
   }
 });
 
+// GET /api/moments/one/:id — single moment by id (capability URL for
+// timeline links pasted into blogs; ids are unguessable).
+app.get('/api/moments/one/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!MOMENT_ID.test(id)) return fail(res, 400, 'Bad id');
+    let me = null;
+    try {
+      const tok = bearerToken(req);
+      if (tok) {
+        const u = await userByToken(tok).catch(() => null);
+        if (u) me = u.id;
+      }
+    } catch { /* public read proceeds */ }
+    const { rows } = await pool.query(
+      `SELECT p.id, p."tripId", p.caption, p."locationTag", p."uploadedByMemberId",
+        p."uploadedByName", p."uploadedAt", p."likesCount", p.mime, p.aspect, p."uploadedByUid",
+        octet_length(p.data) AS bytes,
+        (SELECT COUNT(*)::int FROM photo_likes l WHERE l."photoId" = p.id) AS "likeCount",
+        CASE WHEN $2::text IS NULL THEN false
+          ELSE EXISTS(SELECT 1 FROM photo_likes l WHERE l."photoId" = p.id AND l.uid = $2) END AS "likedByMe"
+       FROM photos p WHERE p.id = $1 AND NOT COALESCE(p."_deleted", false)`,
+      [id, me]
+    );
+    const r = rows[0];
+    if (!r) return fail(res, 404, 'Not found');
+    res.json({
+      data: {
+        id: r.id,
+        tripId: r.tripId,
+        url: Number(r.bytes || 0) > 0 ? momentBytesUrl(req, r.id) : '',
+        caption: r.caption || '',
+        locationTag: r.locationTag || '',
+        uploadedByMemberId: r.uploadedByMemberId || '',
+        uploadedByName: r.uploadedByName || '',
+        uploadedAt: r.uploadedAt || '',
+        likesCount: Number(r.likeCount ?? r.likesCount ?? 0),
+        likedByMe: !!r.likedByMe,
+        bytes: Number(r.bytes || 0),
+        ...(r.aspect ? { aspect: Number(r.aspect) } : {}),
+        ...(r.uploadedByUid ? { uploadedByUid: r.uploadedByUid } : {}),
+      },
+      error: null,
+    });
+  } catch (e) {
+    if (e && /photo_likes|relation/i.test(e.message || '')) {
+      try {
+        const { rows } = await pool.query(
+          `SELECT id, "tripId", caption, "locationTag", "uploadedByMemberId",
+            "uploadedByName", "uploadedAt", "likesCount", mime, aspect, "uploadedByUid",
+            octet_length(data) AS bytes
+           FROM photos WHERE id = $1 AND NOT COALESCE("_deleted", false)`,
+          [String(req.params.id || '')]
+        );
+        const r = rows[0];
+        if (!r) return fail(res, 404, 'Not found');
+        return res.json({
+          data: {
+            id: r.id,
+            tripId: r.tripId,
+            url: Number(r.bytes || 0) > 0 ? momentBytesUrl(req, r.id) : '',
+            caption: r.caption || '',
+            locationTag: r.locationTag || '',
+            uploadedByMemberId: r.uploadedByMemberId || '',
+            uploadedByName: r.uploadedByName || '',
+            uploadedAt: r.uploadedAt || '',
+            likesCount: Number(r.likesCount || 0),
+            bytes: Number(r.bytes || 0),
+            ...(r.aspect ? { aspect: Number(r.aspect) } : {}),
+            ...(r.uploadedByUid ? { uploadedByUid: r.uploadedByUid } : {}),
+          },
+          error: null,
+        });
+      } catch (e2) {
+        return fail(res, 500, e2.message);
+      }
+    }
+    res.json({ data: null, error: e.message });
+  }
+});
+
 // GET /api/moments/:id/bytes — the actual pixels (immutable, cached 1yr)
 app.get('/api/moments/:id/bytes', async (req, res) => {
   try {
@@ -1699,10 +2355,9 @@ app.get('/api/moments/:id/bytes', async (req, res) => {
 });
 
 // DELETE /api/moments/:id — owner-only tombstone + bytes freed immediately.
-// Wipes image bytes (storage), comments + likes (cascade), then the row.
-// Legacy rows without uploadedByUid stay deletable (no owner to check).
-// Plain VACUUM after (non-blocking, ms on this tiny table): reclaims the dead
-// TOAST bytes right away so the DB-size meter drops instead of going stale.
+// Delete-everywhere: also hard-deletes the author's own blogs embedding this
+// photo OR using it as cover, so Discover doesn't keep showing a story whose
+// post was deleted from My posts.
 app.delete('/api/moments/:id', requireSession, async (req, res) => {
   try {
     const id = String(req.params.id || '');
@@ -1711,18 +2366,43 @@ app.delete('/api/moments/:id', requireSession, async (req, res) => {
     if (rows.length === 0) return fail(res, 404, 'Not found');
     const owner = rows[0].uploadedByUid || null;
     if (owner && owner !== req.user.id) return fail(res, 403, 'Only the author can delete this post');
+    const who = owner || req.user.id;
+    const embedded = await pool.query(
+      'SELECT DISTINCT m."blogId" FROM blog_moments m JOIN blog_posts b ON b.id = m."blogId" WHERE m."photoId" = $1 AND b.author_uid = $2',
+      [id, who]
+    );
+    const blogIds = embedded.rows.map((r) => r.blogId).filter(Boolean);
+    // Blogs using this photo as COVER (cover_url, not a blog_moments row):
+    // position() = literal substring match (LIKE would treat _ as wildcard).
+    const covered = await pool.query(
+      `SELECT b.id FROM blog_posts b WHERE b.author_uid = $2
+        AND position('/api/moments/' || $1 || '/bytes' in b.cover_url) > 0`,
+      [id, who]
+    ).catch(() => ({ rows: [] }));
+    for (const r of covered.rows) {
+      if (r && r.id && !blogIds.includes(r.id)) blogIds.push(r.id);
+    }
     await pool.query('DELETE FROM photo_comments WHERE "photoId" = $1', [id]);
     await pool.query('DELETE FROM photo_likes WHERE "photoId" = $1', [id]);
     await pool.query(
       'UPDATE photos SET "_deleted" = true, data = NULL, "updatedAt" = $2 WHERE id = $1',
       [id, Date.now()]
     );
+    let deletedBlogs = [];
+    if (blogIds.length > 0) {
+      const del = await pool.query('DELETE FROM blog_posts WHERE id = ANY($1) RETURNING id', [blogIds]);
+      deletedBlogs = del.rows.map((r) => r.id);
+      // blog_* side tables have no FK cascade — clean them explicitly.
+      await pool.query('DELETE FROM blog_likes WHERE "blogId" = ANY($1)', [blogIds]).catch(() => undefined);
+      await pool.query('DELETE FROM blog_comments WHERE "blogId" = ANY($1)', [blogIds]).catch(() => undefined);
+      await pool.query('DELETE FROM blog_moments WHERE "blogId" = ANY($1)', [blogIds]).catch(() => undefined);
+    }
     try {
       await pool.query('VACUUM photos');
     } catch (e) {
       console.error('VACUUM photos after delete failed (delete itself ok):', e.message);
     }
-    res.json({ data: { id }, error: null });
+    res.json({ data: { id, deletedBlogs }, error: null });
   } catch (e) {
     console.error('DELETE /api/moments error:', e.message);
     res.json({ data: null, error: e.message });
@@ -1747,6 +2427,7 @@ app.get('/api/feed/main', requireSession, async (req, res) => {
           EXISTS(SELECT 1 FROM photo_likes l WHERE l."photoId" = p.id AND l.uid = $3) AS "likedByMe"
          FROM photos p
          WHERE p."tripId" IS NULL AND NOT COALESCE(p."_deleted", false)
+           AND NOT COALESCE(p.is_cover, false)
            AND COALESCE(p."uploadedAt", '') < to_char(to_timestamp($1 / 1000.0), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
            AND ($4 = '' OR p.caption ILIKE '%' || $4 || '%' OR p."uploadedByName" ILIKE '%' || $4 || '%')
          ORDER BY p."uploadedAt" DESC LIMIT $2`,
@@ -1760,6 +2441,7 @@ app.get('/api/feed/main', requireSession, async (req, res) => {
           octet_length(data) AS bytes
          FROM photos
          WHERE "tripId" IS NULL AND NOT COALESCE("_deleted", false)
+           AND NOT COALESCE(is_cover, false)
            AND COALESCE("uploadedAt", '') < to_char(to_timestamp($1 / 1000.0), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
            AND ($3 = '' OR caption ILIKE '%' || $3 || '%' OR "uploadedByName" ILIKE '%' || $3 || '%')
          ORDER BY "uploadedAt" DESC LIMIT $2`,
@@ -1825,6 +2507,7 @@ app.get('/api/feed/user/:uid', requireSession, async (req, res) => {
           EXISTS(SELECT 1 FROM photo_likes l WHERE l."photoId" = p.id AND l.uid = $3) AS "likedByMe"
          FROM photos p
          WHERE p."tripId" IS NULL AND NOT COALESCE(p."_deleted", false)
+           AND NOT COALESCE(p.is_cover, false)
            AND p."uploadedByUid" = $1
          ORDER BY p."uploadedAt" DESC LIMIT $2`,
         [uid, limit, me]
@@ -1837,6 +2520,7 @@ app.get('/api/feed/user/:uid', requireSession, async (req, res) => {
           octet_length(data) AS bytes
          FROM photos
          WHERE "tripId" IS NULL AND NOT COALESCE("_deleted", false)
+           AND NOT COALESCE(is_cover, false)
            AND "uploadedByUid" = $1
          ORDER BY "uploadedAt" DESC LIMIT $2`,
         [uid, limit]

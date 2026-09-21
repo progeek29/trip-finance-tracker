@@ -42,6 +42,10 @@
 - [x] 7. Verified local (tsc + build + API tests). Live push below.
 - [x] 8. Relational likes (photo_likes table, toggle everywhere), full CRUD,
   grids, search, icons sync — see commit.
+- [x] 9. Blogs P1: tables + endpoints + reader page + composer (autosave) +
+  Stories section + login cards + 3 admin seeds + review queue + profile.
+- [ ] 10. P2: SEO (`/blog/:slug` server HTML + sitemap submit).
+- [ ] 11. P3: profile tabs (likes/comments/saved), reply threads, affiliate.
 
 ## Non-goals (later)
 

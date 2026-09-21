@@ -32,7 +32,8 @@ export const MomentGridCell: React.FC<MomentGridCellProps> = ({ photo, onOpen, l
   return (
     <button
       onClick={onOpen}
-      className="group relative rounded-xl overflow-hidden bg-slate-100 aspect-square cursor-pointer active:scale-[0.98] transition-transform"
+      style={{ aspectRatio: '1 / 1', width: '100%', display: 'block' }}
+      className="group relative rounded-xl overflow-hidden bg-slate-100 aspect-square w-full cursor-pointer active:scale-[0.98] transition-transform"
     >
       {photo.url ? (
         <MediaImg srcRef={photo.url} alt={photo.caption || 'Moment'} className="w-full h-full object-cover" />

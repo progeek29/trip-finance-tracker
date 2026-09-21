@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutGrid, List, Plus, ImageIcon, Search, X } from 'lucide-react';
+import { LayoutGrid, List, Plus, ImageIcon, Search, X, MoreVertical, Link2 } from 'lucide-react';
 import { MediaImg } from '../common/MediaImg';
 import { MemberAvatar } from '../common/MemberAvatar';
 import { MainComposer } from './MainComposer';
 import { PostDetailModal } from './PostDetailModal';
 import { MomentGridCell, textGradient } from './MomentGridCell';
 import { DandelionLike } from '../trip/DandelionLike';
-import { fetchMainFeed, fetchCommentCounts, togglePostLike } from '../../utils/mainFeed';
+import { fetchMainFeed, fetchCommentCounts, togglePostLike, momentLink, copyText } from '../../utils/mainFeed';
 import type { SharedPhoto, Trip } from '../../types';
 
 interface MainTimelineViewProps {
@@ -54,6 +54,16 @@ export const MainTimelineView: React.FC<MainTimelineViewProps> = ({
   };
   useEffect(() => {
     void refresh();
+    const onChange = () => void refresh();
+    const onFocus = () => void refresh();
+    window.addEventListener('ws_moments_changed', onChange);
+    window.addEventListener('ws_blogs_changed', onChange);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('ws_moments_changed', onChange);
+      window.removeEventListener('ws_blogs_changed', onChange);
+      window.removeEventListener('focus', onFocus);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -278,6 +288,7 @@ function FeedCard({ photo, trips, myUid, notify, commentCount, onOpen, onOpenTri
 }) {
   const trip = photo.tripId ? trips.find((t) => t.id === photo.tripId) : undefined;
   const author = photo.uploadedByName || 'Someone';
+  const [menuOpen, setMenuOpen] = useState(false);
   const [liked, setLiked] = useState(!!photo.likedByMe);
   const [likeBusy, setLikeBusy] = useState(false);
   useEffect(() => {
@@ -310,10 +321,34 @@ function FeedCard({ photo, trips, myUid, notify, commentCount, onOpen, onOpenTri
         >
           {author}
         </button>
+        <span className="relative ml-auto flex-shrink-0">
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label="Post options"
+            className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+          >
+            <MoreVertical size={15} />
+          </button>
+          {menuOpen && (
+            <span className="absolute right-0 top-8 z-10 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5">
+              <button
+                onClick={() => {
+                  void copyText(momentLink(photo.id)).then((ok) =>
+                    notify(ok ? 'Moment link copied — paste it in a blog.' : 'Could not copy link.')
+                  );
+                  setMenuOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                <Link2 size={14} /> Copy link
+              </button>
+            </span>
+          )}
+        </span>
         {trip && (
           <button
             onClick={() => onOpenTrip(trip)}
-            className="ml-auto flex-shrink-0 text-[10px] font-bold text-indigo-600 bg-indigo-50 rounded-md px-1.5 py-0.5 hover:bg-indigo-100 cursor-pointer truncate max-w-[140px]"
+            className="flex-shrink-0 text-[10px] font-bold text-indigo-600 bg-indigo-50 rounded-md px-1.5 py-0.5 hover:bg-indigo-100 cursor-pointer truncate max-w-[140px]"
           >
             {trip.title}
           </button>

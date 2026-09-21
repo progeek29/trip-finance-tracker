@@ -1,34 +1,66 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogIn, Megaphone, MoreVertical, X, Zap } from 'lucide-react';
+import { LogIn, Megaphone, MoreVertical, X, Zap, ChevronRight } from 'lucide-react';
 import { AuthForm, useAuthForm } from './AuthScreen';
 import { PhoneGate } from './PhoneGate';
+import { MediaImg } from './MediaImg';
+import { fetchBlogs, type BlogPost } from '../../utils/blogs';
 import { authGetUser } from '../../utils/supabaseClient';
 import { Logo } from './Logo';
 
 interface LoginLandingProps {
   onAuth: (profile?: { name: string; phone: string; cardNo?: string; inviteCode?: string }) => void;
+  onOpenBlog?: (id: string) => void;
 }
 
-const BLOG_POSTS = [
-  {
-    meta: 'BY LEAD EXPLORER • SEP 12, 2026',
-    title: 'How Group Budgets Open Doors to Uncharted Paths',
-    body: "Managing travel finance collectively isn't about cutting pennies; it's about shifting resources seamlessly to secure hidden stays and remote high-rise views without friction.",
-  },
-  {
-    meta: 'FINTECH SYNC • AUG 28, 2026',
-    title: 'Behind the WS Financial Protocol Matrix',
-    body: 'A closer look at how WanderSync creates a highly reliable, locked 16-digit member token to secure shared global ledgers and minimize multi-currency travel balance gaps.',
-  },
-  {
-    meta: 'GEOGRAPHIC ROADS • AUG 14, 2026',
-    title: 'Packing Light, Syncing Smart: The 2026 Checklist',
-    body: 'From the rugged horizons of the Himalayas to bustling hyper-modern city cores, learn to configure decentralized shared trip vaults before your team steps onto the runway.',
-  },
-];
+/** Admin-picked stories strip (public). Tap opens the full story, view-only. */
+function FeaturedStrip({ onOpenBlog }: { onOpenBlog?: (id: string) => void }) {
+  const [posts, setPosts] = useState<BlogPost[]>([]);
+  useEffect(() => {
+    let live = true;
+    fetchBlogs({ featured: true, limit: 6 }).then((rows) => {
+      if (live) setPosts(rows);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (posts.length === 0) return null;
+  return (
+    <section className="border-t border-slate-100">
+      <div className="max-w-6xl mx-auto px-4 py-8 lg:py-12">
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-display tracking-tight mb-6">
+          Featured travel stories
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {posts.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => onOpenBlog?.(p.id)}
+              className="text-left bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:shadow-md active:scale-[0.99] transition-all cursor-pointer"
+            >
+              {p.coverUrl ? (
+                <MediaImg srcRef={p.coverUrl} alt={p.title} className="w-full h-40 object-cover bg-slate-100" />
+              ) : null}
+              <span className="flex items-center gap-2 p-5">
+                <span className="min-w-0 flex-1">
+                  <span className="block text-base font-bold text-slate-900 font-display leading-snug">{p.title}</span>
+                  <span className="block text-[13px] text-slate-500 leading-relaxed mt-1.5 line-clamp-2">{p.excerpt}</span>
+                  <span className="block text-[11px] text-slate-400 font-bold mt-2">
+                    {p.authorName} · {p.views} reads
+                  </span>
+                </span>
+                <ChevronRight size={18} className="text-slate-300 flex-shrink-0" />
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
 
-/** Public landing + login — hero split, real auth form, insights feed. */
-export function LoginLanding({ onAuth }: LoginLandingProps) {
+/** Public landing + login — hero split, real auth form, featured stories, insights. */
+export function LoginLanding({ onAuth, onOpenBlog }: LoginLandingProps) {
   const auth = useAuthForm(onAuth);
   const [barVisible, setBarVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -218,23 +250,8 @@ export function LoginLanding({ onAuth }: LoginLandingProps) {
         </div>
       </main>
 
-      {/* Insights feed */}
-      <section className="border-t border-slate-100">
-        <div className="max-w-6xl mx-auto px-4 py-8 lg:py-12">
-          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-display tracking-tight mb-6">
-            Latest Expeditions &amp; Insights
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {BLOG_POSTS.map((p) => (
-              <article key={p.title} className="bg-white border border-slate-200 rounded-3xl p-6 flex flex-col shadow-sm">
-                <p className="text-[9px] font-bold text-slate-400 tracking-[0.12em] mb-3">{p.meta}</p>
-                <h3 className="text-base font-bold text-slate-900 font-display leading-snug mb-2.5">{p.title}</h3>
-                <p className="text-[13px] text-slate-500 leading-relaxed">{p.body}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* Featured stories (admin-picked blogs — public, view-only) */}
+      <FeaturedStrip onOpenBlog={onOpenBlog} />
 
       {/* Coming-soon toast */}
       {toast && (

@@ -9,6 +9,7 @@ import {
   Database,
   ImagePlus,
   LayoutGrid,
+  Link2,
   List,
   MoreVertical,
   Pencil,
@@ -23,7 +24,7 @@ import { compressImage } from '../../utils/image';
 import { formatBytes } from '../chat/chatStore';
 import { putMedia, resolveMediaBlob } from '../../utils/mediaStore';
 import { saveMoment, deleteMomentRemote, queueTombstone, fetchStorageUsage, type StorageUsage } from '../../utils/momentsSync';
-import { togglePostLike } from '../../utils/mainFeed';
+import { togglePostLike, momentLink, copyText } from '../../utils/mainFeed';
 import { MomentGridCell } from '../discovery/MomentGridCell';
 import { PostDetailModal } from '../discovery/PostDetailModal';
 import { sendPush } from '../../utils/push';
@@ -759,7 +760,7 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
                   {photo.locationTag ? ` · ${photo.locationTag}` : ''}
                 </span>
               </span>
-              {isOwner && (
+              {(
                 <span className="relative flex-shrink-0">
                   <button
                     onClick={() => { setMenuOpenId(menuOpen ? null : photo.id); setConfirmDeleteId(null); }}
@@ -771,11 +772,25 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
                   {menuOpen && (
                     <span className="absolute right-0 top-9 z-10 w-40 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5">
                       <button
+                        onClick={() => {
+                          void copyText(momentLink(photo.id)).then((ok) =>
+                            notify(ok ? 'Moment link copied — paste it in a blog.' : 'Could not copy link.')
+                          );
+                          setMenuOpenId(null);
+                        }}
+                        className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                      >
+                        <Link2 size={14} /> Copy link
+                      </button>
+                      {isOwner && (
+                      <button
                         onClick={() => { setEditingCaption({ id: photo.id, text: photo.caption || '' }); setMenuOpenId(null); }}
                         className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
                       >
                         <Pencil size={14} /> Edit caption
                       </button>
+                      )}
+                      {isOwner && (
                       <button
                         onClick={() => {
                           if (confirmDeleteId === photo.id) {
@@ -828,6 +843,7 @@ export const TripMomentsView: React.FC<TripMomentsViewProps> = ({
                       >
                         <Trash2 size={14} /> {confirmDeleteId === photo.id ? 'Tap again to delete' : 'Delete'}
                       </button>
+                      )}
                     </span>
                   )}
                 </span>

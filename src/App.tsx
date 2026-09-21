@@ -80,6 +80,10 @@ import {
 } from './utils/notifications';
 import { NotifFeedPanel } from './components/common/NotifFeedPanel';
 import { PublicProfileView } from './components/common/PublicProfileView';
+import { BlogReader } from './components/discovery/BlogReader';
+import { BlogComposer } from './components/discovery/BlogComposer';
+import { PostDetailModal } from './components/discovery/PostDetailModal';
+import { fetchMoment } from './utils/mainFeed';
 import { isNativeApp, NativeSms } from './utils/nativeBridge';
 import { systemShare } from './utils/share';
 import { parseBankSMS, isDateWithinTrip, isRecurringDebit } from './utils/smsParser';
@@ -181,6 +185,33 @@ export function App() {
   const [dmFriend, setDmFriend] = useState<CoTraveler | null>(null);
   const [groupRoom, setGroupRoom] = useState<ChatGroup | null>(null);
   const [publicUid, setPublicUid] = useState<string | null>(null);
+  const [readingBlogId, setReadingBlogId] = useState<string | null>(null);
+  const [composingBlog, setComposingBlog] = useState<{ blogId?: string; draftId?: string } | null>(null);
+  const [deepMoment, setDeepMoment] = useState<SharedPhoto | null>(null);
+  // Deep links (?blog= / ?moment=): open once auth resolves, then clear URL.
+  const deepLinkSeen = useRef(false);
+  useEffect(() => {
+    if (authed === null || deepLinkSeen.current) return;
+    deepLinkSeen.current = true;
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      const b = qs.get('blog');
+      const m = qs.get('moment');
+      if (b) setReadingBlogId(b);
+      if (m) {
+        if (!authed) {
+          showNotifFlash('Login to view this moment.');
+        } else {
+          fetchMoment(m).then((p) => {
+            if (p) setDeepMoment(p);
+            else showNotifFlash('Moment not found.');
+          });
+        }
+      }
+      if (b || m) window.history.replaceState(null, '', window.location.pathname);
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed]);
   const [renamingGroup, setRenamingGroup] = useState(false);
   const [groupNameDraft, setGroupNameDraft] = useState('');
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
@@ -561,7 +592,8 @@ export function App() {
       }
     }
   };
-  const isAdmin = profile?.role === 'admin' || (!!(profile?.name && profile?.phone) && getAdminStatus(profile.name, profile.phone));
+  const [authEmail, setAuthEmail] = useState('');
+  const isAdmin = authEmail.trim().toLowerCase() === 'admin@wandersync.com' || profile?.role === 'admin';
   const [ownerFilter, setOwnerFilter] = useState<'all' | 'owned' | 'joined'>('all');
   const [pushFlash, setPushFlash] = useState<{ text: string; name?: string } | null>(null);
   const pushFlashTimer = useRef<number | null>(null);
@@ -591,6 +623,7 @@ export function App() {
       setAuthed(!!u);
       if (u) {
         setMyUid(u.uid);
+        setAuthEmail(u.email || '');
         if (u.name?.trim() && !loadUserProfile()?.name) {
           const restored: UserProfile = {
             name: u.name.trim(),
@@ -601,6 +634,14 @@ export function App() {
           };
           setProfile(restored);
           saveUserProfile(restored);
+        } else if (u.isAdmin) {
+          // Repair: server says admin but local profile lost the role
+          setProfile((prev) => {
+            if (!prev || prev.role === 'admin') return prev;
+            const fixed: UserProfile = { ...prev, role: 'admin' };
+            saveUserProfile(fixed);
+            return fixed;
+          });
         }
       }
     }).catch(() => setAuthed(false));
@@ -1837,7 +1878,9 @@ export function App() {
 
   if (!authed) {
     return (
-      <LoginLanding
+      <>
+        <LoginLanding
+          onOpenBlog={(id) => setReadingBlogId(id)}
         onAuth={(signupProfile) => {
           setTripsHydrating(true);
           setAuthed(true);
@@ -1883,7 +1926,22 @@ export function App() {
             }).catch(() => setTripsHydrating(false));
           }
         }}
-      />
+        />
+        {readingBlogId && (
+          <BlogReader
+            blogId={readingBlogId}
+            myUid={null}
+            myName="Guest"
+            notify={(msg) => showNotifFlash(msg)}
+            onClose={() => setReadingBlogId(null)}
+            onOpenAuthor={() => showNotifFlash('Login to view profiles.')}
+            onLoginNeeded={() => {
+              setReadingBlogId(null);
+              showNotifFlash('Login to like and comment.');
+            }}
+          />
+        )}
+      </>
     );
   }
 
@@ -1901,10 +1959,27 @@ export function App() {
 
   if (appView === 'admin_activity') {
     return (
-      <AdminActivity
-        onBack={() => setAppView('landing')}
-        myUid={myUid}
-      />
+      <>
+        <AdminActivity
+          onBack={() => setAppView('landing')}
+          myUid={myUid}
+          notify={(msg) => showNotifFlash(msg)}
+          onOpenBlog={(id) => setReadingBlogId(id)}
+        />
+        {readingBlogId && (
+          <BlogReader
+            blogId={readingBlogId}
+            myUid={myUid}
+            myName={profile?.name || 'Me'}
+            notify={(msg) => showNotifFlash(msg)}
+            onClose={() => setReadingBlogId(null)}
+            onOpenAuthor={(uid) => {
+              setReadingBlogId(null);
+              openAuthorProfile(uid);
+            }}
+          />
+        )}
+      </>
     );
   }
 
@@ -1950,6 +2025,7 @@ export function App() {
           onSave={handleSaveProfile}
           onJoinTrip={handleJoinTripById}
           onBack={() => setAppView('landing')}
+          isAdmin={isAdmin}
           onOpenAdmin={() => setAppView('admin_activity')}
           myMoments={myUid ? photos.filter((p) => p.uploadedByUid === myUid) : []}
           allTrips={trips}
@@ -1959,6 +2035,8 @@ export function App() {
             setActiveTab('trip');
             setAppView('trip_dashboard');
           }}
+          onEditBlog={(blogId, draftId) => setComposingBlog({ blogId, draftId })}
+          onOpenBlog={(id) => setReadingBlogId(id)}
           onLogout={async () => {
             const { authSignOutAll } = await import('./utils/supabaseClient');
             await authSignOutAll();
@@ -1967,6 +2045,30 @@ export function App() {
             setMyUid(null);
           }}
         />
+        {composingBlog && myUid && (
+          <BlogComposer
+            myUid={myUid}
+            myName={profile?.name || 'Me'}
+            blogId={composingBlog.blogId}
+            draftId={composingBlog.draftId}
+            notify={(msg) => showNotifFlash(msg)}
+            onClose={() => setComposingBlog(null)}
+            onSaved={() => setComposingBlog(null)}
+          />
+        )}
+        {readingBlogId && (
+          <BlogReader
+            blogId={readingBlogId}
+            myUid={myUid}
+            myName={profile?.name || 'Me'}
+            notify={(msg) => showNotifFlash(msg)}
+            onClose={() => setReadingBlogId(null)}
+            onOpenAuthor={(uid) => {
+              setReadingBlogId(null);
+              openAuthorProfile(uid);
+            }}
+          />
+        )}
         {SirenBanner}
         {FlashToast}
       </>
@@ -2410,7 +2512,65 @@ export function App() {
           onAddRecommendation={handleAddPlace}
           moments={photos}
           onOpenAuthor={(uid) => openAuthorProfile(uid)}
+          onOpenBlog={(id) => setReadingBlogId(id)}
+          onWriteBlog={() => setComposingBlog({})}
+          onEditBlog={(blogId) => setComposingBlog({ blogId })}
         />
+        {readingBlogId && (
+          <BlogReader
+            blogId={readingBlogId}
+            myUid={myUid}
+            myName={profile?.name || 'Me'}
+            notify={(msg) => showNotifFlash(msg)}
+            onClose={() => setReadingBlogId(null)}
+            onOpenAuthor={(uid) => {
+              setReadingBlogId(null);
+              openAuthorProfile(uid);
+            }}
+          />
+        )}
+        {deepMoment && (
+          <PostDetailModal
+            photo={deepMoment}
+            trips={trips}
+            myUid={myUid}
+            myName={profile?.name}
+            notify={(msg) => showNotifFlash(msg)}
+            onClose={() => setDeepMoment(null)}
+            onOpenTrip={(t) => {
+              setDeepMoment(null);
+              setActiveTripId(t.id);
+              setActiveTab('trip');
+              setAppView('trip_dashboard');
+            }}
+            onOpenAuthor={(uid) => {
+              setDeepMoment(null);
+              openAuthorProfile(uid);
+            }}
+            onDeleted={(id) => {
+              setPhotos((prev) => prev.filter((p) => p.id !== id));
+              setDeepMoment(null);
+            }}
+            onLiked={(id, count, liked) => {
+              setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, likesCount: count, likedByMe: liked } : p)));
+              setDeepMoment((d) => (d && d.id === id ? { ...d, likesCount: count, likedByMe: liked } : d));
+            }}
+            onEdited={(updated) => {
+              setPhotos((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)));
+              setDeepMoment((d) => (d && d.id === updated.id ? { ...d, ...updated } : d));
+            }}
+          />
+        )}
+        {composingBlog && myUid && (
+          <BlogComposer
+            myUid={myUid}
+            myName={profile?.name || 'Me'}
+            blogId={composingBlog.blogId}
+            notify={(msg) => showNotifFlash(msg)}
+            onClose={() => setComposingBlog(null)}
+            onSaved={() => setComposingBlog(null)}
+          />
+        )}
         {notifOpen && (() => {
           // Landing panel: SAME unified feed as the trip page (activity +
           // trip chat) plus DM unread rows — latest first, cap 30.

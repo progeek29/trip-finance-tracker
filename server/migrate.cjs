@@ -90,6 +90,50 @@ const STMTS = [
     key text primary key,
     value text default ''
   )`,
+  // Blogs (P1): long-form travel stories. status: draft → pending →
+  // published (admin approves) / rejected. featured = login-page cards.
+  `CREATE TABLE IF NOT EXISTS blog_posts (
+    id text primary key,
+    author_uid text not null references users(id) on delete cascade,
+    title text default '',
+    slug text,
+    body text default '',
+    cover_url text default '',
+    tag text default 'journal',
+    status text default 'draft',
+    featured boolean default false,
+    views bigint default 0,
+    "createdAt" bigint,
+    "updatedAt" bigint
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_blogs_status ON blog_posts(status, "updatedAt" DESC)`,
+  // Featured order (admin up/down arrows on login cards).
+  `ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS sort_order integer DEFAULT 0`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_blogs_slug ON blog_posts(slug) WHERE slug IS NOT NULL AND slug <> ''`,
+  // Blog likes + comments (same relational pattern as moments).
+  `CREATE TABLE IF NOT EXISTS blog_likes (
+    "blogId" text not null references blog_posts(id) on delete cascade,
+    uid text not null references users(id) on delete cascade,
+    at bigint,
+    PRIMARY KEY ("blogId", uid)
+  )`,
+  `CREATE TABLE IF NOT EXISTS blog_comments (
+    id text primary key,
+    "blogId" text not null references blog_posts(id) on delete cascade,
+    uid text not null references users(id) on delete cascade,
+    name text default '',
+    text text default '',
+    at bigint
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_bcomments_blog ON blog_comments("blogId", at)`,
+  // Moments embedded at the end of blogs (own moments, own blogs only —
+  // enforced in the endpoint by matching session uid on both sides).
+  `CREATE TABLE IF NOT EXISTS blog_moments (
+    "blogId" text not null references blog_posts(id) on delete cascade,
+    "photoId" text not null references photos(id) on delete cascade,
+    at bigint,
+    PRIMARY KEY ("blogId", "photoId")
+  )`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS pinned boolean DEFAULT false`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS "_deleted" boolean DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS message_reads (
@@ -126,6 +170,10 @@ const STMTS = [
   // Author UID on moments: display names resolve LIVE from trip members,
   // so a profile rename propagates everywhere (never frozen at post time).
   `ALTER TABLE photos ADD COLUMN IF NOT EXISTS "uploadedByUid" text`,
+  // Blog cover uploads (BlogComposer "Upload new"): dedicated trip-less
+  // moments that must NOT leak into the main feed / My-posts grid as
+  // standalone posts. Covers render only inside their blog (cover_url).
+  `ALTER TABLE photos ADD COLUMN IF NOT EXISTS is_cover boolean DEFAULT false`,
   // Chat requests: pending → accepted/declined (silent) ; sender-cancel deletes.
   // Friendship = accepted pair either direction. Block list reserved (P3).
   `CREATE TABLE IF NOT EXISTS chat_requests (

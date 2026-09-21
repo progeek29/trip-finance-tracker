@@ -57,6 +57,11 @@ interface TripLandingViewProps {
   moments?: SharedPhoto[];
   /** Open a user's public profile (Step 5) — fallback toasts until wired. */
   onOpenAuthor?: (uid: string, name: string) => void;
+  /** Open a blog reader / composer (Stories). */
+  onOpenBlog?: (id: string) => void;
+  onWriteBlog?: () => void;
+  /** Edit own blog from Discover → opens composer. */
+  onEditBlog?: (blogId: string) => void;
 }
 
 const STATUS_META = {
@@ -366,7 +371,7 @@ function TripCard({
   );
 }
 
-export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange, unreadCount, onBellClick, bellPulse = 0, landingTab = 'home',   onLandingTabChange, onOpenChat, onOpenTripChat, onDummyAction, unreadByTrip, chatList, chatBadge = 0, recommendations = [], onAddRecommendation, moments = [], onOpenAuthor }: TripLandingViewProps) {
+export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, onEditTrip, onDeleteTrip, userName, userId, onOpenProfile, onShareTrip, myUid, ownerFilter: ownerFilterProp, onOwnerFilterChange, unreadCount, onBellClick, bellPulse = 0, landingTab = 'home',   onLandingTabChange, onOpenChat, onOpenTripChat, onDummyAction, unreadByTrip, chatList, chatBadge = 0, recommendations = [], onAddRecommendation, moments = [], onOpenAuthor, onOpenBlog, onWriteBlog, onEditBlog }: TripLandingViewProps) {
   const [filter, setFilter] = useState<'all' | 'inprogress' | 'upcoming' | 'completed'>('all');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'owned' | 'joined'>(ownerFilterProp || 'all');
   const [confirmTrip, setConfirmTrip] = useState<Trip | null>(null);
@@ -585,6 +590,12 @@ export function TripLandingView({ trips, expenses, onSelectTrip, onCreateTrip, o
             `${pkg.title} (${pkg.destination}, ${pkg.duration}) at ₹${pkg.price.toLocaleString('en-IN')} ${pkg.priceNote}. ${pkg.dates}. Highlights: ${pkg.highlights.join(', ')}.`
           ).then((r) => onDummyAction?.(r === 'shared' ? 'Package shared.' : 'Package details copied.'));
         }}
+        myUid={myUid ?? null}
+        myName={userName || 'Me'}
+        notify={(msg) => onDummyAction?.(msg)}
+        onOpenBlog={(id) => onOpenBlog ? onOpenBlog(id) : onDummyAction?.('Opening story…')}
+        onWriteBlog={() => onWriteBlog ? onWriteBlog() : onDummyAction?.('Write from your profile.')}
+        onEditBlog={(blogId) => onEditBlog ? onEditBlog(blogId) : onDummyAction?.('Edit from your profile.')}
       />
       ) : landingTab === 'timeline' ? (
       <MainTimelineView

@@ -242,7 +242,13 @@ export const PostDetailModal: React.FC<PostDetailModalProps> = ({
       try {
         dropCachedMediaUrl(photo.localRef);
       } catch { /* no local copy */ }
-      notify('Post deleted.');
+      // Server also hard-deleted author's blogs embedding this photo —
+      // refresh Discover + Profile everywhere.
+      try {
+        window.dispatchEvent(new CustomEvent('ws_blogs_changed'));
+        window.dispatchEvent(new CustomEvent('ws_moments_changed'));
+      } catch { /* ignore */ }
+      notify('Post deleted everywhere.');
       onDeleted(photo.id);
     } catch {
       notify('Could not delete. Check internet.');

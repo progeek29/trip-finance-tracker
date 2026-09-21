@@ -46,7 +46,8 @@ export interface SavedMoment {
 export async function saveMoment(
   photo: SharedPhoto,
   blob: Blob | null,
-  uid: string
+  uid: string,
+  opts?: { blogCover?: boolean }
 ): Promise<SavedMoment | null> {
   let data: string | undefined;
   if (blob) {
@@ -73,6 +74,7 @@ export async function saveMoment(
       mime: blob?.type || 'image/jpeg',
       updatedBy: uid,
       ...(data ? { data } : {}),
+      ...(opts?.blogCover ? { blogCover: true } : {}),
       ...(photo.aspect ? { aspect: photo.aspect } : {}),
       ...(photo.uploadedByUid ? { uploadedByUid: photo.uploadedByUid } : {}),
     }),
