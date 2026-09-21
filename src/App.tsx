@@ -618,8 +618,24 @@ export function App() {
 
   // Check auth on mount — and restore name/phone from server so login
   // never asks for them again on a new device / cleared storage.
+  // Unverified email sessions NEVER enter the app: park them on the OTP
+  // screen instead (refresh-proof — no direct jump inside).
   useEffect(() => {
     authGetUser().then((u) => {
+      if (u && u.emailVerified === false) {
+        // Seed only when no fresher pending key exists (a signup-time key
+        // may carry the invite code — never clobber it).
+        try {
+          if (!localStorage.getItem('ws_pending_verify_v1')) {
+            localStorage.setItem('ws_pending_verify_v1', JSON.stringify({
+              email: u.email,
+              profile: { name: u.name || '', phone: u.phone || '' },
+            }));
+          }
+        } catch { /* private mode */ }
+        setAuthed(false);
+        return;
+      }
       setAuthed(!!u);
       if (u) {
         setMyUid(u.uid);

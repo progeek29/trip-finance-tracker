@@ -65,6 +65,9 @@ const STMTS = [
   // Email verification flag (password users verify via Brevo OTP; Google
   // users are verified by definition).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean DEFAULT false`,
+  // Grandfather every account that exists at deploy time: only signups AFTER
+  // this point start unverified (signup handler sets false explicitly).
+  `UPDATE users SET email_verified = true WHERE COALESCE(email_verified, false) = false`,
   // OTP codes: hashed, purpose-tagged, short-lived. Attempts capped.
   `CREATE TABLE IF NOT EXISTS email_otps (
     id text primary key,

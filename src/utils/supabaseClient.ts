@@ -85,16 +85,17 @@ export function isAdminUser(): boolean {
   return cachedIsAdmin;
 }
 
-export async function authSignUp(email: string, password: string, name: string, phone: string, cardNo?: string, gender?: string): Promise<{ uid: string; isAdmin: boolean }> {
+export async function authSignUp(email: string, password: string, name: string, phone: string, cardNo?: string, gender?: string): Promise<{ uid: string; isAdmin: boolean; needsVerification: boolean }> {
   const { data, error } = await api('/auth/signup', {
     method: 'POST',
     body: JSON.stringify({ email, password, name, phone, cardNo, gender }),
   });
   if (error) throw new Error(error);
-  setToken(data.token);
+  // No session is minted at signup (server returns none) — the token arrives
+  // only after the email OTP passes, so a refresh can never skip verification.
   cachedUid = data.user.id;
   cachedIsAdmin = email === ADMIN_EMAIL;
-  return { uid: data.user.id, isAdmin: cachedIsAdmin };
+  return { uid: data.user.id, isAdmin: cachedIsAdmin, needsVerification: !!data.needsVerification };
 }
 
 /** Google sign-on: server verifies the GIS ID token, finds-or-creates the
@@ -154,12 +155,17 @@ export async function verifyOtp(
   email: string,
   purpose: 'verify' | 'reset',
   code: string
-): Promise<{ verified?: boolean; resetToken?: string }> {
+): Promise<{ verified?: boolean; resetToken?: string; token?: string; user?: { id: string; email: string } }> {
   const { data, error } = await api('/otp/verify', {
     method: 'POST',
     body: JSON.stringify({ email: String(email || '').trim(), purpose, code: code.trim() }),
   });
   if (error) throw new Error(error);
+  // Signup-verify mints the session here (signup itself minted none).
+  if (data?.token) {
+    setToken(data.token);
+    if (data?.user?.id) cachedUid = data.user.id;
+  }
   return data || {};
 }
 
@@ -210,7 +216,7 @@ export async function authSignOutAll(): Promise<void> {
   await authSignOut();
 }
 
-export async function authGetUser(): Promise<{ uid: string; email: string; isAdmin: boolean; name: string; phone: string; role: string; cardNo: string; username: string; gender: string } | null> {
+export async function authGetUser(): Promise<{ uid: string; email: string; isAdmin: boolean; name: string; phone: string; role: string; cardNo: string; username: string; gender: string; emailVerified: boolean } | null> {
   const token = getToken();
   if (!token) return null;
   const { data } = await api('/auth/user', { headers: { Authorization: `Bearer ${token}` } });
@@ -227,6 +233,7 @@ export async function authGetUser(): Promise<{ uid: string; email: string; isAdm
     cardNo: data.user.cardNo || '',
     username: data.user.username || '',
     gender: data.user.gender || 'unspecified',
+    emailVerified: data.user.emailVerified !== false,
   };
 }
 

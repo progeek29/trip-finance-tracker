@@ -86,8 +86,9 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
         el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
         window.setTimeout(() => {
           const inputs = el.querySelectorAll('input');
-          // each spot block ends with [name, notes] — focus the newest name field
-          const nameInput = inputs[inputs.length - 2] as HTMLInputElement | undefined;
+          // each spot block now ends with [name input, notes textarea] —
+          // the newest name field is the LAST input in the list
+          const nameInput = inputs[inputs.length - 1] as HTMLInputElement | undefined;
           if (nameInput) nameInput.focus({ preventScroll: true });
         }, 80);
       }
@@ -419,13 +420,23 @@ export function TripCreateModal({ isOpen, onClose, onSaveTrip, editingTrip, owne
                           </button>
                         )}
                       </div>
-                      <input
-                        type="text"
+                      <textarea
                         value={city.notes || ''}
                         onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, notes: e.target.value } : c))}
-                        placeholder="Description (Optional)"
-                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-indigo-400 placeholder-slate-300"
+                        placeholder="Description (Optional) — Enter for a new line"
+                        rows={2}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-indigo-400 placeholder-slate-300 resize-y min-h-[52px] max-h-32 overflow-y-auto"
                       />
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs font-extrabold pointer-events-none">📍</span>
+                        <input
+                          type="url"
+                          value={city.locationLink || ''}
+                          onChange={e => setCities(prev => prev.map((c, ci) => ci === i ? { ...c, locationLink: e.target.value } : c))}
+                          placeholder="Map link (optional) — paste Google Maps link"
+                          className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-indigo-400 placeholder-slate-300"
+                        />
+                      </div>
                     </div>
                   ))}
                   </div>

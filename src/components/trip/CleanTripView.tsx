@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
 import { Trip, Expense, CityStop, TripMember } from '../../types';
-import { Sparkles, Zap, Edit2, Trash2, X, ChevronRight, Pencil, Copy, Check } from 'lucide-react';
-import confetti from 'canvas-confetti';
+import { Edit2, Trash2, X, ChevronRight, Pencil, Copy, Check } from 'lucide-react';
 import { MemberAvatar } from '../common/MemberAvatar';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { PhoneInput, isValidPhone, formatPhoneDisplay } from '../common/PhoneInput';
-import { isNativeApp } from '../../utils/nativeBridge';
 import { ContactPickerModal } from '../common/ContactPickerModal';
 import { fetchDeviceContacts, type DeviceContact } from '../../utils/deviceContacts';
 import { useMediaUrl } from '../common/MediaImg';
@@ -37,7 +35,6 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
   myUid,
   isAdmin,
 }) => {
-  const [simulatedToast, setSimulatedToast] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [stopModal, setStopModal] = useState<{ open: boolean; editing: CityStop | null }>({ open: false, editing: null });
   const [squadOpen, setSquadOpen] = useState(false);
@@ -73,15 +70,6 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
     const mySplit = e.splits.find((s) => s.memberId === myMember?.id);
     return sum + (mySplit?.amount || 0);
   }, 0);
-
-  const handleSimulateIncomingSMS = () => {
-    const merchants = ['Cafe Mambo Baga', 'Burger Factory Anjuna', 'Thalassa Siolim', 'Goa Cab Service', "Tito's Club"];
-    const amounts = [650, 1200, 2400, 850, 3100];
-    const idx = Math.floor(Math.random() * merchants.length);
-    setSimulatedToast(`HDFC Bank Alert: Rs.${amounts[idx]} debited at ${merchants[idx]}. Auto-logged to ${trip.title}.`);
-    confetti({ particleCount: 40, spread: 50, origin: { y: 0.8 } });
-    setTimeout(() => setSimulatedToast(null), 4500);
-  };
 
   const deleteStop = (id: string, label: string) => {
     setConfirmStop({ id, label });
@@ -135,16 +123,6 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
           <span className="text-2xl font-extrabold bg-white/20 rounded-2xl px-3 py-1.5">{liveDayNum}/{tripDayCount}</span>
         </div>
       )}
-      {simulatedToast && (
-        <div className="p-3.5 rounded-2xl bg-emerald-600 text-white shadow-lg flex items-center justify-between gap-3 animate-bounce">
-          <div className="flex items-center gap-2 text-xs font-bold">
-            <Zap className="w-4 h-4 fill-amber-300 text-amber-300 flex-shrink-0" />
-            <span>{simulatedToast}</span>
-          </div>
-          <button onClick={() => setSimulatedToast(null)} className="text-white/80 hover:text-white text-xs font-bold">✕</button>
-        </div>
-      )}
-
       {/* Hero */}
       <div className="relative rounded-3xl overflow-hidden clean-card border border-slate-200 shadow-md">
         <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: coverUrl ? `url(${coverUrl})` : undefined }} />
@@ -274,23 +252,6 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
         </button>
       </div>
 
-      {/* SMS demo (web only — the installed app reads real bank SMS automatically) */}
-      {!isNativeApp() && (
-        <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-indigo-600" />
-              <span className="text-xs font-extrabold text-indigo-950">Try SMS auto-log (demo)</span>
-            </div>
-            <p className="text-[11px] text-slate-600">Browsers cannot read real SMS, so this button simulates one incoming bank message. The installed app reads actual debit SMS by itself.</p>
-          </div>
-          <button onClick={handleSimulateIncomingSMS} className="flex-shrink-0 flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs shadow-indigo-200 transition-all cursor-pointer">
-            <Zap className="w-3.5 h-3.5" />
-            <span>Simulate SMS Alert</span>
-          </button>
-        </div>
-      )}
-
       {/* Itinerary — simple spots list (days come from trip dates) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -312,6 +273,17 @@ export const CleanTripView: React.FC<CleanTripViewProps> = ({
               <span className="flex-1 min-w-0">
                 <span className="block text-sm font-bold text-slate-900 break-words">{city.name}</span>
                 {city.notes ? <span className="block text-[11px] text-slate-500 break-words whitespace-pre-wrap mt-0.5">{city.notes}</span> : null}
+                {city.locationLink ? (
+                  <a
+                    href={city.locationLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="mt-0.5 inline-block text-[11px] font-bold text-indigo-600 hover:underline"
+                  >
+                    Get Directions
+                  </a>
+                ) : null}
               </span>
               <span className="flex items-center gap-1 flex-shrink-0">
               <button onClick={() => setStopModal({ open: true, editing: city })} className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
@@ -382,11 +354,12 @@ function StopFormModal({ editing, onClose, onSave }: { editing: CityStop | null;
   useLockBodyScroll();
   const [name, setName] = useState(editing?.name || '');
   const [notes, setNotes] = useState(editing?.notes || '');
+  const [locationLink, setLocationLink] = useState(editing?.locationLink || '');
   const [nameError, setNameError] = useState(false);
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) { setNameError(true); return; }
-    onSave({ id: editing?.id || `city_${Date.now()}`, name: name.trim(), stateOrCountry: editing?.stateOrCountry || '', startDate: editing?.startDate || '', endDate: editing?.endDate || '', budget: editing?.budget || 0, notes: notes.trim() });
+    onSave({ id: editing?.id || `city_${Date.now()}`, name: name.trim(), stateOrCountry: editing?.stateOrCountry || '', startDate: editing?.startDate || '', endDate: editing?.endDate || '', budget: editing?.budget || 0, notes: notes.trim(), locationLink: locationLink.trim() || undefined });
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
@@ -412,6 +385,13 @@ function StopFormModal({ editing, onClose, onSave }: { editing: CityStop | null;
         <div>
           <label className="ui-label block mb-1.5">Description</label>
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Write as much as you like — directions, timings, costs, anything…" rows={6} className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 resize-y min-h-[150px] max-h-[40vh] overflow-y-auto" />
+        </div>
+        <div>
+          <label className="ui-label block mb-1.5">Map link <span className="font-medium normal-case text-slate-400">(optional)</span></label>
+          <div className="relative">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-sm font-extrabold pointer-events-none">📍</span>
+            <input type="url" value={locationLink} onChange={(e) => setLocationLink(e.target.value)} placeholder="Paste Google Maps link for this spot…" className="w-full rounded-xl bg-slate-50 border border-slate-200 pl-10 pr-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100" />
+          </div>
         </div>
         <button className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer">Save</button>
       </form>

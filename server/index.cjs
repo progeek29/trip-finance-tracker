@@ -431,12 +431,12 @@ async function insertUser(row) {
 async function userByToken(token) {
   try {
     const { rows } = await pool.query(
-      'SELECT u.id, u.email, u.name, u.phone, u.role, u."cardNo", u.username, u.gender FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
+      'SELECT u.id, u.email, u.name, u.phone, u.role, u."cardNo", u.username, u.gender, u.email_verified FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
       [token]
     );
     return rows[0] || null;
   } catch (e) {
-    if (e && /cardno|username|gender/i.test(e.message || '')) {
+    if (e && /cardno|username|gender|email_verified/i.test(e.message || '')) {
       const { rows } = await pool.query(
         'SELECT u.id, u.email, u.name, u.phone, u.role FROM auth_sessions s JOIN users u ON u.id = s."userId" WHERE s.token = $1',
         [token]
@@ -485,10 +485,19 @@ app.post('/api/auth/signup', async (req, res) => {
     const gender = cleanGender(req.body?.gender);
 
     await insertUser({ id, email, name, phone, role, hash, cardNo, gender });
+    // New password accounts start UNVERIFIED — no session is minted here.
+    // The session is issued only by /otp/verify after the email code passes,
+    // so a refresh can never walk into the app unverified.
+    try {
+      await pool.query('UPDATE users SET email_verified = false WHERE id = $1', [id]);
+    } catch (e) {
+      if (!(e && /email_verified/i.test(e.message || ''))) throw e;
+    }
 
-    const token = await createSession(id);
-    const created = await userByToken(token);
-    res.json({ data: { user: { id, email, cardNo, username: created?.username || '', gender: created?.gender || gender }, token }, error: null });
+    const created = await pool.query(
+      'SELECT username, gender FROM users WHERE id = $1', [id]
+    ).then((r) => r.rows[0]).catch(() => null);
+    res.json({ data: { user: { id, email, cardNo, username: created?.username || '', gender: cleanGender(created?.gender || gender) }, needsVerification: true }, error: null });
   } catch (e) {
     // Race-proof backstop: DB unique constraint hit between check and insert.
     if (e && (e.code === '23505' || String(e.message || '').toLowerCase().includes('unique'))) {
@@ -513,6 +522,12 @@ app.post('/api/auth/signin', async (req, res) => {
     const user = rows[0];
     const valid = await bcrypt.compare(password, user.password_hash || '');
     if (!valid) return fail(res, 401, 'Invalid email or password');
+
+    // Unverified password accounts cannot enter via login either — they must
+    // pass the email code first (client switches them to the verify screen).
+    if (user.email_verified === false) {
+      return fail(res, 403, 'NEEDS_VERIFICATION: Please verify your email first — check your inbox for the code.');
+    }
 
     const token = await createSession(user.id);
     res.json({ data: { user: { id: user.id, email: user.email, cardNo: user.cardNo || mintCardNo(user.email), username: user.username || mintUsername(user.name, user.id), gender: cleanGender(user.gender) }, token }, error: null });
@@ -590,6 +605,13 @@ app.post('/api/auth/google', async (req, res) => {
       }
       user = { ...row, password_hash: '' };
     }
+    // Google-verified email by definition: verified in every path (new,
+    // freshly linked, or pre-existing). Best-effort for legacy DBs.
+    try {
+      await pool.query('UPDATE users SET email_verified = true WHERE id = $1', [user.id]);
+    } catch (e) {
+      if (!(e && /email_verified/i.test(e.message || ''))) throw e;
+    }
     const token = await createSession(user.id);
     const fresh = await userByToken(token);
     res.json({
@@ -639,6 +661,9 @@ app.get('/api/auth/user', async (req, res) => {
       }
     }
     if (!user.gender) user.gender = 'unspecified';
+    // Normalised for the client gate: missing column (legacy DB) reads as
+    // verified; an explicit false means the OTP step is still pending.
+    user.emailVerified = user.email_verified !== false;
 
     res.json({ data: { user }, error: null });
   } catch (e) {
@@ -944,7 +969,13 @@ app.post('/api/otp/verify', async (req, res) => {
       } catch (e) {
         if (!(e && /email_verified/i.test(e.message || ''))) throw e;
       }
-      return res.json({ data: { verified: true }, error: null });
+      // The code proved email ownership — issue the session HERE (signup
+      // minted none), so the user walks into the app verified.
+      const { rows: uread } = await pool.query('SELECT id, email FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+      const verifiedUser = uread[0];
+      if (!verifiedUser) return fail(res, 404, 'Account not found. Please sign up again.');
+      const token = await createSession(verifiedUser.id);
+      return res.json({ data: { verified: true, token, user: { id: verifiedUser.id, email: verifiedUser.email } }, error: null });
     }
     const token = crypto.randomBytes(32).toString('hex');
     const now = Date.now();

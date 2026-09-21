@@ -36,6 +36,8 @@ export interface CityStop {
   budget: number;
   bannerImage?: string;
   notes?: string;
+  /** Pasted map/directions URL for this spot (optional — shown as Get directions) */
+  locationLink?: string;
 }
 
 export interface ExpenseSplit {

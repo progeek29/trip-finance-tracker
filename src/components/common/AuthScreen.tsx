@@ -47,8 +47,45 @@ export function useAuthForm(onAuth: AuthScreenProps['onAuth']): AuthFormProps {
   const [successMessage, setSuccessMessage] = useState('');
   const [fLoading, setFLoading] = useState(false);
   // Post-signup email verify (OTP): profile waits here until code passes.
-  const [verifyEmail, setVerifyEmail] = useState<string | null>(null);
-  const [pendingProfile, setPendingProfile] = useState<{ name: string; phone: string; cardNo?: string; inviteCode?: string } | null>(null);
+  // Persisted so a refresh mid-flow returns to THIS screen, never the app.
+  type PendingProfile = { name: string; phone: string; cardNo?: string; inviteCode?: string };
+  const PENDING_KEY = 'ws_pending_verify_v1';
+  const loadPending = (): { email: string; profile: PendingProfile } | null => {
+    try {
+      const raw = localStorage.getItem(PENDING_KEY);
+      if (!raw) return null;
+      const p = JSON.parse(raw);
+      if (p && typeof p.email === 'string' && p.email.includes('@')) {
+        const pr = p.profile && typeof p.profile === 'object' ? p.profile : {};
+        return {
+          email: p.email,
+          profile: {
+            name: String(pr.name || ''),
+            phone: String(pr.phone || ''),
+            ...(pr.cardNo ? { cardNo: String(pr.cardNo) } : {}),
+            ...(pr.inviteCode ? { inviteCode: String(pr.inviteCode) } : {}),
+          },
+        };
+      }
+    } catch { /* corrupt → start clean */ }
+    return null;
+  };
+  const [verifyEmail, setVerifyEmailState] = useState<string | null>(() => loadPending()?.email || null);
+  const [pendingProfile, setPendingProfileState] = useState<PendingProfile | null>(() => loadPending()?.profile || null);
+  const beginVerification = (vEmail: string, vProfile: PendingProfile) => {
+    setVerifyEmailState(vEmail);
+    setPendingProfileState(vProfile);
+    try {
+      localStorage.setItem(PENDING_KEY, JSON.stringify({ email: vEmail, profile: vProfile }));
+    } catch { /* private mode — gate lasts this tab */ }
+  };
+  const clearVerification = () => {
+    setVerifyEmailState(null);
+    setPendingProfileState(null);
+    try {
+      localStorage.removeItem(PENDING_KEY);
+    } catch { /* ignore */ }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,7 +115,23 @@ export function useAuthForm(onAuth: AuthScreenProps['onAuth']): AuthFormProps {
     setError('');
     try {
       if (isLogin) {
-        await authSignIn(email.trim(), password);
+        try {
+          await authSignIn(email.trim(), password);
+        } catch (err: any) {
+          // Correct password but email never verified → park on the code
+          // screen instead of entering (no backdoor login).
+          if (/NEEDS_VERIFICATION/.test(err?.message || '')) {
+            try {
+              await requestOtp(email.trim(), 'verify');
+            } catch {
+              // Mail hiccup: still gate on code (resend inside the flow).
+            }
+            beginVerification(email.trim(), { name: '', phone: '' });
+            setError('');
+            return;
+          }
+          throw err;
+        }
         onAuth();
       } else {
         const { mintCardNo, cardSeed } = await import('../../utils/cards');
@@ -90,13 +143,12 @@ export function useAuthForm(onAuth: AuthScreenProps['onAuth']): AuthFormProps {
         } catch {
           // Mail hiccup: still gate on code (resend inside the flow).
         }
-        setPendingProfile({
+        beginVerification(email.trim(), {
           name: name.trim(),
           phone: phone.trim(),
           cardNo,
           inviteCode: inviteCode.trim().toUpperCase() || undefined,
         });
-        setVerifyEmail(email.trim());
       }
     } catch (err: any) {
       setError(err?.message || 'Something went wrong');
@@ -140,7 +192,8 @@ export function useAuthForm(onAuth: AuthScreenProps['onAuth']): AuthFormProps {
     password, setPassword, inviteCode, setInviteCode, loading, error, setError,
     showForgot, setShowForgot, fNewPass, setFNewPass, fMsg, setFMsg,
     successMessage, setSuccessMessage, fLoading, hasInvite,
-    verifyEmail, setVerifyEmail, pendingProfile,
+    verifyEmail, setVerifyEmail: (v) => { if (v) setVerifyEmailState(v); else clearVerification(); },
+    pendingProfile, clearVerification,
     onSubmit: handleSubmit, onForgot: handleForgot,
   };
 }
@@ -177,6 +230,7 @@ interface AuthFormProps {
   verifyEmail: string | null;
   setVerifyEmail: (v: string | null) => void;
   pendingProfile: { name: string; phone: string; cardNo?: string; inviteCode?: string } | null;
+  clearVerification: () => void;
   onVerifiedSignup?: (profile: { name: string; phone: string; cardNo?: string; inviteCode?: string }) => void;
 }
 
@@ -187,7 +241,7 @@ export function AuthForm(props: AuthFormProps) {
     password, setPassword, inviteCode, setInviteCode, loading, error, setError,
     showForgot, setShowForgot, fNewPass, setFNewPass, fMsg, setFMsg, successMessage,
     setSuccessMessage, fLoading, hasInvite,     onSubmit, onForgot, googleAuth,
-    verifyEmail, setVerifyEmail, pendingProfile, onVerifiedSignup,
+    verifyEmail, pendingProfile, onVerifiedSignup, clearVerification,
   } = props;
   // Post-signup gate: verify email over OTP before entering the app.
   if (verifyEmail && pendingProfile && onVerifiedSignup) {
@@ -203,10 +257,17 @@ export function AuthForm(props: AuthFormProps) {
           purpose="verify"
           initialEmail={verifyEmail}
           onDone={() => {
-            setVerifyEmail(null);
+            clearVerification();
             onVerifiedSignup(pendingProfile);
           }}
+          onBack={() => {
+            // Wrong email? Back to the form (entries preserved) — sign up
+            // again with the right address. The unverified account left
+            // behind can never log in, so nothing leaks.
+            clearVerification();
+          }}
         />
+        <ContactUs />
       </div>
     );
   }
@@ -351,8 +412,22 @@ export function AuthForm(props: AuthFormProps) {
                   {isLogin ? 'Sign Up' : 'Login'}
                 </button>
               </p>
+
+              <ContactUs />
             </>
           )}
         </form>
+  );
+}
+
+/** Support line on every auth card — users facing issues can reach out. */
+function ContactUs() {
+  return (
+    <p className="text-center text-[11px] text-slate-400 font-medium">
+      Facing issues? Contact us —{' '}
+      <a href="mailto:thewandersync@gmail.com" className="text-indigo-600 font-bold hover:underline">
+        thewandersync@gmail.com
+      </a>
+    </p>
   );
 }

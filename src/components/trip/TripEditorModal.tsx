@@ -296,6 +296,10 @@ export const TripEditorModal: React.FC<TripEditorModalProps> = ({ isOpen, onClos
                     <button type="button" onClick={() => setCities((prev) => prev.filter((cc) => cc.id !== c.id))}><Trash2 size={13} className="text-slate-300 hover:text-red-400" /></button>
                   </div>
                   <input value={c.notes || ''} onChange={(e) => setCities((prev) => prev.map((cc) => (cc.id === c.id ? { ...cc, notes: e.target.value } : cc)))} placeholder="Description (Optional)" className="w-full min-w-0 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-indigo-400 placeholder-slate-300" />
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs font-extrabold pointer-events-none">📍</span>
+                    <input value={c.locationLink || ''} onChange={(e) => setCities((prev) => prev.map((cc) => (cc.id === c.id ? { ...cc, locationLink: e.target.value } : cc)))} placeholder="Map link (optional)" className="w-full min-w-0 bg-white border border-slate-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-indigo-400 placeholder-slate-300" />
+                  </div>
                 </div>
               ))}
               </div>
