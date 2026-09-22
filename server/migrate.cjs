@@ -68,6 +68,15 @@ const STMTS = [
   // Grandfather every account that exists at deploy time: only signups AFTER
   // this point start unverified (signup handler sets false explicitly).
   `UPDATE users SET email_verified = true WHERE COALESCE(email_verified, false) = false`,
+  // Android system-browser Google login: one-time codes (5-min, single-use)
+  // bridging the OAuth callback back into the app. Never a session token.
+  `CREATE TABLE IF NOT EXISTS google_auth_codes (
+    code text primary key,
+    "userId" text not null references users(id) on delete cascade,
+    expires_at bigint not null,
+    consumed boolean default false,
+    "createdAt" bigint
+  )`,
   // OTP codes: hashed, purpose-tagged, short-lived. Attempts capped.
   `CREATE TABLE IF NOT EXISTS email_otps (
     id text primary key,

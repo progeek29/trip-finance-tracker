@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { googleClientId, authSignInWithGoogle } from '../../utils/supabaseClient';
+import { googleClientId, authSignInWithGoogle, authSignInWithGoogleCode, googleOAuthStartUrl, googleNativeConfigured, GOOGLE_APP_SCHEME } from '../../utils/supabaseClient';
+import { isNativeApp } from '../../utils/nativeBridge';
+import { App as CapApp } from '@capacitor/app';
+import { Browser } from '@capacitor/browser';
 
 interface GoogleIdentity {
   accounts: {
@@ -170,10 +173,121 @@ export const GoogleButton: React.FC<GoogleButtonProps> = ({ onSuccess, onError, 
       </button>
     );
   }
+  // Installed app: the WebView popup flow can never return (it escapes to
+  // full Chrome and strands the session there). System browser + OAuth code
+  // + custom-scheme return instead. Web keeps the GIS popup below, untouched.
+  if (isNativeApp()) {
+    return <NativeGoogleButton onSuccess={onSuccess} onError={onError} />;
+  }
   return (
     <div ref={wrapRef} className="w-full">
       <div ref={btnRef} className={`w-full flex justify-center ${busy ? 'opacity-60 pointer-events-none' : ''}`} />
     </div>
+  );
+};
+
+/** Native-only Google login: system browser → server code exchange →
+ *  custom-scheme deep link back into the app. No Google JS runs here. */
+const OAUTH_STATE_KEY = 'ws_google_oauth_state_v1';
+
+function readOAuthState(): { state: string; at: number } | null {
+  try {
+    const raw = localStorage.getItem(OAUTH_STATE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (p && typeof p.state === 'string' && Date.now() - Number(p.at || 0) < 10 * 60 * 1000) return p;
+  } catch { /* ignore */ }
+  return null;
+}
+
+const NativeGoogleButton: React.FC<{ onSuccess: () => void; onError: (msg: string) => void }> = ({
+  onSuccess,
+  onError,
+}) => {
+  const clientId = googleClientId();
+  const [checking, setChecking] = useState(false);
+  const cbRef = useRef({ onSuccess, onError });
+  cbRef.current = { onSuccess, onError };
+
+  // Deep-link return: single listener per mount, pending state survives kills.
+  useEffect(() => {
+    let handle: { remove: () => void } | null = null;
+    let live = true;
+    void CapApp.addListener('appUrlOpen', (ev: { url: string }) => {
+      if (!live) return;
+      try {
+        const u = new URL(ev.url);
+        if (u.protocol.replace(':', '') !== GOOGLE_APP_SCHEME.split('://')[0]) return;
+        const err = u.searchParams.get('error');
+        if (err) {
+          try { localStorage.removeItem(OAUTH_STATE_KEY); } catch { /* ignore */ }
+          cbRef.current.onError(err);
+          return;
+        }
+        const code = u.searchParams.get('code') || '';
+        const state = u.searchParams.get('state') || '';
+        const pending = readOAuthState();
+        try { localStorage.removeItem(OAUTH_STATE_KEY); } catch { /* ignore */ }
+        try { void Browser.close().catch(() => undefined); } catch { /* ignore */ }
+        if (!code) {
+          cbRef.current.onError('Google sign-in was cancelled.');
+          return;
+        }
+        if (!pending || pending.state !== state) {
+          cbRef.current.onError('Session mismatch. Start Google sign-in again.');
+          return;
+        }
+        void authSignInWithGoogleCode(code).then(
+          () => { if (live) cbRef.current.onSuccess(); },
+          (e) => { if (live) cbRef.current.onError(e instanceof Error ? e.message : 'Google sign-in failed. Tap again to retry.'); }
+        );
+      } catch {
+        cbRef.current.onError('Google sign-in failed. Tap again to retry.');
+      }
+    }).then((h) => { handle = h; }).catch(() => undefined);
+    return () => {
+      live = false;
+      try { handle?.remove(); } catch { /* ignore */ }
+    };
+  }, []);
+
+  const start = () => {
+    if (checking) return;
+    if (!clientId) {
+      onError('Google sign-in is setting up — continue with email for now.');
+      return;
+    }
+    setChecking(true);
+    void googleNativeConfigured().then((ok) => {
+      if (!ok) {
+        setChecking(false);
+        onError('Google sign-in is setting up — continue with email for now.');
+        return;
+      }
+      const state = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+      try {
+        localStorage.setItem(OAUTH_STATE_KEY, JSON.stringify({ state, at: Date.now() }));
+      } catch { /* memory-only fallback below */ }
+      setChecking(false);
+      void Browser.open({ url: googleOAuthStartUrl(state) }).catch(() => {
+        try { localStorage.removeItem(OAUTH_STATE_KEY); } catch { /* ignore */ }
+        onError('Could not open browser. Check internet and retry.');
+      });
+    });
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={start}
+      disabled={checking}
+      className="w-full h-12 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:shadow-md disabled:opacity-60 flex items-center justify-center gap-3 transition-all cursor-pointer"
+    >
+      <GoogleG />
+      <span className="text-sm font-bold text-slate-800">
+        {checking ? 'Opening…' : 'Continue with Google'}
+      </span>
+    </button>
   );
 };
 

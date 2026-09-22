@@ -24,6 +24,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Google login return: OAuth callback 302s to this custom
+                 scheme from the system browser back into the app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.wandersync.tripapp" />
+            </intent-filter>
+
         </activity>
 
         <provider

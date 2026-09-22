@@ -541,95 +541,209 @@ app.post('/api/auth/signin', async (req, res) => {
 // Google users are email-verified by definition (no OTP ever). Username +
 // pass number mint through the SAME pipeline (same format, server-unique).
 // No password_hash is ever set — password signin stays impossible for them.
+//
+// The two entry points share these helpers so web (GIS popup posts the
+// idToken) and the Android app (system browser returns an OAuth code, which
+// is exchanged server-side with the client SECRET) behave identically.
+async function verifyGoogleIdToken(idToken) {
+  const clientId = process.env.GOOGLE_CLIENT_ID || '';
+  if (!clientId) throw Object.assign(new Error('Google sign-in is not configured on this server'), { status: 503 });
+  if (!idToken) throw Object.assign(new Error('idToken required'), { status: 400 });
+  const client = new OAuth2Client(clientId);
+  let payload;
+  try {
+    const ticket = await client.verifyIdToken({ idToken, audience: clientId });
+    payload = ticket.getPayload();
+  } catch {
+    throw Object.assign(new Error('Google verification failed. Try again.'), { status: 401 });
+  }
+  const sub = String(payload?.sub || '');
+  const email = String(payload?.email || '').trim().toLowerCase();
+  if (!sub || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw Object.assign(new Error('Google account has no usable email'), { status: 401 });
+  }
+  if (payload?.email_verified === false) {
+    throw Object.assign(new Error('Google email is not verified'), { status: 401 });
+  }
+  const name = String(payload?.name || email.split('@')[0] || 'Friend').trim().slice(0, 80) || 'Friend';
+  return { sub, email, name };
+}
+
+async function findOrCreateGoogleUser(sub, email, name) {
+  // 1) Stable link: google_sub wins (email alone is never trusted for linking).
+  let user = null;
+  try {
+    const { rows } = await pool.query('SELECT * FROM users WHERE google_sub = $1', [sub]);
+    user = rows[0] || null;
+  } catch (e) {
+    if (!(e && /google_sub/i.test(e.message || ''))) throw e;
+    // Column not migrated yet — fall through to email match.
+  }
+  // 2) Same verified email, previously password-signed: link the accounts.
+  if (!user) {
+    const { rows } = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    if (rows[0]) {
+      user = rows[0];
+      try {
+        await pool.query('UPDATE users SET google_sub = $1 WHERE id = $2', [sub, user.id]);
+      } catch (e) {
+        if (!(e && /google_sub/i.test(e.message || ''))) throw e;
+      }
+    }
+  }
+  // 3) Brand new: create through the standard pipeline (username/cardNo minted).
+  if (!user) {
+    const id = 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const role = email === 'admin@wandersync.com' ? 'admin' : 'user';
+    const cardNo = cleanCardNo('', email);
+    const username = await ensureUniqueUsername(name, id);
+    const row = { id, email, name, phone: '', role, hash: '', cardNo, username, gender: 'unspecified' };
+    try {
+      await pool.query(
+        'INSERT INTO users (id, email, name, phone, role, password_hash, "cardNo", username, gender, google_sub) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+        [row.id, row.email, row.name, row.phone, row.role, row.hash, row.cardNo, row.username, row.gender, sub]
+      );
+    } catch (e) {
+      if (e && /google_sub/i.test(e.message || '')) {
+        await insertUser(row);
+      } else throw e;
+    }
+    user = { ...row, password_hash: '' };
+  }
+  // Google-verified email by definition: verified in every path (new,
+  // freshly linked, or pre-existing). Best-effort for legacy DBs.
+  try {
+    await pool.query('UPDATE users SET email_verified = true WHERE id = $1', [user.id]);
+  } catch (e) {
+    if (!(e && /email_verified/i.test(e.message || ''))) throw e;
+  }
+  return user;
+}
+
+function googleUserPayload(user, fresh) {
+  return {
+    id: user.id,
+    email: user.email,
+    cardNo: (fresh && fresh.cardNo) || user.cardNo || mintCardNo(user.email),
+    username: (fresh && fresh.username) || user.username || '',
+    gender: cleanGender((fresh && fresh.gender) || user.gender),
+  };
+}
+
 app.post('/api/auth/google', async (req, res) => {
   try {
-    const clientId = process.env.GOOGLE_CLIENT_ID || '';
-    if (!clientId) return fail(res, 503, 'Google sign-in is not configured on this server');
-    const idToken = String(req.body?.idToken || '');
-    if (!idToken) return fail(res, 400, 'idToken required');
-    const client = new OAuth2Client(clientId);
-    let payload;
-    try {
-      const ticket = await client.verifyIdToken({ idToken, audience: clientId });
-      payload = ticket.getPayload();
-    } catch {
-      return fail(res, 401, 'Google verification failed. Try again.');
-    }
-    const sub = String(payload?.sub || '');
-    const email = String(payload?.email || '').trim().toLowerCase();
-    if (!sub || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return fail(res, 401, 'Google account has no usable email');
-    }
-    if (payload?.email_verified === false) {
-      return fail(res, 401, 'Google email is not verified');
-    }
-    const name = String(payload?.name || email.split('@')[0] || 'Friend').trim().slice(0, 80) || 'Friend';
-
-    // 1) Stable link: google_sub wins (email alone is never trusted for linking).
-    let user = null;
-    try {
-      const { rows } = await pool.query('SELECT * FROM users WHERE google_sub = $1', [sub]);
-      user = rows[0] || null;
-    } catch (e) {
-      if (!(e && /google_sub/i.test(e.message || ''))) throw e;
-      // Column not migrated yet — fall through to email match.
-    }
-    // 2) Same verified email, previously password-signed: link the accounts.
-    if (!user) {
-      const { rows } = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-      if (rows[0]) {
-        user = rows[0];
-        try {
-          await pool.query('UPDATE users SET google_sub = $1 WHERE id = $2', [sub, user.id]);
-        } catch (e) {
-          if (!(e && /google_sub/i.test(e.message || ''))) throw e;
-        }
-      }
-    }
-    // 3) Brand new: create through the standard pipeline (username/cardNo minted).
-    if (!user) {
-      const id = 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
-      const role = email === 'admin@wandersync.com' ? 'admin' : 'user';
-      const cardNo = cleanCardNo('', email);
-      const username = await ensureUniqueUsername(name, id);
-      const row = { id, email, name, phone: '', role, hash: '', cardNo, username, gender: 'unspecified' };
-      try {
-        await pool.query(
-          'INSERT INTO users (id, email, name, phone, role, password_hash, "cardNo", username, gender, google_sub) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-          [row.id, row.email, row.name, row.phone, row.role, row.hash, row.cardNo, row.username, row.gender, sub]
-        );
-      } catch (e) {
-        if (e && /google_sub/i.test(e.message || '')) {
-          await insertUser(row);
-        } else throw e;
-      }
-      user = { ...row, password_hash: '' };
-    }
-    // Google-verified email by definition: verified in every path (new,
-    // freshly linked, or pre-existing). Best-effort for legacy DBs.
-    try {
-      await pool.query('UPDATE users SET email_verified = true WHERE id = $1', [user.id]);
-    } catch (e) {
-      if (!(e && /email_verified/i.test(e.message || ''))) throw e;
-    }
+    const { sub, email, name } = await verifyGoogleIdToken(String(req.body?.idToken || ''));
+    const user = await findOrCreateGoogleUser(sub, email, name);
     const token = await createSession(user.id);
     const fresh = await userByToken(token);
-    res.json({
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          cardNo: (fresh && fresh.cardNo) || user.cardNo || mintCardNo(user.email),
-          username: (fresh && fresh.username) || user.username || '',
-          gender: cleanGender((fresh && fresh.gender) || user.gender),
-        },
-        token,
-      },
-      error: null,
-    });
+    res.json({ data: { user: googleUserPayload(user, fresh), token }, error: null });
   } catch (e) {
     console.error('Google auth error:', e.message);
-    return fail(res, 500, e.message);
+    return fail(res, e.status || 500, e.message);
+  }
+});
+
+// GET /api/auth/google/config — does the server hold a client SECRET for the
+// Android system-browser flow? (Client ID alone is not enough there.)
+app.get('/api/auth/google/config', async (req, res) => {
+  res.json({
+    data: { configured: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
+    error: null,
+  });
+});
+
+// Deep-link return target for the Android app (custom scheme, no assetlinks
+// needed). MUST match the redirect URI registered in Google Cloud Console.
+const GOOGLE_APP_REDIRECT = 'https://wandersync-app.duckdns.org/api/auth/google/callback';
+const GOOGLE_APP_SCHEME = 'com.wandersync.tripapp://auth';
+
+// GET /api/auth/google/callback?code=&state= — OAuth landing for the Android
+// system browser. Exchanges the code server-side (secret never leaves here),
+// then 302s back into the app with a SHORT-LIVED one-time code (never the
+// session token — URLs leak into logs).
+app.get('/api/auth/google/callback', async (req, res) => {
+  try {
+    const code = String(req.query?.code || '');
+    const state = String(req.query?.state || '');
+    const err = String(req.query?.error || '');
+    if (err) return res.redirect(302, `${GOOGLE_APP_SCHEME}?error=${encodeURIComponent(err)}`);
+    if (!code) return res.redirect(302, `${GOOGLE_APP_SCHEME}?error=${encodeURIComponent('Google sign-in was cancelled.')}`);
+    const clientId = process.env.GOOGLE_CLIENT_ID || '';
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+    if (!clientId || !clientSecret) {
+      return res.redirect(302, `${GOOGLE_APP_SCHEME}?error=${encodeURIComponent('Google sign-in is not configured yet.')}`);
+    }
+    let tokenBody;
+    try {
+      const tr = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: GOOGLE_APP_REDIRECT,
+          grant_type: 'authorization_code',
+        }).toString(),
+      });
+      tokenBody = await tr.json().catch(() => null);
+    } catch {
+      return res.redirect(302, `${GOOGLE_APP_SCHEME}?error=${encodeURIComponent('Google verification failed. Try again.')}`);
+    }
+    if (!tokenBody || !tokenBody.id_token) {
+      return res.redirect(302, `${GOOGLE_APP_SCHEME}?error=${encodeURIComponent('Google verification failed. Try again.')}`);
+    }
+    let v;
+    try {
+      v = await verifyGoogleIdToken(String(tokenBody.id_token));
+    } catch {
+      return res.redirect(302, `${GOOGLE_APP_SCHEME}?error=${encodeURIComponent('Google verification failed. Try again.')}`);
+    }
+    const user = await findOrCreateGoogleUser(v.sub, v.email, v.name);
+    const once = 'gc_' + crypto.randomBytes(24).toString('hex');
+    try {
+      await pool.query(
+        'INSERT INTO google_auth_codes (code, "userId", expires_at, consumed, "createdAt") VALUES ($1,$2,$3,false,$4)',
+        [once, user.id, Date.now() + 5 * 60 * 1000, Date.now()]
+      );
+    } catch (e) {
+      if (!(e && /google_auth_codes|relation/i.test(e.message || ''))) throw e;
+      // Table not migrated yet — cannot complete securely.
+      return res.redirect(302, `${GOOGLE_APP_SCHEME}?error=${encodeURIComponent('Server is updating. Try again in a minute.')}`);
+    }
+    return res.redirect(302, `${GOOGLE_APP_SCHEME}?code=${encodeURIComponent(once)}&state=${encodeURIComponent(state)}`);
+  } catch (e) {
+    console.error('Google callback error:', e.message);
+    return res.redirect(302, `${GOOGLE_APP_SCHEME}?error=${encodeURIComponent('Google sign-in failed. Try again.')}`);
+  }
+});
+
+// POST /api/auth/google-code {code} — app exchanges its one-time code for a
+// real session (single-use, 5-min). Same response shape as password signin.
+app.post('/api/auth/google-code', async (req, res) => {
+  try {
+    const code = String(req.body?.code || '');
+    if (!code) return fail(res, 400, 'Code required');
+    let row = null;
+    try {
+      const { rows } = await pool.query('SELECT * FROM google_auth_codes WHERE code = $1', [code]);
+      row = rows[0] || null;
+    } catch (e) {
+      if (!(e && /google_auth_codes|relation/i.test(e.message || ''))) throw e;
+    }
+    if (!row || row.consumed || row.expires_at < Date.now()) {
+      return fail(res, 401, 'Code expired. Start Google sign-in again.');
+    }
+    await pool.query('UPDATE google_auth_codes SET consumed = true WHERE code = $1', [code]);
+    const { rows: uread } = await pool.query('SELECT * FROM users WHERE id = $1', [row.userId]);
+    const user = uread[0];
+    if (!user) return fail(res, 404, 'Account not found');
+    const token = await createSession(user.id);
+    const fresh = await userByToken(token);
+    res.json({ data: { user: googleUserPayload(user, fresh), token }, error: null });
+  } catch (e) {
+    console.error('Google code exchange error:', e.message);
+    res.json({ data: null, error: e.message });
   }
 });
 

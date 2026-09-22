@@ -120,6 +120,51 @@ export function googleClientId(): string {
   }
 }
 
+/** OAuth landing registered in Google Cloud Console (redirect URIs).
+ *  The Android app uses the SYSTEM browser + this endpoint + custom-scheme
+ *  return — the WebView popup flow cannot complete inside the app. */
+export const GOOGLE_REDIRECT_URI = 'https://wandersync-app.duckdns.org/api/auth/google/callback';
+export const GOOGLE_APP_SCHEME = 'com.wandersync.tripapp://auth';
+
+/** Standard OAuth2 authorize URL (public params only — the secret never
+ *  leaves the server, which exchanges the code). */
+export function googleOAuthStartUrl(state: string): string {
+  const p = new URLSearchParams({
+    client_id: googleClientId(),
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    access_type: 'online',
+    prompt: 'select_account',
+  });
+  return `https://accounts.google.com/o/oauth2/v2/auth?${p.toString()}`;
+}
+
+/** Does the server hold a client SECRET for the Android browser flow? */
+export async function googleNativeConfigured(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API}/auth/google/config`);
+    const body = await res.json().catch(() => null);
+    return !!body?.data?.configured;
+  } catch {
+    return true; // offline/unknown — fail open, the attempt errors loudly
+  }
+}
+
+/** App exchanges its one-time deep-link code for a real session. */
+export async function authSignInWithGoogleCode(code: string): Promise<{ uid: string; isAdmin: boolean }> {
+  const { data, error } = await api('/auth/google-code', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+  if (error) throw new Error(error);
+  setToken(data.token);
+  cachedUid = data.user.id;
+  cachedIsAdmin = data.user.email === ADMIN_EMAIL;
+  return { uid: data.user.id, isAdmin: cachedIsAdmin };
+}
+
 export async function authSignIn(email: string, password: string): Promise<{ uid: string; isAdmin: boolean }> {
   const { data, error } = await api('/auth/signin', {
     method: 'POST',
