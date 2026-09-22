@@ -632,6 +632,12 @@ function googleUserPayload(user, fresh) {
 
 // Firebase project id (public — shipped inside the app's google-services.json).
 const FIREBASE_PROJECT_ID = process.env.GOOGLE_FIREBASE_PROJECT_ID || 'wandersync-e31dc';
+// Extra web-client audiences (public ids). Firebase auto-creates a web client
+// per project; the app may request tokens for any of them, so all are tried.
+const GOOGLE_EXTRA_AUDIENCES = String(process.env.GOOGLE_EXTRA_AUDIENCES || '178924875934-88tobak81ugv3hkn8bsmeckrp70u62gi.apps.googleusercontent.com')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 // POST /api/auth/firebase {idToken} — native Android login (Zomato-style,
 // never leaves the app). Accepts EITHER a Google ID token (aud = web client)
@@ -649,7 +655,25 @@ app.post('/api/auth/firebase', async (req, res) => {
     try {
       const v = await verifyGoogleIdToken(idToken);
       sub = v.sub; email = v.email; name = v.name; ok = true;
-    } catch { /* try Firebase shape next */ }
+    } catch { /* try other audiences next */ }
+    // Path 1b: other web clients of this project (Firebase auto-creates one).
+    if (!ok) {
+      for (const aud of GOOGLE_EXTRA_AUDIENCES) {
+        try {
+          const client = new OAuth2Client();
+          const ticket = await client.verifyIdToken({ idToken, audience: aud });
+          const payload = ticket.getPayload() || {};
+          const pem = String(payload.email || '').trim().toLowerCase();
+          if (!payload.sub || !pem || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pem)) continue;
+          if (payload.email_verified === false) continue;
+          sub = String(payload.sub);
+          email = pem;
+          name = String(payload.name || pem.split('@')[0] || 'Friend').trim().slice(0, 80) || 'Friend';
+          ok = true;
+          break;
+        } catch { /* next audience */ }
+      }
+    }
     // Path 2: Firebase ID token.
     if (!ok) {
       try {

@@ -12,7 +12,20 @@
           "package_name": "com.wandersync.tripapp"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "178924875934-q7bfdjvbgn3ddeqd7n251an9d5tlen01.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.wandersync.tripapp",
+            "certificate_hash": "af09249f2f0663c7b3dca83728a3798280c9ae61"
+          }
+        },
+        {
+          "client_id": "178924875934-88tobak81ugv3hkn8bsmeckrp70u62gi.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAN9fA9uhMkcmG1Rq9uwojZ6ILDHEKV2qA"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "178924875934-1o2vg6vcba4t8psjns7emfflt2j80jqk.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
