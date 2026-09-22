@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { googleClientId, authSignInWithGoogle, authSignInWithGoogleCode, googleOAuthStartUrl, googleNativeConfigured, GOOGLE_APP_SCHEME } from '../../utils/supabaseClient';
+import { googleClientId, authSignInWithGoogle, authSignInWithGoogleCode, authSignInWithFirebase, googleOAuthStartUrl, googleNativeConfigured, GOOGLE_APP_SCHEME } from '../../utils/supabaseClient';
 import { isNativeApp } from '../../utils/nativeBridge';
 import { App as CapApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
@@ -258,22 +258,44 @@ const NativeGoogleButton: React.FC<{ onSuccess: () => void; onError: (msg: strin
       return;
     }
     setChecking(true);
-    void googleNativeConfigured().then((ok) => {
-      if (!ok) {
-        setChecking(false);
-        onError('Google sign-in is setting up — continue with email for now.');
-        return;
-      }
-      const state = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+    // Zomato-style first: native account chooser INSIDE the app (no browser).
+    // Falls back to the system-browser round-trip only when native fails for
+    // a real reason — a user cancel never triggers the fallback.
+    void (async () => {
       try {
-        localStorage.setItem(OAUTH_STATE_KEY, JSON.stringify({ state, at: Date.now() }));
-      } catch { /* memory-only fallback below */ }
-      setChecking(false);
-      void Browser.open({ url: googleOAuthStartUrl(state) }).catch(() => {
-        try { localStorage.removeItem(OAUTH_STATE_KEY); } catch { /* ignore */ }
-        onError('Could not open browser. Check internet and retry.');
+        const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+        const result = await FirebaseAuthentication.signInWithGoogle();
+        const idToken = result?.credential?.idToken;
+        if (!idToken) throw new Error('no token');
+        await authSignInWithFirebase(idToken);
+        setChecking(false);
+        onSuccess();
+        return;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e || '');
+        if (/cancel|dismiss|canceled/i.test(msg)) {
+          setChecking(false);
+          return; // user backed out — stay put, no fallback loop
+        }
+        // Native unavailable/misconfigured → system-browser round-trip.
+      }
+      void googleNativeConfigured().then((ok) => {
+        if (!ok) {
+          setChecking(false);
+          onError('Google sign-in is setting up — continue with email for now.');
+          return;
+        }
+        const state = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+        try {
+          localStorage.setItem(OAUTH_STATE_KEY, JSON.stringify({ state, at: Date.now() }));
+        } catch { /* memory-only fallback below */ }
+        setChecking(false);
+        void Browser.open({ url: googleOAuthStartUrl(state) }).catch(() => {
+          try { localStorage.removeItem(OAUTH_STATE_KEY); } catch { /* ignore */ }
+          onError('Could not open browser. Check internet and retry.');
+        });
       });
-    });
+    })();
   };
 
   return (

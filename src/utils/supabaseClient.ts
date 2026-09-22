@@ -165,6 +165,19 @@ export async function authSignInWithGoogleCode(code: string): Promise<{ uid: str
   return { uid: data.user.id, isAdmin: cachedIsAdmin };
 }
 
+/** Native Firebase token (Zomato-style in-app login) → our session. */
+export async function authSignInWithFirebase(idToken: string): Promise<{ uid: string; isAdmin: boolean }> {
+  const { data, error } = await api('/auth/firebase', {
+    method: 'POST',
+    body: JSON.stringify({ idToken }),
+  });
+  if (error) throw new Error(error);
+  setToken(data.token);
+  cachedUid = data.user.id;
+  cachedIsAdmin = data.user.email === ADMIN_EMAIL;
+  return { uid: data.user.id, isAdmin: cachedIsAdmin };
+}
+
 export async function authSignIn(email: string, password: string): Promise<{ uid: string; isAdmin: boolean }> {
   const { data, error } = await api('/auth/signin', {
     method: 'POST',
@@ -245,6 +258,15 @@ export async function authSignOut(): Promise<void> {
   clearToken();
   cachedUid = null;
   cachedIsAdmin = false;
+  // Native Firebase session also signs out (otherwise the next Google tap
+  // re-enters silently). Best-effort, native only, never blocks logout.
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    if (Capacitor.isNativePlatform()) {
+      const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+      await FirebaseAuthentication.signOut().catch(() => undefined);
+    }
+  } catch { /* web or plugin missing — nothing to do */ }
   // No cross-account bleed: drop every cached trip/expense/photo on logout.
   try {
     const { clearAllLocalData } = await import('./storage');

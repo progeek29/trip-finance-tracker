@@ -630,6 +630,56 @@ function googleUserPayload(user, fresh) {
   };
 }
 
+// Firebase project id (public — shipped inside the app's google-services.json).
+const FIREBASE_PROJECT_ID = process.env.GOOGLE_FIREBASE_PROJECT_ID || 'wandersync-e31dc';
+
+// POST /api/auth/firebase {idToken} — native Android login (Zomato-style,
+// never leaves the app). Accepts EITHER a Google ID token (aud = web client)
+// or a Firebase ID token (aud = project id, iss = securetoken), because the
+// exact shape depends on the on-device flow. Same account linking as Google.
+app.post('/api/auth/firebase', async (req, res) => {
+  try {
+    const idToken = String(req.body?.idToken || '');
+    if (!idToken) return fail(res, 400, 'idToken required');
+    let sub = '';
+    let email = '';
+    let name = 'Friend';
+    let ok = false;
+    // Path 1: Google ID token (web-client audience) — same checks as GIS.
+    try {
+      const v = await verifyGoogleIdToken(idToken);
+      sub = v.sub; email = v.email; name = v.name; ok = true;
+    } catch { /* try Firebase shape next */ }
+    // Path 2: Firebase ID token.
+    if (!ok) {
+      try {
+        const client = new OAuth2Client();
+        const ticket = await client.verifyIdToken({ idToken, audience: FIREBASE_PROJECT_ID });
+        const payload = ticket.getPayload() || {};
+        const iss = String(payload.iss || '');
+        if (iss !== `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`) {
+          throw new Error('bad issuer');
+        }
+        sub = String(payload.sub || '');
+        email = String(payload.email || '').trim().toLowerCase();
+        if (!sub || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('bad claims');
+        if (payload.email_verified === false) throw new Error('unverified');
+        name = String(payload.name || email.split('@')[0] || 'Friend').trim().slice(0, 80) || 'Friend';
+        ok = true;
+      } catch {
+        return fail(res, 401, 'Google verification failed. Try again.');
+      }
+    }
+    const user = await findOrCreateGoogleUser(sub, email, name);
+    const token = await createSession(user.id);
+    const fresh = await userByToken(token);
+    res.json({ data: { user: googleUserPayload(user, fresh), token }, error: null });
+  } catch (e) {
+    console.error('Firebase auth error:', e.message);
+    return fail(res, e.status || 500, e.message);
+  }
+});
+
 app.post('/api/auth/google', async (req, res) => {
   try {
     const { sub, email, name } = await verifyGoogleIdToken(String(req.body?.idToken || ''));
